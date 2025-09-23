@@ -1,0 +1,64 @@
+{{- /* values.yaml の chains リストをループ処理 */}}
+{{- range .Values.chains }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ibc-app.fullname" $ }}-{{ .name }}
+spec:
+  serviceName: {{ include "ibc-app.fullname" $ }}-chain-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ibc-app.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: chain
+      app.kubernetes.io/instance: {{ .name }}
+  template:
+    metadata:
+      labels:
+        {{- include "ibc-app.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: chain
+        app.kubernetes.io/instance: {{ .name }}
+    spec:
+      containers:
+        - name: chain
+          {{- $chainType := index $.Values.chainTypes .type }}
+          image: "{{ $chainType.repository }}:{{ $chainType.tag }}"
+          imagePullPolicy: Never
+          command: ["/bin/sh", "-c", "/scripts/entrypoint-chain.sh"]
+          env:
+            - name: CHAIN_APP_NAME
+              value: {{ .type | quote }}
+            - name: CHAIN_INSTANCE_NAME
+              value: {{ .name | quote }}
+          ports:
+            - containerPort: 26657
+              name: rpc
+            - containerPort: 9090
+              name: grpc
+            - containerPort: 1317
+              name: api
+          volumeMounts:
+            - name: data
+              mountPath: /home/{{ .type }}/.{{ .type }}
+            - name: scripts
+              mountPath: /scripts
+            - name: mnemonics
+              mountPath: /etc/mnemonics
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ include "ibc-app.fullname" $ }}-scripts
+            defaultMode: 0755
+        - name: mnemonics
+          secret:
+            secretName: {{ include "ibc-app.fullname" $ }}-mnemonics
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: {{ $.Values.chain.storage.size }}
+{{- end }}

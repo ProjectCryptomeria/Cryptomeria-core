@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ibc-app.fullname" . }}-relayer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ibc-app.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: relayer
+  template:
+    metadata:
+      # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+      # ★★★ このannotationsブロックを追加してください ★★★
+      # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        {{- include "ibc-app.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: relayer
+    spec:
+      containers:
+        - name: relayer
+          image: "{{ .Values.relayer.repository }}:{{ .Values.relayer.tag }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["/bin/sh", "-c", "/scripts/init-relayer.sh"]
+          # command: ["/bin/sh", "-c", "sleep infinity"]
+          env:
+            - name: HEADLESS_SERVICE_NAME
+              value: {{ include "ibc-app.fullname" . }}-chain-headless
+            - name: CHAIN_NAMES_CSV
+              # "data-0,data-1,..." のようなCSV文字列を動的に生成
+              value: {{ range $i, $chain := .Values.chains }}{{ if $i }},{{ end }}{{ $chain.name }}{{ end }}
+            - name: RELEASE_NAME
+              value: {{ .Release.Name | quote }}
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+            - name: mnemonics
+              mountPath: /etc/relayer/mnemonics
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ include "ibc-app.fullname" . }}-scripts
+            defaultMode: 0755
+        - name: mnemonics
+          secret:
+            secretName: {{ include "ibc-app.fullname" . }}-mnemonics

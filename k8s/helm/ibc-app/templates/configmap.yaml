@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  # チャート名とリリース名から一意な名前を生成
+  name: {{ include "ibc-app.fullname" . }}-scripts
+data:
+  # ファイル名をキーとし、ファイルの内容をバリューとする
+  entrypoint-chain.sh: |-
+    {{- .Files.Get "scripts/entrypoint-chain.sh" | nindent 4 }}
+  init-relayer.sh: |-
+    {{- .Files.Get "scripts/init-relayer.sh" | nindent 4 }}

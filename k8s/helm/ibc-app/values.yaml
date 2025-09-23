@@ -1,0 +1,39 @@
+# =============================================================================
+# Global Settings
+# =============================================================================
+imagePullPolicy: IfNotPresent
+
+# =============================================================================
+# Chain Node Configuration
+# =============================================================================
+# デプロイしたいチェーンをリスト形式で定義します。
+# nameはk8s内で一意である必要があります。
+# typeはどのチェーンの定義(chainTypes)を使用するかを指定します。
+chains:
+  - name: data-0
+    type: datachain
+  - name: data-1
+    type: datachain
+  - name: meta-0
+    type: metachain
+
+# チェーンの「種類」ごとの設定を定義します。
+chainTypes:
+  datachain:
+    repository: datachain-image
+    tag: latest
+  metachain:
+    repository: metachain-image
+    tag: latest
+
+chain:
+  storage:
+    size: 10Gi
+
+# =============================================================================
+# Relayer Configuration
+# =============================================================================
+relayer:
+  repository: relayer-image
+  tag: latest
+  pullPolicy: IfNotPresent
