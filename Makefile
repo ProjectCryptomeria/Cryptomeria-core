@@ -1,237 +1,113 @@
-# .PHONY: 偽のターゲットを定義
-.PHONY: help all-in-one build-all build-datachain build-metachain build-relayer deploy delete delete-force logs logs-chain logs-relayer status debug-info portainer-up portainer-down portainer-info tx-test
+# ==============================================================================
+#  変数定義
+#  ローカル環境に合わせて変更可能です。
+#  例: make build IMAGE_TAG=v0.1.0
+# ==============================================================================
+IMAGE_TAG       ?= latest
+IMAGE_DATACHAIN ?= raidchain/datachain:$(IMAGE_TAG)
+IMAGE_METACHAIN ?= raidchain/metachain:$(IMAGE_TAG)
+IMAGE_RELAYER   ?= raidchain/relayer:$(IMAGE_TAG)
 
-# --- 変数定義 ---
-APP_NAME ?= raidchain
-RELEASE_NAME ?= raidchain
-CHART_PATH ?= ./k8s/helm/$(APP_NAME)
-HEADLESS_SERVICE_NAME = $(RELEASE_NAME)-chain-headless
-
-# デフォルトのゴール
-.DEFAULT_GOAL := help
-
-# =============================================================================
-# Main Commands
-# =============================================================================
-
-## all-in-one: 全てのクリーンアップ、生成、ビルド、デプロイを一度に実行します
-all-in-one:
-	@echo "\n🏁 \033[1;36mStarting the All-in-One deployment process...\033[0m"
-	@echo "-----------------------------------------------------------------"
-	
-	@echo "\n🔥 \033[1;33mSTEP 1/5: Cleaning up existing deployment and volumes...\033[0m"
-	@$(MAKE) delete-force
-	
-	@echo "\n🗑️  \033[1;33mSTEP 2/5: Removing old chain source code...\033[0m"
-	@$(MAKE) delete-chain
-	
-	@echo "\n🏗️  \033[1;33mSTEP 3/5: Generating new chain source code from scratch...\033[0m"
-	@$(MAKE) scaffold-all
-	
-	@echo "\n📦 \033[1;33mSTEP 4/5: Building all necessary Docker images...\033[0m"
-	@$(MAKE) build-all
-	
-	@echo "\n🚀 \033[1;33mSTEP 5/5: Deploying the entire application to Kubernetes...\033[0m"
-	@$(MAKE) deploy
-	
-	@echo "\n-----------------------------------------------------------------"
-	@echo "✅ \033[1;32mAll-in-One process complete! Your cluster is ready.\033[0m\n"
+HELM_RELEASE_NAME ?= raidchain
+NAMESPACE         ?= raidchain
 
 
-# 内部ターゲット: チェーンのビルド処理を共通化
-# @make _build-chain CHAIN_NAME=...
-_build-chain:
-	@if [ ! -d "chain/$(CHAIN_NAME)" ]; then \
-		echo "💥 Error: 'chain/$(CHAIN_NAME)' directory not found. Please run 'make scaffold-$(CHAIN_NAME)' first."; \
-		exit 1; \
-	fi
-	@echo "📦 Building binary for $(CHAIN_NAME)..."
-	@CGO_ENABLED=0 GOOS=linux ignite chain build \
-		--path ./chain/$(CHAIN_NAME) \
-		--output ./dist \
-		--skip-proto 
-	@echo "🏗️  Building $(CHAIN_NAME) image from definition..."
-	@docker build -t $(CHAIN_NAME)-image:latest -f ./build/$(CHAIN_NAME)/Dockerfile .
+# ==============================================================================
+#  ターゲット定義
+# ==============================================================================
+.PHONY: all \
+	build build-all build-datachain build-metachain build-relayer \
+	deploy undeploy clean \
+	test \
+	logs logs-all logs-datachain logs-metachain logs-relayer \
+	exec exec-datachain exec-metachain \
+	scaffold-chain \
+	help
 
-## build-all: 全てのチェーンのDockerイメージをビルドします
-build-all: build-datachain build-metachain build-relayer
+# デフォルトターゲット (make とだけ打った時に実行される)
+all: help
 
-## build-datachain: datachainのバイナリとDockerイメージをビルドします
-build-datachain:
-	@$(MAKE) _build-chain CHAIN_NAME=datachain
+##@----------------------------------------------------------------------------
+##@ ビルド関連
+##@----------------------------------------------------------------------------
 
-## build-metachain: metachainのバイナリとDockerイメージをビルドします
-build-metachain:
-	@$(MAKE) _build-chain CHAIN_NAME=metachain
+build: build-all ## [推奨] 全てのDockerイメージをビルドします (build-allのエイリアス)
+build-all: build-datachain build-metachain build-relayer ## 全てのDockerイメージをビルドします
 
-## build-relayer: relayerのDockerイメージをビルドします
-build-relayer:
-	@echo "🏗️  Building relayer image from definition..."
-	@docker build -t relayer-image:latest -f ./build/relayer/Dockerfile .
+build-datachain: ## datachainのDockerイメージのみをビルドします
+	@echo ">> building datachain image..."
+	@docker build -t $(IMAGE_DATACHAIN) -f build/datachain/Dockerfile .
 
-## deploy: HelmチャートをKubernetesクラスタにデプロイします
-deploy:
-	@echo "🚀  Deploying Helm chart to cluster..."
-	@helm upgrade --install $(RELEASE_NAME) $(CHART_PATH) --debug
+build-metachain: ## metachainのDockerイメージのみをビルドします
+	@echo ">> building metachain image..."
+	@docker build -t $(IMAGE_METACHAIN) -f build/metachain/Dockerfile .
 
-## delete: デプロイのみを削除します (ボリュームは残ります)
-delete:
-	@echo "🔥  Deleting Helm release (volumes will be kept)..."
-	@helm uninstall $(RELEASE_NAME) --ignore-not-found=true
+build-relayer: ## relayerのDockerイメージのみをビルドします
+	@echo ">> building relayer image..."
+	@docker build -t $(IMAGE_RELAYER) -f build/relayer/Dockerfile .
 
-## delete-force: デプロイとボリューム(PVC)を完全に削除します
-delete-force:
-	@echo "🔥  Deleting Helm release from cluster..."
-	@helm uninstall $(RELEASE_NAME) --ignore-not-found=true
-	@echo "🧹  Deleting Persistent Volume Claims (PVCs)..."
-	@kubectl delete pvc -l "app.kubernetes.io/name=$(APP_NAME)" --ignore-not-found=true
+##@----------------------------------------------------------------------------
+##@ デプロイ & クリーンアップ関連
+##@----------------------------------------------------------------------------
 
-# =============================================================================
-# Chain Scaffolding Commands
-# =============================================================================
+deploy: ## [推奨] Helmを使い、Kubernetesクラスタにraidchainをデプロイします
+	@echo ">> Helmチャートの依存関係を更新しています..."
+	@helm dependency update k8s/helm/raidchain
+	@echo ">> raidchainをデプロイしています... (Namespace: $(NAMESPACE))"
+	@helm install $(HELM_RELEASE_NAME) k8s/helm/raidchain \
+		--namespace $(NAMESPACE) \
+		--create-namespace
 
-## scaffold-all: 全てのチェーンのソースコードをローカルに生成します
-scaffold-all: scaffold-datachain scaffold-metachain
+undeploy: ## デプロイされたraidchainをクラスタからアンインストールします
+	@echo ">> raidchainをアンインストールしています... (Namespace: $(NAMESPACE))"
+	@helm uninstall $(HELM_RELEASE_NAME) --namespace $(NAMESPACE)
 
-## scaffold-datachain: datachainのソースコードを ./chain/datachain に生成します
-scaffold-datachain:
-	@./scripts/scaffold/scaffold-chain.sh datachain datastore raidchain
+clean: undeploy ## [推奨] raidchainをアンインストールし、関連リソース(Namespace)も完全に削除します
+	@echo ">> Namespace '$(NAMESPACE)' を削除しています..."
+	@kubectl delete namespace $(NAMESPACE) --ignore-not-found
+	@echo ">> クリーンアップが完了しました"
 
-## scaffold-metachain: metachainのソースコードを ./chain/metachain に生成します
-scaffold-metachain:
-	@./scripts/scaffold/scaffold-chain.sh metachain metastore raidchain
+##@----------------------------------------------------------------------------
+##@ テスト関連
+##@----------------------------------------------------------------------------
 
-## delete-chain: 生成されたチェーンのソースコードディレクトリを削除します
-delete-chain:
-	@echo "🔥  Deleting scaffolded chain source directories..."
-	@rm -rf chain/datachain chain/metachain
-	@echo "✅  Scaffolded chain source directories deleted."
+test: ## [推奨] チェーンの動作確認テスト（トランザクション発行）を実行します
+	@./scripts/test/chain-integrity-test.sh
 
-# =============================================================================
-# Utility and Debugging Commands
-# =============================================================================
+##@----------------------------------------------------------------------------
+##@ デバッグ関連 (ログ確認・Podへのアクセス)
+##@----------------------------------------------------------------------------
 
-## status: デプロイされたPodのステータスを表示します
-status:
-	@echo "📊  Checking status of deployed pods..."
-	@kubectl get pods -l "app.kubernetes.io/name=$(APP_NAME)"
+logs: logs-datachain ## datachainのログを表示します (logs-datachainのエイリアス)
+logs-all: ## 全てのコンポーネントのログを同時に表示します
+	@kubectl logs -f -l app.kubernetes.io/instance=$(HELM_RELEASE_NAME) -n $(NAMESPACE) --max-log-requests=10
 
-## logs: 全てのPodのログを表示します
-logs: logs-chain logs-relayer
+logs-datachain: ## datachain Podのログを表示します
+	@kubectl logs -f -l app.kubernetes.io/instance=$(HELM_RELEASE_NAME),app.kubernetes.io/name=datachain -n $(NAMESPACE)
 
-## logs-chain: チェーンノードのPodのログを追跡表示します
-logs-chain:
-	@echo "📜  Tailing logs for chain nodes..."
-	@kubectl logs -l "app.kubernetes.io/name=$(APP_NAME),app.kubernetes.io/component=chain" -f --tail=100
+logs-metachain: ## metachain Podのログを表示します
+	@kubectl logs -f -l app.kubernetes.io/instance=$(HELM_RELEASE_NAME),app.kubernetes.io/name=metachain -n $(NAMESPACE)
 
-## logs-relayer: リレイヤーのPodのログを追跡表示します
-logs-relayer:
-	@echo "📜  Tailing logs for relayer..."
-	@kubectl logs \
--l "app.kubernetes.io/name=$(APP_NAME),app.kubernetes.io/component=relayer" -f --tail=100
+logs-relayer: ## relayer Podのログを表示します
+	@kubectl logs -f -l app.kubernetes.io/instance=$(HELM_RELEASE_NAME),app.kubernetes.io/name=relayer -n $(NAMESPACE)
 
-## debug-info: 問題発生時に全ての関連情報を一括で表示します
-debug-info:
-	@echo "ախ  Gathering all debug information..."
-	@echo "\n--- 1. Pod Status & IP Addresses ---"
-	@kubectl get pods -o wide
-	@echo "\n--- 2. Headless Service Network Endpoints ---"
-	@kubectl describe service $(HEADLESS_SERVICE_NAME)
-	@echo "\n--- 3. Relayer Pod Logs ---"
-	@RELAYER_POD=$$(kubectl get pods -l "app.kubernetes.io/name=$(APP_NAME),app.kubernetes.io/component=relayer" -o jsonpath='{.items[0].metadata.name}'); \
-	if [ -n "$$RELAYER_POD" ]; then \
-		kubectl logs $$RELAYER_POD; \
-		echo "\n--- 4. DNS Resolution Test from Relayer Pod ---"; \
-		CHAIN_PODS=$$(\
-			kubectl get pods -l "app.kubernetes.io/name=$(APP_NAME),app.kubernetes.io/component=chain" -o jsonpath='{.items[*].metadata.name}' \
-		); \
-		for POD_NAME in $$CHAIN_PODS; do \
-			echo "\n--> Checking DNS for $$POD_NAME..."; \
-			kubectl exec -i $$RELAYER_POD -- nslookup $$POD_NAME.$(HEADLESS_SERVICE_NAME) || true; \
-		done; \
-	else \
-		echo "Relayer pod not found."; \
-	fi
-	@echo "\n--- 5. Chain Pod Logs (Last 100 lines) ---"
-	@CHAIN_PODS=$$(kubectl get pods -l "app.kubernetes.io/name=$(APP_NAME),app.kubernetes.io/component=chain" -o jsonpath='{.items[*].metadata.name}'); \
-	if [ -n "$$CHAIN_PODS" ]; then \
-		for POD_NAME in $$CHAIN_PODS; do \
-			echo "\n--> Logs for $$POD_NAME:"; \
-			kubectl logs $$POD_NAME --tail=100; \
-		done; \
-	else \
-		echo "Chain pods not found."; \
-	fi
-	@echo "\n--- ✅ Debug information gathering complete ---"
+exec: exec-datachain ## datachain-0 Podに入ります (exec-datachainのエイリアス)
 
+exec-datachain: ## datachain-0 Podのシェルに入ります
+	@echo ">> datachain-0 Podに接続します..."
+	@kubectl exec -it -n $(NAMESPACE) $(HELM_RELEASE_NAME)-datachain-0 -- /bin/sh
 
-# =============================================================================
-# K8s Management UI (Portainer & Dashboard)
-# =============================================================================
+exec-metachain: ## metachain-0 Podのシェルに入ります
+	@echo ">> metachain-0 Podに接続します..."
+	@kubectl exec -it -n $(NAMESPACE) $(HELM_RELEASE_NAME)-metachain-0 -- /bin/sh
 
-## portainer-up: PortainerをKubernetesクラスタにデプロイします
-portainer-up:
-	@echo "🌐  Deploying Portainer..."
-	@kubectl create namespace portainer
-	@kubectl apply -n portainer -f https://downloads.portainer.io/ce2-19/portainer.yaml
-	@echo "✅  Portainer deployed. Use 'make portainer-info' to get access details."
-## portainer-down: PortainerをKubernetesクラスタから削除します
-portainer-down:
-	@echo "🔥  Deleting Portainer..."
-	@kubectl delete -n portainer -f https://downloads.portainer.io/ce2-19/portainer.yaml
-	@kubectl delete namespace portainer --ignore-not-found=true
+##@----------------------------------------------------------------------------
+##@ その他
+##@----------------------------------------------------------------------------
 
-## portainer-info: Portainerへのアクセス情報を表示します
-portainer-info:
-	@echo "🔑  Access Portainer UI via NodePort:"
-	@echo "1. Get the NodePort using the following command:"
-	@echo "   kubectl get svc -n portainer"
-	@echo "2. Access https://localhost:<NODE_PORT> in your browser (use the port mapped to 9443)."
+scaffold-chain: ## (開発用) 新しいチェーンのひな形を生成します
+	@./scripts/scaffold/scaffold-chain.sh
 
-tx-test:
-	@echo "🔄  Running test transaction between chains..."
-	@./scripts/test/tx-test.sh
-
-# =============================================================================
-# Helm Release Management
-# =============================================================================
-
-
-## rename-helm: Helmリリースの名前をダウンタイムなしで変更します (例: make rename-helm OLD=ibc-app NEW=raidchain)
-rename-helm:
-	@if [ -z "$(OLD)" ] || [ -z "$(NEW)" ]; then \
-		echo "💥 Error: Please provide OLD and NEW release names."; \
-		echo "Usage: make rename-helm OLD=<old-name> NEW=<new-name>"; \
-		exit 1; \
-	fi
-	@echo "⚠️  This is an advanced operation. Please ensure you have backups."
-	@printf "Are you sure you want to rename release '$(OLD)' to '$(NEW)'? [y/N] "; \
-	read -r REPLY; \
-	case "$$REPLY" in \
-		[Yy]*) \
-			echo "Proceeding with rename..."; \
-			./scripts/helm/rename-helm.sh $(OLD) $(NEW); \
-			;; \
-		*) \
-			echo "Aborted."; \
-			;; \
-	esac
-# =============================================================================
-# Help
-# =============================================================================
-
-## help: このヘルプメッセージを表示します
-help:
-	@echo "Usage: make [target]"
-	@echo ""
-	@echo "Targets:"
-	@grep -E '^## [a-zA-Z0-9_-]+:' $(MAKEFILE_LIST) | \
-	grep -v ' help:' | \
-	sort | \
-	awk '{ \
-		pos=index($$0, ":"); \
-		target=substr($$0, 4, pos-4); \
-		comment=substr($$0, pos+1); \
-		sub(/^[ ]+/, "", comment); \
-		printf "  \033[36m%-18s\033[0m %s\n", target, comment \
-	}'
+help: ## このヘルプメッセージを表示します
+	@echo "使用可能なターゲット:"
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_0-9-]+:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
