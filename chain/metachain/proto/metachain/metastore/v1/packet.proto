@@ -1,0 +1,14 @@
+syntax = "proto3";
+package metachain.metastore.v1;
+
+option go_package = "metachain/x/metastore/types";
+
+// MetastorePacketData defines the Metastore data packet.
+message MetastorePacketData {
+  oneof packet {
+    NoData noData = 1;
+  }
+}
+
+// NoData defines an empty data packet.
+message NoData {}

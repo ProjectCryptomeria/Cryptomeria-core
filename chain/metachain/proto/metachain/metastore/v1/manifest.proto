@@ -1,0 +1,13 @@
+syntax = "proto3";
+package metachain.metastore.v1;
+
+import "metachain/metastore/v1/chunk_list.proto";
+
+option go_package = "metachain/x/metastore/types";
+
+// Manifest defines the Manifest message.
+message Manifest {
+  string url = 1;
+  map<string, ChunkList> manifest = 2;
+  string creator = 3;
+}

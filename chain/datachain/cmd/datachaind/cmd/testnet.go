@@ -162,7 +162,6 @@ func initAppForTestnet(app *app.App, args valArgs) *app.App {
 	handleErr(app.DistrKeeper.SetValidatorAccumulatedCommission(ctx, validator, distrtypes.InitialValidatorAccumulatedCommission()))
 	handleErr(app.DistrKeeper.SetValidatorOutstandingRewards(ctx, validator, distrtypes.ValidatorOutstandingRewards{Rewards: sdk.DecCoins{}}))
 
-
 	// SLASHING
 	//
 
@@ -174,7 +173,6 @@ func initAppForTestnet(app *app.App, args valArgs) *app.App {
 		Tombstoned:  false,
 	}
 	_ = app.SlashingKeeper.SetValidatorSigningInfo(ctx, newConsAddr, newValidatorSigningInfo)
-
 
 	// BANK
 	//

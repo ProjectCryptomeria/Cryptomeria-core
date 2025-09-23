@@ -1,5 +1,5 @@
 # .PHONY: 偽のターゲットを定義
-.PHONY: help build-all build-datachain build-metachain build-relayer deploy delete delete-force logs logs-chain logs-relayer status debug-info portainer-up portainer-down portainer-info tx-test
+.PHONY: help all-in-one build-all build-datachain build-metachain build-relayer deploy delete delete-force logs logs-chain logs-relayer status debug-info portainer-up portainer-down portainer-info tx-test
 
 # --- 変数定義 ---
 APP_NAME ?= raidchain
@@ -13,6 +13,30 @@ HEADLESS_SERVICE_NAME = $(RELEASE_NAME)-chain-headless
 # =============================================================================
 # Main Commands
 # =============================================================================
+
+## all-in-one: 全てのクリーンアップ、生成、ビルド、デプロイを一度に実行します
+all-in-one:
+	@echo "\n🏁 \033[1;36mStarting the All-in-One deployment process...\033[0m"
+	@echo "-----------------------------------------------------------------"
+	
+	@echo "\n🔥 \033[1;33mSTEP 1/5: Cleaning up existing deployment and volumes...\033[0m"
+	@$(MAKE) delete-force
+	
+	@echo "\n🗑️  \033[1;33mSTEP 2/5: Removing old chain source code...\033[0m"
+	@$(MAKE) delete-chain
+	
+	@echo "\n🏗️  \033[1;33mSTEP 3/5: Generating new chain source code from scratch...\033[0m"
+	@$(MAKE) scaffold-all
+	
+	@echo "\n📦 \033[1;33mSTEP 4/5: Building all necessary Docker images...\033[0m"
+	@$(MAKE) build-all
+	
+	@echo "\n🚀 \033[1;33mSTEP 5/5: Deploying the entire application to Kubernetes...\033[0m"
+	@$(MAKE) deploy
+	
+	@echo "\n-----------------------------------------------------------------"
+	@echo "✅ \033[1;32mAll-in-One process complete! Your cluster is ready.\033[0m\n"
+
 
 # 内部ターゲット: チェーンのビルド処理を共通化
 # @make _build-chain CHAIN_NAME=...
@@ -114,7 +138,7 @@ debug-info:
 	@echo "\n--- 2. Headless Service Network Endpoints ---"
 	@kubectl describe service $(HEADLESS_SERVICE_NAME)
 	@echo "\n--- 3. Relayer Pod Logs ---"
-	@RELAYER_POD=$$(kubectl get pods -l "app.kubernetes.io/instance=$(RELEASE_NAME),app.kubernetes.io/component=relayer" -o jsonpath='{.items[0].metadata.name}'); \
+	@RELAYER_POD=$$(kubectl get pods -l "app.kubernetes.io/name=$(APP_NAME),app.kubernetes.io/component=relayer" -o jsonpath='{.items[0].metadata.name}'); \
 	if [ -n "$$RELAYER_POD" ]; then \
 		kubectl logs $$RELAYER_POD; \
 		echo "\n--- 4. DNS Resolution Test from Relayer Pod ---"; \

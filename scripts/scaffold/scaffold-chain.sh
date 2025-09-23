@@ -1,5 +1,8 @@
 #!/bin/bash
 set -e
+# Goモジュールのキャッシュディレクトリを設定し、ダウンロード時間を短縮
+export GOMODCACHE=${GOMODCACHE:-/tmp/gomodcache}
+mkdir -p $GOMODCACHE
 
 # --- 引数のチェック ---
 if [ -z "$1" ] || [ -z "$2" ]; then
@@ -27,7 +30,10 @@ else
         --default-denom uatom \
         --path "./$CHAIN_DIR"
 
+
     cd "$CHAIN_DIR"
+
+    echo -e "version: v2\nplugins: []" > ./proto/buf.gen.swagger.yaml
     
     # 共通処理(2): モジュールを生成
     ignite scaffold module --ibc "$MODULE_NAME" --dep bank --yes
@@ -44,51 +50,40 @@ else
                 --yes
             ;;
         "metachain")
-            # metachain: 「雛形生成 → .protoファイル上書き → コード再生成」の自動化フロー
-            echo "  ➡️  Step 1/3: Scaffolding templates..."
+            # metachain: 「雛形生成 → .protoファイル自動修正 → コード再生成」の自動化フロー
+            echo "  ➡️  Step 1/4: Scaffolding templates..."
             # Step 1-1: `map`の値となる `ChunkList` 型の雛形を生成
             ignite scaffold type ChunkList hashes:array.string --module "$MODULE_NAME" --no-message
 
             # Step 1-2: `Manifest` Mapストアの雛形を生成 (値の型は仮で`ChunkList`を指定)
-            ignite scaffold map Manifest url:string manifest:ChunkList --module "$MODULE_NAME" --signer creator
+            ignite scaffold map Manifest manifest:ChunkList --module "$MODULE_NAME" --signer creator --index url:string
 
-            echo "  ➡️  Step 2/3: Overwriting .proto file with the correct map structure..."
-            # Step 2: manifest.proto を修正し、ChunkListをimportしてmapの型として利用する
-            PROTO_FILE="proto/${CHAIN_NAME}/${MODULE_NAME}/v1/manifest.proto"
+            echo "  ➡️  Step 2/4: Modifying manifest.proto..."
+            # Step 2: manifest.proto内のmanifestフィールドの型を map<string, ChunkList> に置換
+            MANIFEST_PROTO="proto/${CHAIN_NAME}/${MODULE_NAME}/v1/manifest.proto"
+            sed -i.bak 's/ChunkList manifest/map<string, ChunkList> manifest/g' "$MANIFEST_PROTO"
+            rm "${MANIFEST_PROTO}.bak"
             
-            # heredocを使ってファイル全体を正確に上書き
-            cat <<EOF > "$PROTO_FILE"
-syntax = "proto3";
+            echo "  ➡️  Step 3/4: Modifying tx.proto..."
+            # Step 3: tx.proto内のMsgCreateManifestとMsgUpdateManifestのmanifestフィールドの型を置換
+            TX_PROTO="proto/${CHAIN_NAME}/${MODULE_NAME}/v1/tx.proto"
+            sed -i.bak 's/ChunkList manifest/map<string, ChunkList> manifest/g' "$TX_PROTO"
+            rm "${TX_PROTO}.bak"
 
-package ${CHAIN_NAME}.${MODULE_NAME}.v1;
-
-import "gogoproto/gogo.proto";
-// 外部ファイルで定義されたChunkListをインポートする
-import "${CHAIN_NAME}/${MODULE_NAME}/v1/chunk_list.proto";
-
-option go_package = "${CHAIN_NAME}/x/${MODULE_NAME}/types";
-
-// Manifest is the main message that holds the manifest data for a given URL.
-message Manifest {
-  string creator = 1;
-  string url = 2;
-  // The 'manifest' field maps a file path (e.g., "/index.html") to its list of chunk hashes.
-  map<string, ChunkList> manifest = 3;
-}
-EOF
-            echo "  ➡️  Step 3/3: Regenerating Go code from the modified .proto file..."
-            # Step 3: 編集した.protoファイルを元にGoのコードを再生成
+            echo "  ➡️  Step 4/4: Regenerating Go code from modified .proto files..."
+            # Step 4: 編集した.protoファイルを元にGoのコードを再生成
             ignite generate proto-go
 
-            ;;
+                ;;
         *)
             echo "💥 Error: Unknown chain name '$CHAIN_NAME'."
             exit 1
             ;;
     esac
     
+ 
     # IBCバージョンを書き換える
-    sed -i "s/${CHAIN_NAME}-1/${RELEASE_NAME}-1/g" "x/${MODULE_NAME}/types/types.go"
+    sed -i "s/${MODULE_NAME}-1/${RELEASE_NAME}-1/g" "x/${MODULE_NAME}/types/keys.go"
     
     cd ../..
     echo "✅  $CHAIN_NAME source code scaffolded in '$CHAIN_DIR'"
