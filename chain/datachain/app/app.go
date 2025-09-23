@@ -98,17 +98,12 @@ type App struct {
 	ICAHostKeeper       icahostkeeper.Keeper
 	TransferKeeper      ibctransferkeeper.Keeper
 
-	DatastoreKeeper datastoremodulekeeper.Keeper
-	// this line is used by starport scaffolding # stargate/app/keeperDeclaration
-
 	// simulation manager
-	sm *module.SimulationManager
+	sm              *module.SimulationManager
+	DatastoreKeeper datastoremodulekeeper.Keeper
 }
 
 func init() {
-
-	sdk.DefaultBondDenom = "uatom"
-
 	var err error
 	clienthelpers.EnvPrefix = Name
 	DefaultNodeHome, err = clienthelpers.GetNodeHomeDirectory("." + Name)
