@@ -2,8 +2,8 @@
 .PHONY: help build-all build-datachain build-metachain build-relayer deploy delete delete-force logs logs-chain logs-relayer status debug-info portainer-up portainer-down portainer-info tx-test
 
 # --- 変数定義 ---
-APP_NAME ?= ibc-app
-RELEASE_NAME ?= ibc-app
+APP_NAME ?= raidchain
+RELEASE_NAME ?= raidchain
 CHART_PATH ?= ./k8s/helm/$(APP_NAME)
 HEADLESS_SERVICE_NAME = $(RELEASE_NAME)-chain-headless
 
@@ -71,11 +71,11 @@ scaffold-all: scaffold-datachain scaffold-metachain
 
 ## scaffold-datachain: datachainのソースコードを ./chain/datachain に生成します
 scaffold-datachain:
-	@./scripts/scaffold/scaffold-chain.sh datachain datastore
+	@./scripts/scaffold/scaffold-chain.sh datachain datastore raidchain
 
 ## scaffold-metachain: metachainのソースコードを ./chain/metachain に生成します
 scaffold-metachain:
-	@./scripts/scaffold/scaffold-chain.sh metachain metastore
+	@./scripts/scaffold/scaffold-chain.sh metachain metastore raidchain
 
 ## delete-chain: 生成されたチェーンのソースコードディレクトリを削除します
 delete-chain:
@@ -167,7 +167,31 @@ portainer-info:
 tx-test:
 	@echo "🔄  Running test transaction between chains..."
 	@./scripts/test/tx-test.sh
-	
+
+# =============================================================================
+# Helm Release Management
+# =============================================================================
+
+
+## rename-helm: Helmリリースの名前をダウンタイムなしで変更します (例: make rename-helm OLD=ibc-app NEW=raidchain)
+rename-helm:
+	@if [ -z "$(OLD)" ] || [ -z "$(NEW)" ]; then \
+		echo "💥 Error: Please provide OLD and NEW release names."; \
+		echo "Usage: make rename-helm OLD=<old-name> NEW=<new-name>"; \
+		exit 1; \
+	fi
+	@echo "⚠️  This is an advanced operation. Please ensure you have backups."
+	@printf "Are you sure you want to rename release '$(OLD)' to '$(NEW)'? [y/N] "; \
+	read -r REPLY; \
+	case "$$REPLY" in \
+		[Yy]*) \
+			echo "Proceeding with rename..."; \
+			./scripts/helm/rename-helm.sh $(OLD) $(NEW); \
+			;; \
+		*) \
+			echo "Aborted."; \
+			;; \
+	esac
 # =============================================================================
 # Help
 # =============================================================================

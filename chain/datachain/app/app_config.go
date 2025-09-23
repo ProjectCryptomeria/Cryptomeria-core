@@ -1,8 +1,6 @@
 package app
 
 import (
-	_ "datachain/x/datastore/module"
-	datastoremoduletypes "datachain/x/datastore/types"
 	"time"
 
 	runtimev1alpha1 "cosmossdk.io/api/cosmos/app/runtime/v1alpha1"
@@ -83,7 +81,7 @@ var (
 		{Account: nft.ModuleName},
 		{Account: ibctransfertypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: icatypes.ModuleName},
-		{Account: datastoremoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}}}
+	}
 
 	// blocked account addresses
 	blockAccAddrs = []string{
@@ -125,7 +123,6 @@ var (
 						// ibc modules
 						ibcexported.ModuleName,
 						// chain modules
-						datastoremoduletypes.ModuleName,
 						// this line is used by starport scaffolding # stargate/app/beginBlockers
 					},
 					EndBlockers: []string{
@@ -134,7 +131,6 @@ var (
 						feegrant.ModuleName,
 						group.ModuleName,
 						// chain modules
-						datastoremoduletypes.ModuleName,
 						// this line is used by starport scaffolding # stargate/app/endBlockers
 					},
 					// The following is mostly only needed when ModuleName != StoreKey name.
@@ -171,7 +167,6 @@ var (
 						ibctransfertypes.ModuleName,
 						icatypes.ModuleName,
 						// chain modules
-						datastoremoduletypes.ModuleName,
 						// this line is used by starport scaffolding # stargate/app/initGenesis
 					},
 				}),
@@ -179,8 +174,8 @@ var (
 			{
 				Name: authtypes.ModuleName,
 				Config: appconfig.WrapAny(&authmodulev1.Module{
-					Bech32Prefix:                AccountAddressPrefix,
-					ModuleAccountPermissions:    moduleAccPerms,
+					Bech32Prefix:             AccountAddressPrefix,
+					ModuleAccountPermissions: moduleAccPerms,
 					EnableUnorderedTransactions: true,
 					// By default modules authority is the governance module. This is configurable with the following:
 					// Authority: "group", // A custom module authority can be set using a module name
@@ -267,10 +262,6 @@ var (
 			{
 				Name:   epochstypes.ModuleName,
 				Config: appconfig.WrapAny(&epochsmodulev1.Module{}),
-			},
-			{
-				Name:   datastoremoduletypes.ModuleName,
-				Config: appconfig.WrapAny(&datastoremoduletypes.Module{}),
 			},
 			// this line is used by starport scaffolding # stargate/app/moduleConfig
 		},
