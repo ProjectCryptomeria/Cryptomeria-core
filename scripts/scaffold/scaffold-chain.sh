@@ -28,7 +28,7 @@ else
         --no-module \
         --skip-git \
         --default-denom uatom \
-        --path "./$CHAIN_DIR"
+        --path "./$CHAIN_DIR" \
 
 
     cd "$CHAIN_DIR"
@@ -73,8 +73,7 @@ else
             echo "  ➡️  Step 4/4: Regenerating Go code from modified .proto files..."
             # Step 4: 編集した.protoファイルを元にGoのコードを再生成
             ignite generate proto-go
-
-                ;;
+            ;;
         *)
             echo "💥 Error: Unknown chain name '$CHAIN_NAME'."
             exit 1
