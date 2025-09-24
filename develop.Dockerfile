@@ -3,7 +3,6 @@ FROM ubuntu:24.04
 
 # 環境変数を設定
 ENV KUBECONFIG=/root/.kube/config
-ENV PATH="/usr/local/go/bin:${PATH}"
 
 # 必要なパッケージをインストール
 RUN apt-get update && apt-get install -y \
@@ -12,14 +11,14 @@ RUN apt-get update && apt-get install -y \
     curl \
     git \
     docker.io \
-    openssl 
-# Go 1.24.0を直接ダウンロードしてインストール
-RUN curl -LO https://go.dev/dl/go1.24.0.linux-amd64.tar.gz && \
-    tar -C /usr/local -xzf go1.24.0.linux-amd64.tar.gz && \
-    rm go1.24.0.linux-amd64.tar.gz
+    openssl \
+    sudo \
+    software-properties-common
 
-RUN go install github.com/bufbuild/buf/cmd/buf@latest
-
+RUN add-apt-repository ppa:longsleep/golang-backports 
+RUN apt-get update 
+RUN apt-get install golang-go -y
+    
 # Helmをインストール
 RUN curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 && \
     chmod 700 get_helm.sh && \

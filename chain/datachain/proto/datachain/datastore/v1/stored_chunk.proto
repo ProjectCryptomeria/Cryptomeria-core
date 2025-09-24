@@ -1,0 +1,11 @@
+syntax = "proto3";
+package datachain.datastore.v1;
+
+option go_package = "datachain/x/datastore/types";
+
+// StoredChunk defines the StoredChunk message.
+message StoredChunk {
+  string index = 1;
+  bytes data = 2;
+  string creator = 3;
+}

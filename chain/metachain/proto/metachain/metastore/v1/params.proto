@@ -1,0 +1,13 @@
+syntax = "proto3";
+package metachain.metastore.v1;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "metachain/x/metastore/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (amino.name) = "metachain/x/metastore/Params";
+  option (gogoproto.equal) = true;
+}

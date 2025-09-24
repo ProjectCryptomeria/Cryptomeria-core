@@ -16,8 +16,6 @@ NAMESPACE         ?= raidchain
 # ==============================================================================
 IMAGE_DEV_TOOLS   ?= raidchain/dev-tools:latest
 DOCKER_IN_DOCKER  ?= false
-# コンテナイメージが存在するかどうかをチェック
-IMAGE_EXISTS := $(shell docker images -q $(IMAGE_DEV_TOOLS))
 
 # 開発ツール用コンテナのビルド
 .PHONY: build-dev-container
@@ -33,10 +31,13 @@ run-in-container:
 	fi; \
 	echo ">> 🚀 Executing workflow in container..."; \
 	docker run --rm -it \
+		-u $(shell id -u):$(shell id -g) \
+		--group-add $(shell getent group docker | cut -d: -f3) \
 		-e DOCKER_IN_DOCKER=true \
+		-e KUBECONFIG=/home/user/.kube/config \
 		-v $(PWD):/workspace \
 		-v /var/run/docker.sock:/var/run/docker.sock \
-		-v "${HOME}/.kube:/root/.kube" \
+		-v "${HOME}/.kube:/home/user/.kube" \
 		--workdir /workspace \
 		$(IMAGE_DEV_TOOLS) make $(MAKECMDGOALS)
 
@@ -67,15 +68,13 @@ else
 build: build-all ## [推奨] 全てのDockerイメージをビルドします (build-allのエイリアス)
 build-all: build-datachain build-metachain build-relayer ## 全てのDockerイメージをビルドします
 build-datachain: ## datachainのDockerイメージのみをビルドします
-	@echo ">> building datachain binary and image..."
-	@ignite chain build --path ./chain/datachain -o dist
+	@echo ">> Installing tools and building datachain binary and image..."
+	@ignite chain build --path ./chain/datachain -o dist --skip-proto
 	@docker build -t $(IMAGE_DATACHAIN) -f build/datachain/Dockerfile .
-	@sudo chown -R $(shell id -u):$(shell id -g) dist
 build-metachain: ## metachainのDockerイメージのみをビルドします
-	@echo ">> building metachain binary and image..."
-	@ignite chain build --path ./chain/metachain -o dist
+	@echo ">> Installing tools and building metachain binary and image..."
+	@ignite chain build --path ./chain/metachain -o dist --skip-proto
 	@docker build -t $(IMAGE_METACHAIN) -f build/metachain/Dockerfile .
-	@sudo chown -R $(shell id -u):$(shell id -g) dist
 build-relayer: ## relayerのDockerイメージのみをビルドします
 	@echo ">> building relayer image..."
 	@docker build -t $(IMAGE_RELAYER) -f build/relayer/Dockerfile .
@@ -101,7 +100,7 @@ test: ## [推奨] チェーンの動作確認テスト（トランザクショ�
 	@./scripts/test/chain-integrity-test.sh
 test-dev-container: ## 開発用コンテナ内のツールが正しくインストールされているか確認します
 	@echo ">> Verifying tools in the development container..."
-	@for cmd in ignite kubectl helm kind go; do \
+	@for cmd in ignite kubectl helm kind go buf; do \
 		if ! command -v $$cmd >/dev/null 2>&1; then \
 			echo "💥 Error: $$cmd not found."; \
 			exit 1; \
@@ -118,7 +117,7 @@ logs-metachain: ## metachain Podのログを表示します
 	@kubectl logs -f -l app.kubernetes.io/instance=$(HELM_RELEASE_NAME),app.kubernetes.io/name=metachain -n $(NAMESPACE)
 logs-relayer: ## relayer Podのログを表示します
 	@kubectl logs -f -l app.kubernetes.io/instance=$(HELM_RELEASE_NAME),app.kubernetes.io/name=relayer -n $(NAMESPACE)
-exec: exec-datachain ## datachain-0 Podに入ります (exec-datachainのエイリアス)
+exec: exec-datain ## datachain-0 Podに入ります (exec-datachainのエイリアス)
 exec-datachain: ## datachain-0 Podのシェルに入ります
 	@echo ">> datachain-0 Podに接続します..."
 	@kubectl exec -it -n $(NAMESPACE) $(HELM_RELEASE_NAME)-datachain-0 -- /bin/sh
@@ -130,8 +129,6 @@ scaffold-chain: ## (開発用) 新しいチェーンのひな形を生成しま�
 	@./scripts/scaffold/scaffold-chain.sh datachain datastore
 	@echo ">> 🏗️ Scaffolding metachain and metastore modules..."
 	@./scripts/scaffold/scaffold-chain.sh metachain metastore
-	@echo ">> ✅ Changing file ownership to local user..."
-	@chown -R $(shell id -u):$(shell id -g) chain/*
 delete-datachain: ## datachainディレクトリを削除します
 	@echo ">> Deleting datachain directory..."
 	@rm -rf chain/datachain

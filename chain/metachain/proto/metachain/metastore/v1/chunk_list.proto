@@ -1,0 +1,9 @@
+syntax = "proto3";
+package metachain.metastore.v1;
+
+option go_package = "metachain/x/metastore/types";
+
+// ChunkList defines the ChunkList message.
+message ChunkList {
+  repeated string hashes = 1;
+}
