@@ -96,7 +96,14 @@ test:
 
 # 新しいチェーンのひな形を生成
 scaffold-chain:
+    @just scaffold-datachain
+    @just scaffold-metachain
+    @echo "✅ Scaffold complete! Check the 'chain' directory."
+
+scaffold-datachain:
     @{{RUN_FAST_SCRIPT}} {{IGNITE_IMAGE}} ./scripts/scaffold/scaffold-chain.sh datachain datastore
+
+scaffold-metachain:
     @{{RUN_FAST_SCRIPT}} {{IGNITE_IMAGE}} ./scripts/scaffold/scaffold-chain.sh metachain metastore
 
 # --- Cleanup Tasks ---

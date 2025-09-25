@@ -1,8 +1,5 @@
 #!/bin/bash
 set -e
-# Goモジュールのキャッシュディレクトリを設定し、ダウンロード時間を短縮
-export GOMODCACHE=${GOMODCACHE:-/tmp/gomodcache}
-mkdir -p $GOMODCACHE
 
 # --- 引数のチェック ---
 if [ -z "$1" ] || [ -z "$2" ]; then

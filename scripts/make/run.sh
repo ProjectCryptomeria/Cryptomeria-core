@@ -1,11 +1,18 @@
 #!/bin/bash
-# このスクリプトは、引数として受け取ったコマンドをDockerコンテナ内で実行します。
-# プロジェクトのルートディレクトリから実行されることを想定しています。
+# scripts/make/run.sh
 
 set -euo pipefail
 
-# 開発用コンテナのイメージ名
+# --- Configuration ---
 DEV_IMAGE="raidchain/dev-tools:latest"
+PROJECT_NAME=$(basename "$(pwd)")
+GO_MOD_VOLUME="${PROJECT_NAME}-go-mod"
+GO_BUILD_VOLUME="${PROJECT_NAME}-go-build"
+
+# ★★★ 所有権を修正するステップを追加 ★★★
+echo "==> 🛠️  Ensuring cache volume permissions..."
+docker volume create "${GO_MOD_VOLUME}" > /dev/null
+docker volume create "${GO_BUILD_VOLUME}" > /dev/null
 
 echo "==> 🐳 Executing in container: $@"
 
@@ -15,8 +22,11 @@ docker run --rm -it \
     -v "$(pwd):/workspace" \
     -v "/var/run/docker.sock:/var/run/docker.sock" \
     -v "${HOME}/.kube:/home/user/.kube" \
+    -v "${GO_MOD_VOLUME}:/home/tendermint/gomod" \
+    -e GOMODCACHE=/home/tendermint/gomod \
     -e IN_CONTAINER=true \
     -e KUBECONFIG=/home/user/.kube/config \
+    -e DO_NOT_TRACK=1 \
     --workdir /workspace \
     "${DEV_IMAGE}" \
     "$@"
