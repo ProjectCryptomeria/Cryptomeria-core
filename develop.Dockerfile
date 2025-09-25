@@ -18,7 +18,7 @@ RUN apt-get update
 # レイヤー2: 基本ツールのインストール
 RUN apt-get install -y --no-install-recommends \
     bash make curl git openssl sudo time xxd jq just \
-    docker.io software-properties-common ca-certificates
+    docker.io ca-certificates
 
 # レイヤー3: 後片付け (イメージサイズ削減)
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*

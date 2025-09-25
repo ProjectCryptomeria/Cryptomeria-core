@@ -26,8 +26,7 @@ else
         --skip-git \
         --default-denom uatom \
         --path "./$CHAIN_DIR" \
-        --skip-proto \
-        -v
+        --skip-proto 
 
 
     cd "$CHAIN_DIR"
@@ -35,7 +34,7 @@ else
     # echo -e "version: v2\nplugins: []" > ./proto/buf.gen.swagger.yaml
     
     # 共通処理(2): モジュールを生成
-    ignite scaffold module --ibc "$MODULE_NAME" --dep bank --yes -v 
+    ignite scaffold module --ibc "$MODULE_NAME" --dep bank --yes
     
     # 固有処理: チェーン名に応じてデータ構造の定義を分岐
     echo "🧬  Scaffolding specific data structures for $CHAIN_NAME..."
@@ -46,7 +45,6 @@ else
                 --module "$MODULE_NAME" \
                 --index index:string \
                 --signer creator \
-                -v \
                 --yes
             ;;
         "metachain")
@@ -56,7 +54,6 @@ else
                 --module "$MODULE_NAME" \
                 --index url:string \
                 --signer creator \
-                -v \
                 --yes
             ;;
         *)

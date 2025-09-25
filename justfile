@@ -26,8 +26,9 @@ all-in-one: clean scaffold-chain build deploy
     @echo "✅ All-in-one process complete!"
 # --- Build Tasks ---
 
-# [推奨] 全てのコンポーネントをビルド
-build: build-datachain build-metachain build-relayer
+# [推奨] 全てのコンポーネントをビルドし、kindクラスタにロード
+build: build-datachain build-metachain build-relayer kind-load
+    @echo "✅ All images built and loaded into kind cluster."
 
 # datachainのDockerイメージをビルド
 build-datachain:
@@ -40,6 +41,18 @@ build-metachain:
 # relayerのDockerイメージをビルド
 build-relayer:
     @{{RUN_SCRIPT}} docker build -t {{IMAGE_RELAYER}} -f build/relayer/Dockerfile .
+
+# --- Kind Tasks (★★ 追加 ★★) ---
+# ビルドした全てのイメージをkindクラスタにロード
+kind-load: kind-load-datachain kind-load-metachain kind-load-relayer
+
+kind-load-datachain:
+    @kind load docker-image {{IMAGE_DATACHAIN}}
+kind-load-metachain:
+    @kind load docker-image {{IMAGE_METACHAIN}}
+kind-load-relayer:
+    @kind load docker-image {{IMAGE_RELAYER}}
+
 # --- Kubernetes Tasks ---
 
 # Helmを使い、Kubernetesクラスタにデプロイ
@@ -94,10 +107,10 @@ scaffold-chain:
     @echo "✅ Scaffold complete! Check the 'chain' directory."
 
 scaffold-datachain:
-    @{{RUN_SCRIPT}} ignite scaffold chain datachain --path ./chain/datachain --no-module --skip-git --default-denom uatom --skip-proto -v
+    @{{RUN_SCRIPT}} ./scripts/scaffold/scaffold-chain.sh datachain datastore
 
 scaffold-metachain:
-    @{{RUN_SCRIPT}} ignite scaffold chain metachain --path ./chain/metachain --no-module --skip-git --default-denom uatom --skip-proto -v
+    @{{RUN_SCRIPT}} ./scripts/scaffold/scaffold-chain.sh metachain metastore
 
 # --- Cleanup Tasks ---
 

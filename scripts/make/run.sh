@@ -9,8 +9,10 @@ PROJECT_NAME=$(basename "$(pwd)")
 GO_MOD_VOLUME="${PROJECT_NAME}-go-mod"
 
 # ★★★ 所有権を修正するステップを追加 ★★★
-echo "==> 🛠️  Ensuring cache volume permissions..."
-docker volume create "${GO_MOD_VOLUME}" > /dev/null
+if ! docker volume inspect "${GO_MOD_VOLUME}" >/dev/null 2>&1; then
+    echo "--> Volume '${GO_MOD_VOLUME}' not found. Creating..."
+    docker volume create "${GO_MOD_VOLUME}" >/dev/null
+fi
 
 echo "==> 🐳 Executing in container: $@"
 
