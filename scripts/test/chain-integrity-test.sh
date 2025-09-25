@@ -9,10 +9,10 @@ info() {
     echo -e "\033[36m[INFO] $1\033[0m"
 }
 success() {
-    echo -e "\033[32m[SUCCESS] $1\033[0m"
+    echo -e "\032[32m[SUCCESS] $1\033[0m"
 }
 error() {
-    echo -e "\033[31m[ERROR] $1\033[0m"
+    echo -e "\031[31m[ERROR] $1\033[0m"
     exit 1
 }
 step() {
@@ -20,7 +20,6 @@ step() {
 }
 
 # --- 変数定義 ---
-# Podのラベル情報から、実際のセレクターに修正
 DATACHAIN_POD_LABEL="app.kubernetes.io/name=raidchain,app.kubernetes.io/instance=data-0"
 METACHAIN_POD_LABEL="app.kubernetes.io/name=raidchain,app.kubernetes.io/instance=meta-0"
 
@@ -69,7 +68,6 @@ wait_for_pod() {
         if [[ -n "$pod_name" ]]; then
             pod_status=$(kubectl get pod -n ${DETECTED_NAMESPACE} ${pod_name} -o jsonpath='{.status.phase}' 2>/dev/null)
             if [[ "$pod_status" == "Running" ]]; then
-                # 引数で渡された変数名（例: "DATACHAIN_POD"）に、見つかったPod名を設定する
                 eval "$pod_name_var=$pod_name"
                 success "Pod '${pod_name}' がRunning状態になりました。"
                 return
@@ -97,7 +95,7 @@ metachaind() {
 # --- Chain IDを動的に取得 ---
 step "Chain IDの動的取得"
 info "各チェーンのPodからChain IDを取得しています..."
-DATACHAIN_ID="data-1"
+DATACHAIN_ID="data-0"
 METACHAIN_ID="meta-0"
 
 if [[ -z "$DATACHAIN_ID" || "$DATACHAIN_ID" == "null" ]]; then
@@ -109,12 +107,11 @@ fi
 success "datachainのID: ${DATACHAIN_ID}, metachainのID: ${METACHAIN_ID} を取得しました。"
 
 # --- テストで使用するデータを定義 ---
-TEST_CHUNK_INDEX="test-chunk-$(date +%s)" # 毎回ユニークなIndexにする
+UNIQUE_SUFFIX=$(date +%s)
+TEST_CHUNK_INDEX="test-chunk-${UNIQUE_SUFFIX}"
 TEST_CHUNK_DATA_RAW="これはdatachainへの保存テスト用のデータです。"
-# datachainのCLIは16進数文字列でデータを受け取るため、xxdで変換する
 TEST_CHUNK_DATA_HEX=$(echo -n "${TEST_CHUNK_DATA_RAW}" | xxd -p -c 256) 
-TEST_URL="my-test-site-$(date +%s)/" # 毎回ユニークなURLにする
-# metachainに登録するマニフェスト（JSON形式）
+TEST_URL="my-test-site-${UNIQUE_SUFFIX}/"
 TEST_MANIFEST_JSON="{\"filepath\":\"/index.html\",\"chunk_list\":{\"chunks\":[\"${TEST_CHUNK_INDEX}\"]}}"
 
 # --- テスト実行 ---
@@ -127,7 +124,6 @@ TX_OUTPUT_DATA=$(datachaind tx datastore create-stored-chunk "${TEST_CHUNK_INDEX
     --from validator --keyring-backend test --chain-id "${DATACHAIN_ID}" --gas auto --gas-adjustment 1.5 --fees 1000uatom -y -o json)
 TX_HASH_DATA=$(echo "${TX_OUTPUT_DATA}" | jq -r '.txhash')
 
-# トランザクションが失敗していないかチェック
 if [[ -z "$TX_HASH_DATA" || "$TX_HASH_DATA" == "null" || $(echo "${TX_OUTPUT_DATA}" | jq -r '.code') != "0" ]]; then
     error "Datachainへのトランザクション発行に失敗しました。 \n出力: ${TX_OUTPUT_DATA}"
 fi
@@ -139,7 +135,10 @@ sleep 10
 step "2. Datachain: データチャンク取得テスト"
 info "保存したデータ (Index: ${TEST_CHUNK_INDEX}) をdatachainからクエリで取得します..."
 QUERY_OUTPUT_DATA=$(datachaind query datastore get-stored-chunk "${TEST_CHUNK_INDEX}" -o json)
-STORED_DATA_HEX=$(echo "${QUERY_OUTPUT_DATA}" | jq -r '.storedChunk.data' | sed 's/^0x//')
+
+# ★★★ 修正箇所 ★★★
+# jqで抽出するキーを `storedChunk` (camelCase) から `stored_chunk` (snake_case) に修正
+STORED_DATA_HEX=$(echo "${QUERY_OUTPUT_DATA}" | jq -r '.stored_chunk.data' | sed 's/^0x//')
 STORED_DATA_RAW=$(echo "${STORED_DATA_HEX}" | xxd -r -p)
 
 info "取得したデータ: '${STORED_DATA_RAW}'"
@@ -169,8 +168,13 @@ sleep 10
 step "4. Metachain: マニフェスト取得テスト"
 info "保存したマニフェスト (URL: ${TEST_URL}) をmetachainからクエリで取得します..."
 QUERY_OUTPUT_META=$(metachaind query metastore get-manifest "${TEST_URL}" -o json)
-STORED_MANIFEST_FILEPATH=$(echo "${QUERY_OUTPUT_META}" | jq -r '.manifest.filepath')
-STORED_MANIFEST_CHUNK=$(echo "${QUERY_OUTPUT_META}" | jq -r '.manifest.chunk_list.chunks[0]')
+
+# ★★★ 修正箇所 ★★★
+# jqで抽出するキーを `Manifest` (PascalCase) から `manifest` (snake_case) に修正
+STORED_MANIFEST_STRING=$(echo "${QUERY_OUTPUT_META}" | jq -r '.manifest.manifest')
+
+STORED_MANIFEST_FILEPATH=$(echo "${STORED_MANIFEST_STRING}" | jq -r '.filepath')
+STORED_MANIFEST_CHUNK=$(echo "${STORED_MANIFEST_STRING}" | jq -r '.chunk_list.chunks[0]')
 
 EXPECTED_FILEPATH=$(echo "${TEST_MANIFEST_JSON}" | jq -r '.filepath')
 EXPECTED_CHUNK=$(echo "${TEST_MANIFEST_JSON}" | jq -r '.chunk_list.chunks[0]')
@@ -184,5 +188,4 @@ fi
 success "Metachainのマニフェスト保存・取得テストに成功しました。"
 
 echo ""
-success "🎉 全てのテストが正常に完了しました！ `datachain` と `metachain` は正しく動作しています。"
-
+success "🎉 全てのテストが正常に完了しました！ \`datachain\` と \`metachain\` は正しく動作しています。"
