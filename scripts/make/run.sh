@@ -18,6 +18,7 @@ echo "==> 🐳 Executing in container: $@"
 
 docker run --rm -it \
     -u "$(id -u):$(id -g)" \
+    -e DOCKER_IN_DOCKER=true \
     --group-add "$(getent group docker | cut -d: -f3)" \
     -v "$(pwd):/workspace" \
     -v "/var/run/docker.sock:/var/run/docker.sock" \
