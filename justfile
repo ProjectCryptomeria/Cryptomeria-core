@@ -94,15 +94,10 @@ exec-metachain:
 test:
     @{{RUN_SCRIPT}} ./scripts/test/chain-integrity-test.sh
 
-# 新しいチェーンのひな形を生成 (Ignite公式イメージ＋名前付きボリュームで実行)
+# 新しいチェーンのひな形を生成
 scaffold-chain:
-    @{{RUN_FAST_SCRIPT}} {{IGNITE_IMAGE}} just _scaffold-chain-internal
-
-# scaffold-chain の内部処理 (コンテナ内で直接実行されるタスク)
-_scaffold-chain-internal:
-    @./scripts/scaffold/scaffold-chain.sh datachain datastore
-    @./scripts/scaffold/scaffold-chain.sh metachain metastore
-
+    @{{RUN_FAST_SCRIPT}} {{IGNITE_IMAGE}} ./scripts/scaffold/scaffold-chain.sh datachain datastore
+    @{{RUN_FAST_SCRIPT}} {{IGNITE_IMAGE}} ./scripts/scaffold/scaffold-chain.sh metachain metastore
 
 # --- Cleanup Tasks ---
 

@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package datachain.datastore.v1;
+
+import "amino/amino.proto";
+import "datachain/datastore/v1/params.proto";
+import "datachain/datastore/v1/stored_chunk.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "datachain/x/datastore/types";
+
+// GenesisState defines the datastore module's genesis state.
+message GenesisState {
+  // params defines all the parameters of the module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  string port_id = 2;
+  repeated StoredChunk stored_chunk_map = 3 [(gogoproto.nullable) = false];
+}
