@@ -2,7 +2,6 @@
 
 # --- 変数定義 ---
 RUN_SCRIPT        := "./scripts/make/run.sh"
-RUN_FAST_SCRIPT   := "./scripts/make/run-fast.sh"
 DEV_IMAGE         := "raidchain/dev-tools:latest"
 IGNITE_IMAGE      := "ignitehq/cli:latest"
 HELM_RELEASE_NAME := "raidchain"
@@ -20,13 +19,11 @@ default:
 # 開発用の実行環境(dev-tools)イメージをビルド
 init-runtime:
     @docker build -t {{DEV_IMAGE}} -f develop.Dockerfile .
-
 # --- Workflow ---
 
 # [一括実行] クリーンアップ、再生成、ビルド、デプロイを全て実行
 all-in-one: clean scaffold-chain build deploy
     @echo "✅ All-in-one process complete!"
-
 # --- Build Tasks ---
 
 # [推奨] 全てのコンポーネントをビルド
@@ -36,17 +33,13 @@ build: build-datachain build-metachain build-relayer
 build-datachain:
     @{{RUN_SCRIPT}} ignite chain build --path ./chain/datachain -o dist --skip-proto
     @{{RUN_SCRIPT}} docker build -t {{IMAGE_DATACHAIN}} -f build/datachain/Dockerfile .
-
 # metachainのDockerイメージをビルド
 build-metachain:
     @{{RUN_SCRIPT}} ignite chain build --path ./chain/metachain -o dist --skip-proto
     @{{RUN_SCRIPT}} docker build -t {{IMAGE_METACHAIN}} -f build/metachain/Dockerfile .
-
 # relayerのDockerイメージをビルド
 build-relayer:
     @{{RUN_SCRIPT}} docker build -t {{IMAGE_RELAYER}} -f build/relayer/Dockerfile .
-
-
 # --- Kubernetes Tasks ---
 
 # Helmを使い、Kubernetesクラスタにデプロイ
@@ -101,10 +94,10 @@ scaffold-chain:
     @echo "✅ Scaffold complete! Check the 'chain' directory."
 
 scaffold-datachain:
-    @{{RUN_FAST_SCRIPT}} {{IGNITE_IMAGE}} ./scripts/scaffold/scaffold-chain.sh datachain datastore
+    @{{RUN_SCRIPT}} ignite scaffold chain datachain --path ./chain/datachain --no-module --skip-git --default-denom uatom --skip-proto -v
 
 scaffold-metachain:
-    @{{RUN_FAST_SCRIPT}} {{IGNITE_IMAGE}} ./scripts/scaffold/scaffold-chain.sh metachain metastore
+    @{{RUN_SCRIPT}} ignite scaffold chain metachain --path ./chain/metachain --no-module --skip-git --default-denom uatom --skip-proto -v
 
 # --- Cleanup Tasks ---
 

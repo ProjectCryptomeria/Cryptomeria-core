@@ -18,7 +18,7 @@ RUN apt-get update
 # レイヤー2: 基本ツールのインストール
 RUN apt-get install -y --no-install-recommends \
     bash make curl git openssl sudo time xxd jq just \
-    docker.io software-properties-common ca-certificates rsync
+    docker.io software-properties-common ca-certificates
 
 # レイヤー3: 後片付け (イメージサイズ削減)
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -42,6 +42,9 @@ RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/s
 RUN curl -Lo ./kind "https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64" && \
     chmod +x ./kind && \
     mv ./kind /usr/local/bin/kind
+
+# Ignite CLIをインストール
+RUN curl -sSfL https://get.ignite.com/cli! | bash
 
 # 作業ディレクトリとキャッシュ用のディレクトリを作成
 WORKDIR /workspace

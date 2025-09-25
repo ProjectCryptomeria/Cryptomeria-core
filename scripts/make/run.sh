@@ -7,12 +7,10 @@ set -euo pipefail
 DEV_IMAGE="raidchain/dev-tools:latest"
 PROJECT_NAME=$(basename "$(pwd)")
 GO_MOD_VOLUME="${PROJECT_NAME}-go-mod"
-GO_BUILD_VOLUME="${PROJECT_NAME}-go-build"
 
 # ★★★ 所有権を修正するステップを追加 ★★★
 echo "==> 🛠️  Ensuring cache volume permissions..."
 docker volume create "${GO_MOD_VOLUME}" > /dev/null
-docker volume create "${GO_BUILD_VOLUME}" > /dev/null
 
 echo "==> 🐳 Executing in container: $@"
 
