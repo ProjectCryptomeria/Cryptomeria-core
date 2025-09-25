@@ -1,47 +1,57 @@
-# ベースイメージをUbuntuに変更します
+# ベースイメージ
 FROM ubuntu:24.04
 
-# 環境変数を設定
+# 環境変数を設定 (Goのパスとキャッシュディレクトリを明示的に定義)
+ENV GOPATH=/go
+ENV GOCACHE=/go/cache
+ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
 ENV KUBECONFIG=/root/.kube/config
 
-# 必要なパッケージをインストール
-RUN apt-get update && apt-get install -y \
+# aptパッケージのインストールと後片付けを一つのRUN命令に集約
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    # 基本ツール
     bash \
     make \
     curl \
     git \
-    docker.io \
     openssl \
     sudo \
-    software-properties-common
+    time \
+    # Docker-in-Docker用
+    docker.io \
+    # PPA追加とHTTPS通信に必要
+    software-properties-common \
+    ca-certificates \
+    # ビルド高速化のためのファイル同期ツール
+    rsync && \
+    # Go言語をPPAからインストール
+    add-apt-repository -y ppa:longsleep/golang-backports && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends golang-go && \
+    # 後片付け (イメージサイズ削減)
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN add-apt-repository ppa:longsleep/golang-backports 
-RUN apt-get update 
-RUN apt-get install golang-go -y
-    
 # Helmをインストール
-RUN curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 && \
-    chmod 700 get_helm.sh && \
-    ./get_helm.sh && \
-    rm get_helm.sh
+RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
 # kubectlをインストール
 RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
     install -m 0755 kubectl /usr/local/bin/kubectl && \
     rm kubectl
 
-# kindをインストールする
-RUN set -x && \
-    [ $(uname -m) = x86_64 ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64 || \
-    [ $(uname -m) = aarch64 ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-arm64 && \
+# kindをインストール
+RUN curl -Lo ./kind "https://kind.sigs.k8s.io/dl/v0.20.0/kind-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')-v0.20.0" && \
     chmod +x ./kind && \
     mv ./kind /usr/local/bin/kind
 
 # Ignite CLIをインストール
 RUN curl https://get.ignite.com/cli! | bash
 
-# 作業ディレクトリを設定
+# 作業ディレクトリとキャッシュ用のディレクトリを作成
 WORKDIR /workspace
+RUN mkdir -p /go/cache /go/pkg && chmod -R 777 /go
 
 # デフォルトコマンド
 CMD [ "bash" ]
