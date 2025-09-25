@@ -20,10 +20,10 @@ chains:
 # チェーンの「種類」ごとの設定を定義します。
 chainTypes:
   datachain:
-    repository: datachain-image
+    repository: raidchain/datachain
     tag: latest
   metachain:
-    repository: metachain-image
+    repository: raidchain/metachain
     tag: latest
 
 chain:
@@ -34,6 +34,6 @@ chain:
 # Relayer Configuration
 # =============================================================================
 relayer:
-  repository: relayer-image
+  repository: raidchain/relayer
   tag: latest
   pullPolicy: IfNotPresent

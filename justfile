@@ -9,7 +9,6 @@ NAMESPACE         := "raidchain"
 IMAGE_DATACHAIN   := "raidchain/datachain:latest"
 IMAGE_METACHAIN   := "raidchain/metachain:latest"
 IMAGE_RELAYER     := "raidchain/relayer:latest"
-KIND_CLUSTER_NAME := "raidchain-cluster"
 
 # justコマンドのデフォルトの挙動を設定。コマンド一覧を表示する。
 default:
@@ -28,7 +27,7 @@ all-in-one: clean scaffold-chain build deploy
 # --- Build Tasks ---
 
 # [推奨] 全てのコンポーネントをビルドし、kindクラスタにロード
-build: build-datachain build-metachain build-relayer kind-load
+build: build-datachain build-metachain build-relayer
     @echo "✅ All images built and loaded into kind cluster."
 
 # datachainのDockerイメージをビルド
@@ -43,30 +42,12 @@ build-metachain:
 build-relayer:
     @{{RUN_SCRIPT}} docker build -t {{IMAGE_RELAYER}} -f build/relayer/Dockerfile .
 
-# --- Kind Tasks ---
-
-kind-cluster:
-    @echo "==>  Kubeconfig path will be set automatically by kind."
-    @{{RUN_SCRIPT}} kind create cluster --name {{KIND_CLUSTER_NAME}}
-
-kind-delete:
-    @{{RUN_SCRIPT}} kind delete cluster --name {{KIND_CLUSTER_NAME}}
-
-kind-load: kind-load-datachain kind-load-metachain kind-load-relayer
-
-kind-load-datachain:
-    @{{RUN_SCRIPT}} kind load docker-image --name {{KIND_CLUSTER_NAME}} {{IMAGE_DATACHAIN}}
-kind-load-metachain:
-    @{{RUN_SCRIPT}} kind load docker-image --name {{KIND_CLUSTER_NAME}} {{IMAGE_METACHAIN}}
-kind-load-relayer:
-    @{{RUN_SCRIPT}} kind load docker-image --name {{KIND_CLUSTER_NAME}} {{IMAGE_RELAYER}}
-
 # --- Kubernetes Tasks ---
 
 # Helmを使い、Kubernetesクラスタにデプロイ
 deploy:
     @{{RUN_SCRIPT}} helm dependency update k8s/helm/raidchain
-    @{{RUN_SCRIPT}} helm install {{HELM_RELEASE_NAME}} k8s/helm/raidchain --namespace {{NAMESPACE}} --create-namespace --debug
+    @{{RUN_SCRIPT}} helm install {{HELM_RELEASE_NAME}} k8s/helm/raidchain --namespace {{NAMESPACE}} --create-namespace
 
 # デプロイされたアプリケーションをクラスタからアンインストール (エラーを無視)
 undeploy:

@@ -38,11 +38,6 @@ RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/s
     install -m 0755 kubectl /usr/local/bin/kubectl && \
     rm kubectl
 
-# kindをインストール
-RUN curl -Lo ./kind "https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64" && \
-    chmod +x ./kind && \
-    mv ./kind /usr/local/bin/kind
-
 # Ignite CLIをインストール
 RUN curl -sSfL https://get.ignite.com/cli! | bash
 

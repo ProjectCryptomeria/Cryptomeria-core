@@ -58,10 +58,10 @@ spec:
 
               echo "--> Generating mnemonic for ${CHAIN_NAME}..."
               # `rly keys add` のJSON出力を `jq` でパースし、ニーモニックのみを抽出する
-              MNEMONIC_JSON=$(rly keys add ${CHAIN_NAME} tmp-key)
-              echo "Output from 'rly keys add':"
-              echo "${MNEMONIC_JSON}"
-              MNEMONIC=$(echo "${MNEMONIC_JSON}" | jq -r '.mnemonic')
+              OUTPUT=$(rly keys add ${CHAIN_NAME} tmp-key 2>&1)
+              echo "Full output from 'rly keys add':"
+              echo "${OUTPUT}"
+              MNEMONIC=$(echo "${OUTPUT}" | jq -r '.mnemonic')
 
               # ニーモニックが空でないことを確認
               if [ -z "${MNEMONIC}" ]; then
