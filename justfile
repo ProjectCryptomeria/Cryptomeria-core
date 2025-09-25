@@ -4,7 +4,7 @@
 RUN_SCRIPT        := "./scripts/make/run.sh"
 RUN_FAST_SCRIPT   := "./scripts/make/run-fast.sh"
 DEV_IMAGE         := "raidchain/dev-tools:latest"
-IGNITE_IMAGE      := "ignitehq/cli:0.25.2"
+IGNITE_IMAGE      := "ignitehq/cli:latest"
 HELM_RELEASE_NAME := "raidchain"
 NAMESPACE         := "raidchain"
 IMAGE_DATACHAIN   := "raidchain/datachain:latest"
