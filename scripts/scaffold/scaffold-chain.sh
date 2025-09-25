@@ -29,6 +29,7 @@ else
         --skip-git \
         --default-denom uatom \
         --path "./$CHAIN_DIR" \
+        --skip-proto 
 
 
     cd "$CHAIN_DIR"
@@ -50,29 +51,13 @@ else
                 --yes
             ;;
         "metachain")
-            # metachain: 「雛形生成 → .protoファイル自動修正 → コード再生成」の自動化フロー
-            echo "  ➡️  Step 1/4: Scaffolding templates..."
-            # Step 1-1: `map`の値となる `ChunkList` 型の雛形を生成
-            ignite scaffold type ChunkList hashes:array.string --module "$MODULE_NAME" --no-message
-
-            # Step 1-2: `Manifest` Mapストアの雛形を生成 (値の型は仮で`ChunkList`を指定)
-            ignite scaffold map Manifest manifest:ChunkList --module "$MODULE_NAME" --signer creator --index url:string
-
-            echo "  ➡️  Step 2/4: Modifying manifest.proto..."
-            # Step 2: manifest.proto内のmanifestフィールドの型を map<string, ChunkList> に置換
-            MANIFEST_PROTO="proto/${CHAIN_NAME}/${MODULE_NAME}/v1/manifest.proto"
-            sed -i.bak 's/ChunkList manifest/map<string, ChunkList> manifest/g' "$MANIFEST_PROTO"
-            rm "${MANIFEST_PROTO}.bak"
-            
-            echo "  ➡️  Step 3/4: Modifying tx.proto..."
-            # Step 3: tx.proto内のMsgCreateManifestとMsgUpdateManifestのmanifestフィールドの型を置換
-            TX_PROTO="proto/${CHAIN_NAME}/${MODULE_NAME}/v1/tx.proto"
-            sed -i.bak 's/ChunkList manifest/map<string, ChunkList> manifest/g' "$TX_PROTO"
-            rm "${TX_PROTO}.bak"
-
-            echo "  ➡️  Step 4/4: Regenerating Go code from modified .proto files..."
-            # Step 4: 編集した.protoファイルを元にGoのコードを再生成
-            ignite generate proto-go
+            # metachain: url(string)をキーとし、マニフェスト(string)を値とするKVSを定義
+            # マニフェスト自体はJSON文字列としてそのまま保存する
+            ignite scaffold map Manifest manifest:string \
+                --module "$MODULE_NAME" \
+                --index url:string \
+                --signer creator \
+                --yes
             ;;
         *)
             echo "💥 Error: Unknown chain name '$CHAIN_NAME'."

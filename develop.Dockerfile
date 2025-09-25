@@ -7,31 +7,28 @@ ENV GOCACHE=/go/cache
 ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
 ENV KUBECONFIG=/root/.kube/config
 
-# aptパッケージのインストールと後片付けを一つのRUN命令に集約
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    # 基本ツール
-    bash \
-    make \
-    curl \
-    git \
-    openssl \
-    sudo \
-    time \
-    # Docker-in-Docker用
-    docker.io \
-    # PPA追加とHTTPS通信に必要
-    software-properties-common \
-    ca-certificates \
-    # ビルド高速化のためのファイル同期ツール
-    rsync && \
-    # Go言語をPPAからインストール
-    add-apt-repository -y ppa:longsleep/golang-backports && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends golang-go && \
-    # 後片付け (イメージサイズ削減)
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# --- Goのバージョンを定義 ---
+ARG GO_VERSION=1.25.1
+
+# --- パッケージインストール (レイヤーキャッシュを効かせるために分割) ---
+
+# レイヤー1: パッケージリストの更新
+RUN apt-get update
+
+# レイヤー2: 基本ツールのインストール
+RUN apt-get install -y --no-install-recommends \
+    bash make curl git openssl sudo time xxd jq just \
+    docker.io software-properties-common ca-certificates rsync
+
+# レイヤー3: 後片付け (イメージサイズ削減)
+RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# --- ツールインストール ---
+
+# レイヤー4: Go言語のインストール (PPAを使わず公式バイナリから直接インストール)
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o go.tar.gz && \
+    tar -C /usr/local -xzf go.tar.gz && \
+    rm go.tar.gz
 
 # Helmをインストール
 RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
@@ -42,12 +39,9 @@ RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/s
     rm kubectl
 
 # kindをインストール
-RUN curl -Lo ./kind "https://kind.sigs.k8s.io/dl/v0.20.0/kind-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')-v0.20.0" && \
+RUN curl -Lo ./kind "https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64" && \
     chmod +x ./kind && \
     mv ./kind /usr/local/bin/kind
-
-# Ignite CLIをインストール
-RUN curl https://get.ignite.com/cli! | bash
 
 # 作業ディレクトリとキャッシュ用のディレクトリを作成
 WORKDIR /workspace
