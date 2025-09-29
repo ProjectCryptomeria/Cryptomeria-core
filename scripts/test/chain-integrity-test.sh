@@ -9,10 +9,10 @@ info() {
     echo -e "\033[36m[INFO] $1\033[0m"
 }
 success() {
-    echo -e "\032[32m[SUCCESS] $1\033[0m"
+    echo -e "\033[32m[SUCCESS] $1\033[0m"
 }
 error() {
-    echo -e "\031[31m[ERROR] $1\033[0m"
+    echo -e "\033[31m[ERROR] $1\033[0m"
     exit 1
 }
 step() {
