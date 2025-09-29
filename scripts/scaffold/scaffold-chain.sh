@@ -31,7 +31,7 @@ else
 
     cd "$CHAIN_DIR"
 
-    # echo -e "version: v2\nplugins: []" > ./proto/buf.gen.swagger.yaml
+    echo -e "version: v2\nplugins: []" > ./proto/buf.gen.swagger.yaml
     
     # 共通処理(2): モジュールを生成
     ignite scaffold module --ibc "$MODULE_NAME" --dep bank --yes
