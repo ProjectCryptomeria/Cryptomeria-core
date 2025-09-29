@@ -43,7 +43,8 @@ RUN curl -sSfL https://get.ignite.com/cli! | bash
 
 # 作業ディレクトリとキャッシュ用のディレクトリを作成
 WORKDIR /workspace
-RUN mkdir -p /go/cache /go/pkg && chmod -R 777 /go
+RUN mkdir -p /go/cache /go/pkg /go/gomod && chmod -R 777 /go
+RUN go env -w GOMODCACHE=/go/gomod
 
 # デフォルトコマンド
 CMD [ "bash" ]

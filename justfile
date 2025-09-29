@@ -26,7 +26,7 @@ all-in-one: clean scaffold-chain build deploy
     @echo "✅ All-in-one process complete!"
 # --- Build Tasks ---
 
-# [推奨] 全てのコンポーネントをビルドし、kindクラスタにロード
+# [推奨] 全てのコンポーネントをビルド
 build: build-datachain build-metachain build-relayer
     @echo "✅ All images built and loaded into kind cluster."
 

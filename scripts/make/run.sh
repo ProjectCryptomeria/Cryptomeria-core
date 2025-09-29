@@ -23,8 +23,7 @@ docker run --rm -it \
     -v "$(pwd):/workspace" \
     -v "/var/run/docker.sock:/var/run/docker.sock" \
     -v "${HOME}/.kube:/home/user/.kube" \
-    -v "${GO_MOD_VOLUME}:/home/tendermint/gomod" \
-    -e GOMODCACHE=/home/tendermint/gomod \
+    -v "${GO_MOD_VOLUME}:/go/gomod" \
     -e IN_CONTAINER=true \
     -e KUBECONFIG=/home/user/.kube/config \
     -e DO_NOT_TRACK=1 \
