@@ -1,5 +1,5 @@
 import * as fs from 'fs/promises';
-import path from 'path';
+import * as path from 'path';
 import { uploadChunkToDataChain, uploadManifestToMetaChain } from '../blockchain';
 import { queryStoredChunk, queryStoredManifest } from '../blockchain-query';
 import { splitFileIntoChunks } from '../chunker';
@@ -35,6 +35,67 @@ export const log = {
  */
 export class RaidchainClient {
 	private dataChains: DataChainId[] = ['data-0', 'data-1'];
+	private verificationTimeoutMs = 20000; // 20秒
+	private verificationPollIntervalMs = 1000; // 1秒
+
+	// (★★★ この関数を追加 ★★★)
+	/**
+	 * チャンクをアップロードし、APIで確認できるまで待機する
+	 */
+	private async _uploadAndVerifyChunk(targetChain: DataChainId, chunkIndex: string, chunk: Buffer): Promise<void> {
+		// 1. トランザクションをブロードキャスト
+		const txResult = await uploadChunkToDataChain(targetChain, chunkIndex, chunk);
+		if (txResult.code !== 0) {
+			throw new Error(`チャンク(${chunkIndex})のアップロードトランザクションが失敗しました (コード: ${txResult.code}): ${txResult.rawLog}`);
+		}
+		log.info(`  ... tx (${txResult.transactionHash.slice(0, 10)}...) 成功。APIでの確認を開始します...`);
+
+		// 2. データがAPIで取得可能になるまでポーリング
+		const startTime = Date.now();
+		while (Date.now() - startTime < this.verificationTimeoutMs) {
+			try {
+				await queryStoredChunk(targetChain, chunkIndex);
+				log.info(`  ... チャンク '${chunkIndex}' がAPIで確認できました。`);
+				return; // 確認成功
+			} catch (error: any) {
+				if (error.message && error.message.includes('Not Found (404)')) {
+					await new Promise(resolve => setTimeout(resolve, this.verificationPollIntervalMs));
+				} else {
+					throw error; // 404以外の予期せぬエラー
+				}
+			}
+		}
+		throw new Error(`チャンク '${chunkIndex}' のAPI確認がタイムアウトしました。`);
+	}
+
+	// (★★★ この関数を追加 ★★★)
+	/**
+	 * マニフェストをアップロードし、APIで確認できるまで待機する
+	 */
+	private async _uploadAndVerifyManifest(urlIndex: string, manifestString: string): Promise<void> {
+		const txResult = await uploadManifestToMetaChain(urlIndex, manifestString);
+		if (txResult.code !== 0) {
+			throw new Error(`マニフェスト(${urlIndex})のアップロードトランザクションが失敗しました (コード: ${txResult.code}): ${txResult.rawLog}`);
+		}
+		log.info(`  ... tx (${txResult.transactionHash.slice(0, 10)}...) 成功。APIでの確認を開始します...`);
+
+		const startTime = Date.now();
+		while (Date.now() - startTime < this.verificationTimeoutMs) {
+			try {
+				await queryStoredManifest(urlIndex);
+				log.info(`  ... マニフェスト '${urlIndex}' がAPIで確認できました。`);
+				return; // 確認成功
+			} catch (error: any) {
+				if (error.message && error.message.includes('Not Found (404)')) {
+					await new Promise(resolve => setTimeout(resolve, this.verificationPollIntervalMs));
+				} else {
+					throw error;
+				}
+			}
+		}
+		throw new Error(`マニフェスト '${urlIndex}' のAPI確認がタイムアウトしました。`);
+	}
+
 
 	/**
 	 * ファイルをチャンクに分割し、指定された戦略でRaidchainにアップロードします。
@@ -66,17 +127,15 @@ export class RaidchainClient {
 					break;
 				case 'round-robin':
 				default:
-					// ★★★ 修正箇所 ★★★: 配列アクセスがundefinedを返す可能性を型ガードで排除
 					const target = this.dataChains[i % this.dataChains.length];
-					if (!target) {
-						throw new Error("アップロード先のdatachainが見つかりません。");
-					}
+					if (!target) throw new Error("アップロード先のdatachainが見つかりません。");
 					uploadTarget = target;
 					break;
 			}
 
 			log.info(`  -> チャンク #${i} (${(chunk.length / 1024).toFixed(2)} KB) を ${uploadTarget} へ...`);
-			await uploadChunkToDataChain(uploadTarget, chunkIndex, chunk);
+			// (★★★ 修正箇所 ★★★) 堅牢なアップロード関数を呼び出す
+			await this._uploadAndVerifyChunk(uploadTarget, chunkIndex, chunk);
 			return chunkIndex;
 		});
 
@@ -86,10 +145,13 @@ export class RaidchainClient {
 			filepath: path.basename(filePath),
 			chunks: uploadedChunkIndexes,
 		};
+		const manifestString = JSON.stringify(manifest);
 
 		log.info(`マニフェストを metachain にアップロードします (URL: ${siteUrl})`);
-		await uploadManifestToMetaChain(urlIndex, JSON.stringify(manifest));
-		log.success(`アップロード完了: ${siteUrl}`);
+		// (★★★ 修正箇所 ★★★) 堅牢なアップロード関数を呼び出す
+		await this._uploadAndVerifyManifest(urlIndex, manifestString);
+
+		log.success(`アップロードとAPIでの検証が完了しました: ${siteUrl}`);
 		return { manifest, urlIndex };
 	}
 
@@ -111,7 +173,6 @@ export class RaidchainClient {
 		log.success(`マニフェスト取得完了。${manifest.chunks.length}個のチャンクをダウンロードします。`);
 
 		const chunkDownloadPromises = manifest.chunks.map((chunkIndex, i) => {
-			// ★★★ 修正箇所 ★★★: 配列アクセスがundefinedを返す可能性を型ガードで排除
 			const targetChain = this.dataChains[i % this.dataChains.length];
 			if (!targetChain) {
 				throw new Error(`チャンク '${chunkIndex}' の取得先datachainが見つかりません。`);
@@ -139,15 +200,13 @@ export class RaidchainClient {
 	 * @returns 生成されたファイルの内容
 	 */
 	async createTestFile(filePath: string, sizeInKb: number): Promise<string> {
+		const buffer = Buffer.alloc(sizeInKb * 1024, 'a');
 		const content = `Test file of ${sizeInKb} KB. Unique ID: ${Date.now()}`;
-		const oneKbString = 'a'.repeat(1024 - content.length > 0 ? 1024 - content.length : 0);
-		let fileContent = content + oneKbString;
-		for (let i = 1; i < sizeInKb; i++) {
-			fileContent += 'a'.repeat(1024);
-		}
-		await fs.writeFile(filePath, fileContent);
+		buffer.write(content); // バッファの先頭に識別用文字列を書き込む
+
+		await fs.writeFile(filePath, buffer);
 		log.info(`${sizeInKb} KBのテストファイルを生成しました: ${filePath}`);
-		return fileContent;
+		return buffer.toString('utf-8');
 	}
 
 	/**
@@ -175,8 +234,9 @@ export class RaidchainClient {
 
 		try {
 			const response = await fetch(`${rpcEndpoint}/num_unconfirmed_txs`);
+			if (!response.ok) return { chainId, pendingTxs: Infinity };
 			const data = await response.json();
-			const pendingTxs = parseInt(data.result.n_txs, 10);
+			const pendingTxs = parseInt(data.result?.n_txs ?? '0', 10);
 			return { chainId, pendingTxs };
 		} catch (error) {
 			log.error(`${chainId} のステータス取得に失敗: ${error}`);
@@ -193,3 +253,4 @@ export class RaidchainClient {
 		return chunks;
 	}
 }
+

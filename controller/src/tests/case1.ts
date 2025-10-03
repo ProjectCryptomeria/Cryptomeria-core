@@ -11,23 +11,28 @@ async function main() {
 
 	for (const size of sizesToTest) {
 		log.step(`--- サイズ: ${size} KB ---`);
-		await client.createTestFile(testFilePath, size);
+		const originalContent = await client.createTestFile(testFilePath, size);
 		const siteUrl = `limit-test/${size}kb`;
 
 		try {
-			// チャンクサイズをファイルサイズより大きく設定し、強制的に単一チャンクにする
+			// uploadFileが完了した時点で、データはAPIで確認可能になっている
 			await client.uploadFile(testFilePath, siteUrl, { chunkSize: (size + 1) * 1024 });
 
+			// (★★★ 修正箇所: 待機処理を削除 ★★★)
+
 			// 検証
+			log.info('アップロードしたデータを検証します...');
 			const downloaded = await client.downloadFile(siteUrl);
-			if (downloaded.length !== size * 1024) {
-				throw new Error("ダウンロードしたファイルのサイズが一致しません。");
+
+			// ファイル内容が一致するかを検証
+			if (originalContent !== downloaded.toString('utf-8')) {
+				throw new Error("ダウンロードしたファイルの内容が一致しません。");
 			}
 
 			log.success(`${size} KBのアップロードと検証に成功しました。`);
 			lastSuccessfulSize = size;
 		} catch (error) {
-			log.error(`${size} KBのアップロードに失敗しました。`);
+			log.error(`${size} KBのアップロードまたは検証に失敗しました。`);
 			console.error(error);
 			break; // 失敗した時点でループを抜ける
 		}
@@ -41,4 +46,8 @@ async function main() {
 	}
 }
 
-main();
+main().catch(err => {
+	log.error("テストの実行中に予期せぬエラーが発生しました。");
+	console.error(err);
+	process.exit(1);
+});
