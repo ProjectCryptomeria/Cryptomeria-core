@@ -2,7 +2,7 @@
 FROM alpine:3.19
 
 # ca-certificatesをインストール
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates curl jq
 
 # セキュリティ向上のため、専用の非rootユーザーを作成
 RUN addgroup -S metachain && adduser -S metachain -G metachain

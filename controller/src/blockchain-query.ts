@@ -54,7 +54,7 @@ export async function queryStoredChunk(chainName: 'data-0' | 'data-1', index: st
  * @param url 取得したいマニフェストのURL
  * @returns クエリ結果のJSONオブジェクト
  */
-export async function queryManifest(url: string): Promise<QueryResponse> {
+export async function queryStoredManifest(url: string): Promise<QueryResponse> {
 	const endpoints = getRestEndpoints();
 	const restEndpoint = endpoints['meta-0'];
 	// scaffoldで生成されたクエリパス

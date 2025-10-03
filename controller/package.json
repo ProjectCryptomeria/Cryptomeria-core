@@ -5,7 +5,8 @@
   "scripts": {
     "start": "ts-node src/index.ts",
     "test:upload": "ts-node src/scripts/upload-test.ts",
-    "test:e2e": "ts-node src/scripts/e2e-test.ts"
+    "test:e2e": "ts-node src/scripts/e2e-test.ts",
+    "test:retrieve": "ts-node src/scripts/retrieve-test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",

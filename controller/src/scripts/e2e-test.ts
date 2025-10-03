@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { uploadChunkToDataChain, uploadManifestToMetaChain } from '../blockchain';
-import { queryManifest, queryStoredChunk } from '../blockchain-query';
+import { queryStoredChunk, queryStoredManifest } from '../blockchain-query';
 import { splitFileIntoChunks } from '../chunker';
 
 // --- 色付きログ出力用のヘルパー ---
@@ -40,6 +40,7 @@ async function main() {
 	const uploadedChunks = await Promise.all(chunkUploadPromises);
 
 	const siteUrl = `my-e2e-test.com/${uniqueSuffix}`;
+	const urlIndexHash = encodeURIComponent(siteUrl);
 	const manifest = {
 		filepath: 'test-file.txt',
 		chunks: uploadedChunks.map(c => c.chunkIndex),
@@ -47,7 +48,7 @@ async function main() {
 	const manifestString = JSON.stringify(manifest);
 
 	log.info(`\n📦 Uploading manifest for ${siteUrl} to meta-0...`);
-	const manifestResult = await uploadManifestToMetaChain(siteUrl, manifestString);
+	const manifestResult = await uploadManifestToMetaChain(urlIndexHash, manifestString);
 	log.success(`Manifest uploaded successfully! TxHash: ${manifestResult.transactionHash}`);
 
 	log.info('\n⏳ Waiting 10 seconds for transactions to be processed and indexed...');
@@ -62,8 +63,13 @@ async function main() {
 		log.info(`  -> Verifying chunk ${uploaded.chunkIndex} on ${uploaded.targetChain}...`);
 		try {
 			const queryResult = await queryStoredChunk(uploaded.targetChain, uploaded.chunkIndex);
-			console.log(queryResult.stored_chunk.data);
-			
+
+			// (★★★ 修正箇所 ★★★) Goが出力するsnake_caseのキーにアクセスする
+			if (!queryResult.stored_chunk || !queryResult.stored_chunk.data) {
+				log.error(`  🔥 Invalid response structure for chunk ${uploaded.chunkIndex}: ${JSON.stringify(queryResult)}`);
+				allTestsPassed = false;
+				continue;
+			}
 			const storedDataB64 = queryResult.stored_chunk.data;
 			const storedData = Buffer.from(storedDataB64, 'base64');
 
@@ -82,17 +88,22 @@ async function main() {
 	// マニフェストを検証
 	log.info(`\n  -> Verifying manifest for ${siteUrl} on meta-0...`);
 	try {
-		const queryResult = await queryManifest(siteUrl);
-		console.log(queryResult);
-		
-		const storedManifestString = queryResult.manifest.manifest;
-		if (storedManifestString !== manifestString) {
-			log.error(`  🔥 Manifest mismatch for URL ${siteUrl}!`);
-			log.error(`     Expected: ${manifestString}`);
-			log.error(`     Received: ${storedManifestString}`);
+		const queryResult = await queryStoredManifest(urlIndexHash);
+				
+		// (★★★ 修正箇所 ★★★) Goが出力するsnake_caseのキーにアクセスする
+		if (!queryResult.stored_manifest || !queryResult.stored_manifest.manifest) {
+			log.error(`  🔥 Invalid response structure for manifest ${siteUrl}: ${JSON.stringify(queryResult)}`);
 			allTestsPassed = false;
 		} else {
-			log.success(`  ✅ Manifest for ${siteUrl} is correct.`);
+			const storedManifestString = queryResult.stored_manifest.manifest;
+			if (storedManifestString !== manifestString) {
+				log.error(`  🔥 Manifest mismatch for URL ${siteUrl}!`);
+				log.error(`     Expected: ${manifestString}`);
+				log.error(`     Received: ${storedManifestString}`);
+				allTestsPassed = false;
+			} else {
+				log.success(`  ✅ Manifest for ${siteUrl} is correct.`);
+			}
 		}
 	} catch (err) {
 		log.error(`  🔥 Failed to query or verify manifest for ${siteUrl}: ${err}`);
@@ -106,7 +117,7 @@ async function main() {
 		log.success('🎉🎉🎉 All tests passed! Data was successfully uploaded and verified. 🎉🎉🎉');
 	} else {
 		log.error('🔥🔥🔥 One or more tests failed. Please review the logs. 🔥🔥🔥');
-		process.exit(1); // エラーがあった場合は終了コード1で終了
+		process.exit(1);
 	}
 }
 

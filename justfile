@@ -22,6 +22,9 @@ init-runtime:
     DOCKER_GID=$(getent group docker | cut -d: -f3)
     docker build --build-arg DOCKER_GID=${DOCKER_GID} -t {{DEV_IMAGE}} -f develop.Dockerfile .
 
+run *args:
+    @{{RUN_SCRIPT}} {{args}}
+
 # --- Workflow ---
 
 # [一括実行] クリーンアップ、再生成、ビルド、デプロイを全て実行
@@ -135,6 +138,10 @@ ctl-test-upload:
 # [コントローラー] 書き込みと読み込みのE2Eテストを実行
 ctl-test-e2e:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn test:e2e"
+
+# [コントローラー] データ取得・復元テストを実行
+ctl-test-retrieve:
+    @{{RUN_SCRIPT}} bash -c "cd controller && yarn test:retrieve"
 
 # [コントローラー] コマンドを実行 (汎用)
 ctl-exec *args:
