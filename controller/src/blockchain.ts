@@ -1,11 +1,15 @@
-import { DirectSecp256k1HdWallet, makeCosmoshubPath } from '@cosmjs/proto-signing';
+import { HdPath, stringToPath } from "@cosmjs/crypto";
+import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
 import { SigningStargateClient } from '@cosmjs/stargate';
 import { chainConfig, getCreatorMnemonic, getRpcEndpoints } from './config';
 
 type ChainName = keyof typeof chainConfig;
 
 async function getWallet(chainName: ChainName, prefix: string) {
-	const hdPath = makeCosmoshubPath(2);
+	// Go側がTS側のニーモニック解釈に合わせるため、このパス指定が正しく機能するようになる
+	const hdPathString = "m/44'/118'/0'/0/2";
+	const hdPath: HdPath = stringToPath(hdPathString);
+
 	const creatorMnemonic = await getCreatorMnemonic(chainName);
 
 	return await DirectSecp256k1HdWallet.fromMnemonic(creatorMnemonic, {
@@ -18,7 +22,6 @@ async function getSigningClient(chainName: ChainName) {
 	const config = chainConfig[chainName];
 	const wallet = await getWallet(chainName, config.prefix);
 
-	// ★★★ 修正箇所: エンドポイントを非同期で取得 ★★★
 	const endpoints = await getRpcEndpoints();
 	const endpoint = endpoints[chainName];
 	if (!endpoint) {
@@ -29,8 +32,7 @@ async function getSigningClient(chainName: ChainName) {
 	return { client, wallet };
 }
 
-// uploadChunkToDataChain と uploadManifestToMetaChain は変更なし
-// (省略)
+// (以下、変更なし)
 export async function uploadChunkToDataChain(
 	chainName: ChainName,
 	chunkIndex: string,

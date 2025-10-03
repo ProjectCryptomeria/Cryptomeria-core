@@ -18,7 +18,7 @@ const getK8sApi = () => {
 /**
  * Kubernetes Secretから指定されたチェーンのcreatorニーモニックを非同期で取得・デコードする
  * @param chainName ニーモニックを取得したいチェーン名 (e.g., 'data-0')
- * @returns {Promise<string>} デコードされたニーモニック
+ * @returns デコードされたニーモニック
  */
 export async function getCreatorMnemonicFromSecret(chainName: string): Promise<string> {
 	if (mnemonicCache.has(chainName)) {
@@ -65,7 +65,7 @@ export async function getCreatorMnemonicFromSecret(chainName: string): Promise<s
 
 /**
  * Kubernetes Secretのキーからチェーン名の一覧を取得する
- * @returns {Promise<string[]>} チェーン名の配列 (e.g., ['data-0', 'data-1', 'meta-0'])
+ * @returns チェーン名の配列 (e.g., ['data-0', 'data-1', 'meta-0'])
  */
 export async function getChainNamesFromSecret(): Promise<string[]> {
 	if (chainNamesCache) {
@@ -105,36 +105,29 @@ export async function getChainNamesFromSecret(): Promise<string[]> {
 
 /**
  * 実行環境に応じて、各チェーンのRPCエンドポイントを動的に生成する
- * @returns {Promise<ChainEndpoints>} チェーン名とRPCエンドポイントURLのマップ
+ * @returns チェーン名とRPCエンドポイントURLのマップ
  */
-export async function getChainEndpoints(): Promise<ChainEndpoints> {
-	if (endpointsCache) {
-		return endpointsCache;
+export function getChainEndpoints(node_port : number) {
+	return async () => {
+		const chainNames = await getChainNamesFromSecret();
+		const endpoints: ChainEndpoints = {};
+
+		const isLocal = process.env.EXECUTION_MODE === 'local';
+
+		console.log(`🌐 Generating RPC endpoints in "${isLocal ? 'local-nodeport' : 'cluster'}" mode...`);
+
+		chainNames.forEach((chainName, index) => {
+			if (isLocal) {
+				// ローカル開発モード: localhostのNodePortに接続
+				endpoints[chainName] = `http://host.docker.internal:${node_port + index}`;
+			} else {
+				// クラスタ内実行モード: K8sの内部DNS名を使用
+				const podName = `raidchain-${chainName}-0`;
+				const serviceName = `raidchain-chain-headless`;
+				endpoints[chainName] = `http://${podName}.${serviceName}.${K8S_NAMESPACE}.svc.cluster.local:26657`;
+			}
+		});
+		console.log('✅ Endpoints generated:', endpoints);
+		return endpoints;
 	}
-
-	const chainNames = await getChainNamesFromSecret();
-	const endpoints: ChainEndpoints = {};
-
-	// 環境変数 `EXECUTION_MODE` で動作を切り替え
-	const isLocal = process.env.EXECUTION_MODE === 'local';
-
-	console.log(`🌐 Generating RPC endpoints in "${isLocal ? 'local' : 'cluster'}" mode...`);
-
-	chainNames.forEach((chainName, index) => {
-		if (isLocal) {
-			// ローカル開発モード: localhostの異なるポートにマッピング
-			const localPort = 26657 + index;
-			endpoints[chainName] = `http://localhost:${localPort}`;
-		} else {
-			// クラスタ内実行モード: K8sの内部DNS名を使用
-			// (StatefulSetのPod名は `raidchain-data-0-0` のように末尾に-0が付く)
-			const podName = `raidchain-${chainName}-0`;
-			const serviceName = `raidchain-chain-headless`;
-			endpoints[chainName] = `http://${podName}.${serviceName}.${K8S_NAMESPACE}.svc.cluster.local:26657`;
-		}
-	});
-
-	console.log('✅ Endpoints generated:', endpoints);
-	endpointsCache = endpoints;
-	return endpoints;
 }

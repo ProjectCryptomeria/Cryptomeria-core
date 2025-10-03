@@ -19,19 +19,20 @@ async function main() {
 	// 2. 各チャンクをdatachainに並列でアップロード
 	const uniqueSuffix = `test-${Date.now()}`;
 	// ★★★ 修正箇所3: 各引数に型を明示的に指定 ★★★
-	const chunkUploadPromises = chunks.map((chunk: Buffer, i: number) => {
+	const chunkUploadPromises = chunks.map(async (chunk: Buffer, i: number) => {
 		const chunkIndex = `${uniqueSuffix}-${i}`;
 		// ラウンドロビンでdata-0とdata-1に振り分ける
 		const targetChain = i % 2 === 0 ? 'data-0' : 'data-1';
 		console.log(`  -> Uploading chunk ${chunkIndex} to ${targetChain}...`);
-		return uploadChunkToDataChain(targetChain, chunkIndex, chunk).then(result => {
+		try {
+			const result = await uploadChunkToDataChain(targetChain, chunkIndex, chunk);
 			// 成功したらインデックスを返す
 			console.log(`  ✅ Chunk ${chunkIndex} uploaded. TxHash: ${result.transactionHash}`);
 			return chunkIndex;
-		}).catch((err: any) => {
+		} catch (err) {
 			console.error(`  🔥 Failed to upload chunk ${chunkIndex} to ${targetChain}:`, err);
-			return null; // 失敗した場合はnullを返す
-		});
+			return null;
+		}
 	});
 
 	const uploadedChunkIndexes = (await Promise.all(chunkUploadPromises)).filter(

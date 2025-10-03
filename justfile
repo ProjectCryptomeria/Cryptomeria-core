@@ -25,7 +25,7 @@ init-runtime:
 # --- Workflow ---
 
 # [一括実行] クリーンアップ、再生成、ビルド、デプロイを全て実行
-all-in-one: clean scaffold-chain build deploy
+all-in-one: clean-all scaffold-chain build deploy
     @echo "✅ All-in-one process complete!"
 
 # --- Build Tasks ---
@@ -53,9 +53,12 @@ deploy:
     @{{RUN_SCRIPT}} helm dependency update k8s/helm/raidchain
     @{{RUN_SCRIPT}} helm install {{HELM_RELEASE_NAME}} k8s/helm/raidchain --namespace {{NAMESPACE}} --create-namespace
 
-# デプロイされたアプリケーションをクラスタからアンインストール (エラーを無視)
+# デプロイされたアプリケーションと関連PVCをクラスタからアンインストール
 undeploy:
     @-{{RUN_SCRIPT}} helm uninstall {{HELM_RELEASE_NAME}} --namespace {{NAMESPACE}}
+    @echo "--> 🗑️ Deleting Persistent Volume Claims..."
+    @-{{RUN_SCRIPT}} kubectl -n {{NAMESPACE}} delete pvc -l app.kubernetes.io/name={{HELM_RELEASE_NAME}}
+
 
 
 # --- Logging and Exec ---
@@ -96,30 +99,35 @@ scaffold-metachain:
 # --- Cleanup Tasks ---
 
 # K8sリソースを削除し、生成されたディレクトリも削除
-clean: undeploy
+clean-all: clean-k8s clean-chain
+    @echo "✅ Full cleanup complete!"
+
+clean-chain:
     @echo "--> 🗑️ Deleting generated chain directories from host..."
     @rm -rf chain/datachain chain/metachain
 
 # K8sリソース(Namespaceごと)を削除
 clean-k8s: undeploy
+    @echo "--> 🗑️ Deleting namespace {{NAMESPACE}}..."
     @{{RUN_SCRIPT}} kubectl delete namespace {{NAMESPACE}} --ignore-not-found
+    
 
 
 # --- Controller Tasks ---
 # [コントローラー] 依存パッケージをインストール
-controller-install:
+ctl-install:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn install"
 
 # [コントローラー] 開発サーバーを起動
-controller-dev:
+ctl-dev:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn start"
 
 # [コントローラー] テストアップロードスクリプトを実行
-controller-test-upload:
+ctl-test-upload:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn test:upload"
 
 # [コントローラー] コマンドを実行 (汎用)
-controller-exec *args:
+ctl-exec *args:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn {{args}}"
 
 # --- Runtime Tasks ---

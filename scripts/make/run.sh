@@ -44,6 +44,7 @@ docker run --rm -it \
     -e IN_CONTAINER=true \
     -e KUBECONFIG=/home/ubuntu/.kube/config \
     -e DO_NOT_TRACK=1 \
+    -e EXECUTION_MODE=local \
     --workdir /workspace \
     "${DEV_IMAGE}" \
     "$@"

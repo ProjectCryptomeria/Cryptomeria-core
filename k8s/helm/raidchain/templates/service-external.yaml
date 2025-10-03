@@ -1,0 +1,27 @@
+{{- /* values.yamlで external.enabled が true の場合のみ、以下のリソースを作成 */}}
+{{- if .Values.service.external.enabled }}
+
+{{- /* .Values.chains リストをループ処理 */}}
+{{- range $index, $chain := .Values.chains }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "raidchain.fullname" $ }}-{{ .name }}-external
+spec:
+  # Serviceの種類をNodePortに設定
+  type: NodePort
+  ports:
+    - name: rpc
+      # コンテナ側のポート
+      port: 26657
+      targetPort: 26657
+      # ホストマシン(Node)側で公開されるポート
+      # 30057, 30058, 30059... のように動的に割り当てる
+      nodePort: {{ add $.Values.service.external.startPort $index }}
+  # このサービスが通信を転送する対象のPodを選択
+  selector:
+    # chain-statefulset.yamlで定義されているPodラベルと一致させる
+    app.kubernetes.io/instance: {{ .name }}
+{{- end }}
+{{- end }}

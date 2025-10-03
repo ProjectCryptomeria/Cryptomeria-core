@@ -14,26 +14,24 @@ spec:
       restartPolicy: Never
       containers:
         - name: generator
-          image: "{{ .Values.relayer.repository }}:{{ .Values.relayer.tag }}"
-          imagePullPolicy: {{ .Values.relayer.pullPolicy }}
+          image: "node:22-alpine"
+          imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
             - -c
             - |
-              set -exo pipefail
+              set -ex
 
               SECRET_NAME="{{ include "raidchain.fullname" . }}-mnemonics"
               SECRET_FILE="/tmp/secret.yaml"
-              RELAYER_HOME="/home/relayer/.relayer"
+              
+              echo "--- Installing dependencies for mnemonic generation ---"
+              # kubectlと@cosmjs/cryptoをインストール
+              apk add --no-cache kubectl
+              corepack enable
+              yarn add @cosmjs/proto-signing
 
-              mkdir -p ${RELAYER_HOME}
-
-              echo "--- Initializing rly config ---"
-              if [ ! -f "${RELAYER_HOME}/config/config.yaml" ]; then
-                  rly config init --home ${RELAYER_HOME}
-              fi
-
-              echo "--- Generating mnemonics and creating Secret YAML for ${SECRET_NAME} ---"
+              echo "--- Generating mnemonics via Node.js (@cosmjs/crypto) ---"
 
               cat <<EOF > ${SECRET_FILE}
               apiVersion: v1
@@ -47,39 +45,16 @@ spec:
 
               {{- range .Values.chains }}
               CHAIN_NAME="{{ .name }}"
-              TMP_JSON_FILE="/tmp/${CHAIN_NAME}.json"
-
-              echo "--> Adding dummy chain config for ${CHAIN_NAME}..."
-              cat <<EOT > ${TMP_JSON_FILE}
-              {"type":"cosmos","value":{"key":"tmp-key","chain-id":"${CHAIN_NAME}","rpc-addr":"http://localhost:26657","grpc-addr":"http://localhost:9090","account-prefix":"cosmos","keyring-backend":"test","gas-adjustment":1.5,"gas-prices":"0.025uatom","debug":false,"timeout":"20s","output-format":"json","sign-mode":"direct"}}
-              EOT
-
-              rly chains add --file ${TMP_JSON_FILE}
-
               echo "--> Generating mnemonic for ${CHAIN_NAME}..."
-              # `rly keys add` のJSON出力を `jq` でパースし、ニーモニックのみを抽出する
-              OUTPUT=$(rly keys add ${CHAIN_NAME} tmp-key 2>&1)
-              echo "Full output from 'rly keys add':"
-              echo "${OUTPUT}"
-              MNEMONIC=$(echo "${OUTPUT}" | jq -r '.mnemonic')
-
-              # ニーモニックが空でないことを確認
-              if [ -z "${MNEMONIC}" ]; then
-                echo "Error: Failed to extract mnemonic for ${CHAIN_NAME}."
-                exit 1
-              fi
-
+              # controllerと全く同じロジックでニーモニックを生成
+              MNEMONIC=$(node -e "require('@cosmjs/proto-signing').DirectSecp256k1HdWallet.generate(24).then(wallet => console.log(wallet.mnemonic))")
+              
               cat <<EOF >> ${SECRET_FILE}
                 ${CHAIN_NAME}.mnemonic: "${MNEMONIC}"
               EOF
               {{- end }}
 
-              echo "--- Generated Secret content: ---"
-              cat ${SECRET_FILE}
-              echo "---------------------------------"
-
               echo "--- Applying Secret to the cluster ---"
               kubectl apply -f ${SECRET_FILE}
-
               echo "--- Secret '${SECRET_NAME}' created/updated successfully ---"
   backoffLimit: 1
