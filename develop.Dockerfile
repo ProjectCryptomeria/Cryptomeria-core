@@ -63,7 +63,7 @@ RUN curl -sSfL https://get.ignite.com/cli! | bash
 
 # 作業ディレクトリとキャッシュ用のディレクトリを作成し、所有権をubuntuユーザーに与える
 WORKDIR /workspace
-RUN mkdir -p /go/cache /go/pkg  && \
+RUN mkdir -p /go/cache /go/pkg/mod  && \
     chown -R ubuntu:ubuntu /go /workspace
 
 # ユーザーを切り替え

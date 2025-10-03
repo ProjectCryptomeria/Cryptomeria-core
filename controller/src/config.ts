@@ -33,7 +33,7 @@ export const chainConfig = {
 // 🚨 このニーモニックは `make deploy` を実行するたびに変わる可能性があります。
 // 実際の値は `raidchain-mnemonics` Secret から取得してください。
 // kubectl get secret raidchain-mnemonics -n raidchain -o jsonpath='{.data.data-0\.mnemonic}' | base64 -d
-export const creatorMnemonic = 'your mnemonic here';
+export const creatorMnemonic = 'way vendor color latin truly rhythm green ten kite reduce swear mention thing honey poverty float betray globe daring obscure next insect worth salmon';
 
 // ファイルを分割する際のチャンクサイズ (バイト単位)
 // 例: 16 KB

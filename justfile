@@ -18,8 +18,9 @@ default:
 
 # 開発用の実行環境(dev-tools)イメージをビルド
 init-runtime:
-    @DOCKER_GID=$$(getent group docker | cut -d: -f3); \
-    docker build --build-arg DOCKER_GID=$$DOCKER_GID -t {{DEV_IMAGE}} -f develop.Dockerfile .
+    #!/usr/bin/env sh
+    DOCKER_GID=$(getent group docker | cut -d: -f3)
+    docker build --build-arg DOCKER_GID=${DOCKER_GID} -t {{DEV_IMAGE}} -f develop.Dockerfile .
 
 # --- Workflow ---
 
@@ -124,4 +125,4 @@ controller-exec *args:
 # --- Runtime Tasks ---
 # ランタイム用コンテナに入る
 runtime-shell:
-    @{{RUN_SCRIPT}} bashs
+    @{{RUN_SCRIPT}} bash
