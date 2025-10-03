@@ -38,10 +38,12 @@ build: build-datachain build-metachain build-relayer
 build-datachain:
     @{{RUN_SCRIPT}} ignite chain build --path ./chain/datachain -o dist --skip-proto
     @{{RUN_SCRIPT}} docker build -t {{IMAGE_DATACHAIN}} -f build/datachain/Dockerfile .
+
 # metachainのDockerイメージをビルド
 build-metachain:
     @{{RUN_SCRIPT}} ignite chain build --path ./chain/metachain -o dist --skip-proto
     @{{RUN_SCRIPT}} docker build -t {{IMAGE_METACHAIN}} -f build/metachain/Dockerfile .
+
 # relayerのDockerイメージをビルド
 build-relayer:
     @{{RUN_SCRIPT}} docker build -t {{IMAGE_RELAYER}} -f build/relayer/Dockerfile .
@@ -59,7 +61,11 @@ undeploy:
     @echo "--> 🗑️ Deleting Persistent Volume Claims..."
     @-{{RUN_SCRIPT}} kubectl -n {{NAMESPACE}} delete pvc -l app.kubernetes.io/name={{HELM_RELEASE_NAME}}
 
+deploy-clean: clean-k8s deploy
+    @echo "✅ Redeployment complete!"
 
+upgrade:
+    @{{RUN_SCRIPT}} helm upgrade {{HELM_RELEASE_NAME}} k8s/helm/raidchain --namespace {{NAMESPACE}} --reuse-values
 
 # --- Logging and Exec ---
 
@@ -125,6 +131,10 @@ ctl-dev:
 # [コントローラー] テストアップロードスクリプトを実行
 ctl-test-upload:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn test:upload"
+
+# [コントローラー] 書き込みと読み込みのE2Eテストを実行
+ctl-test-e2e:
+    @{{RUN_SCRIPT}} bash -c "cd controller && yarn test:e2e"
 
 # [コントローラー] コマンドを実行 (汎用)
 ctl-exec *args:

@@ -2,11 +2,11 @@ import { HdPath, stringToPath } from "@cosmjs/crypto";
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
 import { SigningStargateClient } from '@cosmjs/stargate';
 import { chainConfig, getCreatorMnemonic, getRpcEndpoints } from './config';
+import { customRegistry } from './registry';
 
 type ChainName = keyof typeof chainConfig;
 
 async function getWallet(chainName: ChainName, prefix: string) {
-	// Go側がTS側のニーモニック解釈に合わせるため、このパス指定が正しく機能するようになる
 	const hdPathString = "m/44'/118'/0'/0/2";
 	const hdPath: HdPath = stringToPath(hdPathString);
 
@@ -28,11 +28,12 @@ async function getSigningClient(chainName: ChainName) {
 		throw new Error(`RPC endpoint for chain "${chainName}" not found.`);
 	}
 
-	const client = await SigningStargateClient.connectWithSigner(endpoint, wallet);
+	const client = await SigningStargateClient.connectWithSigner(endpoint, wallet, {
+		registry: customRegistry,
+	});
 	return { client, wallet };
 }
 
-// (以下、変更なし)
 export async function uploadChunkToDataChain(
 	chainName: ChainName,
 	chunkIndex: string,
@@ -46,11 +47,12 @@ export async function uploadChunkToDataChain(
 	}
 
 	const msg = {
-		typeUrl: '/raidchain.datastore.MsgCreateStoredChunk',
+		// ★★★ 修正箇所 ★★★
+		typeUrl: '/datachain.datastore.v1.MsgCreateStoredChunk',
 		value: {
 			creator: account.address,
 			index: chunkIndex,
-			data: chunkData,
+			data: Buffer.from(chunkData),
 		},
 	};
 
@@ -75,7 +77,8 @@ export async function uploadManifestToMetaChain(
 	}
 
 	const msg = {
-		typeUrl: '/raidchain.metastore.MsgCreateManifest',
+		// ★★★ 修正箇所 ★★★
+		typeUrl: '/metachain.metastore.v1.MsgCreateStoredManifest',
 		value: {
 			creator: account.address,
 			url: url,

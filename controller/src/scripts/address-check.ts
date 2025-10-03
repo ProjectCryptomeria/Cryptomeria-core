@@ -1,4 +1,4 @@
-import { HdPath, stringToPath,Bip39 } from "@cosmjs/crypto";
+import { Bip39, HdPath, stringToPath } from "@cosmjs/crypto";
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
 import { getCreatorMnemonic } from '../config';
 

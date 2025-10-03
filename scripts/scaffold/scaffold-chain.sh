@@ -36,11 +36,11 @@ else
     # 共通処理(2): モジュールを生成
     ignite scaffold module --ibc "$MODULE_NAME" --dep bank --yes
     
-    # 固有処理: チェーン名に応じてデータ構造の定義を分岐
-    echo "🧬  Scaffolding specific data structures for $CHAIN_NAME..."
+    # 固有処理: チェーン名に応じてデータ構造とクエリの定義を分岐
+    echo "🧬  Scaffolding specific data structures and queries for $CHAIN_NAME..."
     case "$CHAIN_NAME" in
         "datachain")
-            # datachain: index(string)をキーとするKVSを定義
+            # datachain: index(string)をキーとするKVS(map)を定義
             ignite scaffold map storedChunk data:bytes \
                 --module "$MODULE_NAME" \
                 --index index:string \
@@ -48,9 +48,8 @@ else
                 --yes
             ;;
         "metachain")
-            # metachain: url(string)をキーとし、マニフェスト(string)を値とするKVSを定義
-            # マニフェスト自体はJSON文字列としてそのまま保存する
-            ignite scaffold map Manifest manifest:string \
+            # metachain: url(string)をキーとするKVS(map)を定義
+            ignite scaffold map storedManifest manifest:string \
                 --module "$MODULE_NAME" \
                 --index url:string \
                 --signer creator \

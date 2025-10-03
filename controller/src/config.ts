@@ -7,8 +7,11 @@ import {
 // --- Kubernetes Configuration ---
 export const K8S_NAMESPACE = 'raidchain';
 export const SECRET_NAME = 'raidchain-mnemonics';
+
 // ★★★ NodePortの開始ポート番号をvalues.yamlと合わせる ★★★
-export const NODE_PORT_START = 30057;
+export const NODE_PORT_RPC_START = 30057;
+// (★★★ この行を追加 ★★★)
+export const NODE_PORT_API_START = 30067;
 
 
 // --- Chain Configuration ---
@@ -19,8 +22,7 @@ export const chainConfig = {
 };
 
 
-
-export const getRpcEndpoints = getChainEndpoints(NODE_PORT_START);
+export const getRpcEndpoints = getChainEndpoints(NODE_PORT_RPC_START);
 export const getCreatorMnemonic = getCreatorMnemonicFromSecret;
 export const getChainNames = getChainNamesFromSecret;
 
