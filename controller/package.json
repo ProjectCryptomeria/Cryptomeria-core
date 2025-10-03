@@ -1,0 +1,21 @@
+{
+  "name": "controller",
+  "version": "1.0.0",
+  "packageManager": "yarn@4.10.3",
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "test:upload": "ts-node src/scripts/upload-test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "@cosmjs/proto-signing": "^0.36.0",
+    "@cosmjs/stargate": "^0.36.0",
+    "@types/express": "^5.0.3",
+    "cosmjs-types": "^0.10.1",
+    "express": "^5.1.0"
+  }
+}
