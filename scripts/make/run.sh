@@ -41,10 +41,11 @@ docker run --rm -it \
     -v "/var/run/docker.sock:/var/run/docker.sock" \
     -v "${HOME}/.kube:/home/ubuntu/.kube" \
     -v "${GO_MOD_VOLUME}:/go/pkg/mod" \
-    -v "${NODE_MODULES_VOLUME}:/workspace/controller/node_modules" \
     -e IN_CONTAINER=true \
     -e KUBECONFIG=/home/ubuntu/.kube/config \
     -e DO_NOT_TRACK=1 \
     --workdir /workspace \
     "${DEV_IMAGE}" \
     "$@"
+
+# -v "${NODE_MODULES_VOLUME}:/workspace/controller/node_modules" \

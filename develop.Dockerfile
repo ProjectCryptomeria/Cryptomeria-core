@@ -34,6 +34,8 @@ RUN apt-get install -y --no-install-recommends \
     bash make curl git openssl sudo time xxd jq just \
     docker.io ca-certificates
 
+RUN usermod -aG sudo ubuntu && echo "ubuntu ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
 # レイヤー: Node.js (LTS) と yarn のインストール
 RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
 RUN apt-get install -y nodejs

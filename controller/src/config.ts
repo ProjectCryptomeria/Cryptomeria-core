@@ -1,40 +1,28 @@
-// 🚨 注意: このファイルにニーモニックをハードコードするのはPoC目的のみです。
-// 本番環境では、環境変数やシークレット管理サービスを使用してください。
+import {
+	getChainEndpoints,
+	getChainNamesFromSecret,
+	getCreatorMnemonicFromSecret
+} from './k8s-client';
 
-// 各チェーンのRPCエンドポイント
-// 開発コンテナからアクセスするため、Kubernetesのサービス名を使用します。
-export const chainEndpoints = {
-	'data-0': 'http://raidchain-data-0-0.raidchain-chain-headless.raidchain.svc.cluster.local:26657',
-	'data-1': 'http://raidchain-data-1-0.raidchain-chain-headless.raidchain.svc.cluster.local:26657',
-	'meta-0': 'http://raidchain-meta-0-0.raidchain-chain-headless.raidchain.svc.cluster.local:26657',
-};
+// --- Kubernetes Configuration ---
+export const K8S_NAMESPACE = 'raidchain';
+export const SECRET_NAME = 'raidchain-mnemonics';
 
-// チェーンごとの設定
+
+// --- Chain Configuration ---
+// この情報は、どのチェーンがどのprefixやdenomを持つかという静的な対応付けに使います。
 export const chainConfig = {
-	'data-0': {
-		chainId: 'data-0',
-		prefix: 'cosmos',
-		denom: 'uatom',
-	},
-	'data-1': {
-		chainId: 'data-1',
-		prefix: 'cosmos',
-		denom: 'uatom',
-	},
-	'meta-0': {
-		chainId: 'meta-0',
-		prefix: 'cosmos',
-		denom: 'uatom',
-	},
+	'data-0': { chainId: 'data-0', prefix: 'cosmos', denom: 'uatom' },
+	'data-1': { chainId: 'data-1', prefix: 'cosmos', denom: 'uatom' },
+	'meta-0': { chainId: 'meta-0', prefix: 'cosmos', denom: 'uatom' },
 };
 
 
-// entrypoint-chain.shで`creator`としてHDパス(--account 2)を指定して作成したアカウントのニーモニック
-// 🚨 このニーモニックは `make deploy` を実行するたびに変わる可能性があります。
-// 実際の値は `raidchain-mnemonics` Secret から取得してください。
-// kubectl get secret raidchain-mnemonics -n raidchain -o jsonpath='{.data.data-0\.mnemonic}' | base64 -d
-export const creatorMnemonic = 'way vendor color latin truly rhythm green ten kite reduce swear mention thing honey poverty float betray globe daring obscure next insect worth salmon';
+// --- Dynamic Data from Kubernetes ---
+export const getRpcEndpoints = getChainEndpoints;
+export const getCreatorMnemonic = getCreatorMnemonicFromSecret;
+export const getChainNames = getChainNamesFromSecret;
 
-// ファイルを分割する際のチャンクサイズ (バイト単位)
-// 例: 16 KB
+
+// --- File Chunk Configuration ---
 export const CHUNK_SIZE = 16 * 1024;
