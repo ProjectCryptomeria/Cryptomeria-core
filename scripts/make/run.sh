@@ -7,25 +7,43 @@ set -euo pipefail
 DEV_IMAGE="raidchain/dev-tools:latest"
 PROJECT_NAME=$(basename "$(pwd)")
 GO_MOD_VOLUME="${PROJECT_NAME}-go-mod"
+NODE_MODULES_VOLUME="${PROJECT_NAME}-node-modules"
 
-# ★★★ 所有権を修正するステップを追加 ★★★
+# Dockerfileで定義したユーザー/グループID
+CONTAINER_UID=1000
+CONTAINER_GID=1000
+
+# --- Volume Initialization ---
+# 各ボリュームが存在しない場合は作成する
 if ! docker volume inspect "${GO_MOD_VOLUME}" >/dev/null 2>&1; then
     echo "--> Volume '${GO_MOD_VOLUME}' not found. Creating..."
     docker volume create "${GO_MOD_VOLUME}" >/dev/null
 fi
+if ! docker volume inspect "${NODE_MODULES_VOLUME}" >/dev/null 2>&1; then
+    echo "--> Volume '${NODE_MODULES_VOLUME}' not found. Creating..."
+    docker volume create "${NODE_MODULES_VOLUME}" >/dev/null
+fi
+
+# ボリュームの所有権をコンテナ内のユーザーに合わせる
+# これにより、以降のコンテナ実行でPermission Deniedエラーを防ぐ
+echo "--> Ensuring volume permissions are correct..."
+docker run --rm \
+    -v "${NODE_MODULES_VOLUME}:/data" \
+    --user root \
+    "${DEV_IMAGE}" \
+    chown -R "${CONTAINER_UID}:${CONTAINER_GID}" /data
 
 echo "==> 🐳 Executing in container: $@"
 
 docker run --rm -it \
-    -u "$(id -u):$(id -g)" \
     -e DOCKER_IN_DOCKER=true \
-    --group-add "$(getent group docker | cut -d: -f3)" \
     -v "$(pwd):/workspace" \
     -v "/var/run/docker.sock:/var/run/docker.sock" \
-    -v "${HOME}/.kube:/home/user/.kube" \
+    -v "${HOME}/.kube:/home/ubuntu/.kube" \
     -v "${GO_MOD_VOLUME}:/go/pkg/mod" \
+    -v "${NODE_MODULES_VOLUME}:/workspace/controller/node_modules" \
     -e IN_CONTAINER=true \
-    -e KUBECONFIG=/home/user/.kube/config \
+    -e KUBECONFIG=/home/ubuntu/.kube/config \
     -e DO_NOT_TRACK=1 \
     --workdir /workspace \
     "${DEV_IMAGE}" \

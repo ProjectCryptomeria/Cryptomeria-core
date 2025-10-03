@@ -18,17 +18,20 @@ default:
 
 # 開発用の実行環境(dev-tools)イメージをビルド
 init-runtime:
-    @docker build -t {{DEV_IMAGE}} -f develop.Dockerfile .
+    @DOCKER_GID=$$(getent group docker | cut -d: -f3); \
+    docker build --build-arg DOCKER_GID=$$DOCKER_GID -t {{DEV_IMAGE}} -f develop.Dockerfile .
+
 # --- Workflow ---
 
 # [一括実行] クリーンアップ、再生成、ビルド、デプロイを全て実行
 all-in-one: clean scaffold-chain build deploy
     @echo "✅ All-in-one process complete!"
+
 # --- Build Tasks ---
 
 # [推奨] 全てのコンポーネントをビルド
 build: build-datachain build-metachain build-relayer
-    @echo "✅ All images built and loaded into kind cluster."
+    @echo "✅ All images built."
 
 # datachainのDockerイメージをビルド
 build-datachain:
@@ -71,18 +74,6 @@ logs-datachain:
 logs-metachain:
     @{{RUN_SCRIPT}} kubectl logs -f -l app.kubernetes.io/instance={{HELM_RELEASE_NAME}},app.kubernetes.io/name=metachain -n {{NAMESPACE}}
 
-# [デフォルト] datachain-0 Podのシェルに入る
-exec: exec-datachain
-
-# datachain-0 Podのシェルに入る
-exec-datachain:
-    @{{RUN_SCRIPT}} kubectl exec -it -n {{NAMESPACE}} {{HELM_RELEASE_NAME}}-datachain-0 -- /bin/sh
-
-# metachain-0 Podのシェルに入る
-exec-metachain:
-    @{{RUN_SCRIPT}} kubectl exec -it -n {{NAMESPACE}} {{HELM_RELEASE_NAME}}-metachain-0 -- /bin/sh
-
-
 # --- Development Tasks ---
 
 # チェーンの動作確認テストを実行
@@ -111,3 +102,26 @@ clean: undeploy
 # K8sリソース(Namespaceごと)を削除
 clean-k8s: undeploy
     @{{RUN_SCRIPT}} kubectl delete namespace {{NAMESPACE}} --ignore-not-found
+
+
+# --- Controller Tasks ---
+# [コントローラー] 依存パッケージをインストール
+controller-install:
+    @{{RUN_SCRIPT}} bash -c "cd controller && yarn install"
+
+# [コントローラー] 開発サーバーを起動
+controller-dev:
+    @{{RUN_SCRIPT}} bash -c "cd controller && yarn start"
+
+# [コントローラー] テストアップロードスクリプトを実行
+controller-test-upload:
+    @{{RUN_SCRIPT}} bash -c "cd controller && yarn test:upload"
+
+# [コントローラー] コマンドを実行 (汎用)
+controller-exec *args:
+    @{{RUN_SCRIPT}} bash -c "cd controller && yarn {{args}}"
+
+# --- Runtime Tasks ---
+# ランタイム用コンテナに入る
+runtime-shell:
+    @{{RUN_SCRIPT}} bashs

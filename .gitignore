@@ -1,3 +1,4 @@
 .env
 dist
 chain/*
+node_modules
