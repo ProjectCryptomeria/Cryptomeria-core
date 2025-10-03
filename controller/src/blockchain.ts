@@ -58,7 +58,7 @@ export async function uploadChunkToDataChain(
 
 	const fee = {
 		amount: [{ denom: chainConfig[chainName].denom, amount: '2000' }],
-		gas: '200000',
+		gas: '300000',
 	};
 
 	const result = await client.signAndBroadcast(account.address, [msg], fee, 'Upload chunk');
@@ -88,7 +88,7 @@ export async function uploadManifestToMetaChain(
 
 	const fee = {
 		amount: [{ denom: chainConfig[chainName].denom, amount: '2000' }],
-		gas: '200000',
+		gas: '300000',
 	};
 
 	const result = await client.signAndBroadcast(account.address, [msg], fee, 'Upload manifest');

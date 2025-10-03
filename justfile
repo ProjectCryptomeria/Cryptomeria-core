@@ -147,6 +147,10 @@ ctl-test-retrieve:
 ctl-exec *args:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn {{args}}"
 
+# [コントローラー] 指定されたテストケースを実行 (例: just ctl-test --case 1)
+ctl-test *args:
+    @{{RUN_SCRIPT}} bash -c "cd controller && yarn test {{args}}"
+
 # --- Runtime Tasks ---
 # ランタイム用コンテナに入る
 runtime-shell:
