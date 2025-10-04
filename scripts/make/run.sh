@@ -42,7 +42,6 @@ docker run --rm -it \
     -v "${HOME}/.kube:/home/ubuntu/.kube" \
     -v "${GO_MOD_VOLUME}:/go/pkg/mod" \
     -e IN_CONTAINER=true \
-    -e KUBECONFIG=/home/ubuntu/.kube/config \
     -e DO_NOT_TRACK=1 \
     -e EXECUTION_MODE=local \
     --workdir /workspace \

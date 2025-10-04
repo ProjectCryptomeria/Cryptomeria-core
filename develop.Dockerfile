@@ -41,6 +41,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
 RUN apt-get install -y nodejs
 RUN corepack enable
 RUN corepack prepare yarn@stable --activate
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
 # レイヤー3: 後片付け (イメージサイズ削減)
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -59,6 +60,7 @@ RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm
 RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
     install -m 0755 kubectl /usr/local/bin/kubectl && \
     rm kubectl
+ENV KUBECONFIG=/home/ubuntu/.kube/config
 
 # Ignite CLIをインストール
 RUN curl -sSfL https://get.ignite.com/cli! | bash
