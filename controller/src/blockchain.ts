@@ -1,28 +1,36 @@
 import { HdPath, stringToPath } from "@cosmjs/crypto";
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
 import { SigningStargateClient } from '@cosmjs/stargate';
-import { chainConfig, getCreatorMnemonic, getRpcEndpoints } from './config';
+import { getChainConfig } from './config';
+import { getCreatorMnemonic, getRpcEndpoints } from './k8s-client'; // CHANGED: Import from k8s-client
 import { customRegistry } from './registry';
 
-type ChainName = keyof typeof chainConfig;
+type ChainName = string;
 
-async function getWallet(chainName: ChainName, prefix: string) {
+async function getWallet(chainName: ChainName) {
+	const chainConfigs = await getChainConfig();
+	const config = chainConfigs[chainName];
+	if (!config) throw new Error(`Configuration for chain "${chainName}" not found.`);
+
 	const hdPathString = "m/44'/118'/0'/0/2";
 	const hdPath: HdPath = stringToPath(hdPathString);
 
 	const creatorMnemonic = await getCreatorMnemonic(chainName);
 
 	return await DirectSecp256k1HdWallet.fromMnemonic(creatorMnemonic, {
-		prefix,
+		prefix: config.prefix,
 		hdPaths: [hdPath]
 	});
 }
 
 async function getSigningClient(chainName: ChainName) {
-	const config = chainConfig[chainName];
-	const wallet = await getWallet(chainName, config.prefix);
+	const chainConfigs = await getChainConfig();
+	const config = chainConfigs[chainName];
+	if (!config) throw new Error(`Configuration for chain "${chainName}" not found.`);
 
-	const endpoints = await getRpcEndpoints();
+	const wallet = await getWallet(chainName);
+
+	const endpoints = await getRpcEndpoints(); // This is now an async function
 	const endpoint = endpoints[chainName];
 	if (!endpoint) {
 		throw new Error(`RPC endpoint for chain "${chainName}" not found.`);
@@ -41,14 +49,18 @@ export async function uploadChunkToDataChain(
 ) {
 	const { client, wallet } = await getSigningClient(chainName);
 	const [account] = await wallet.getAccounts();
+	const chainConfigs = await getChainConfig();
+	const config = chainConfigs[chainName];
 
 	if (!account) {
 		throw new Error('Failed to get account from wallet.');
 	}
+	if (!config) {
+		throw new Error(`Configuration for chain "${chainName}" not found.`);
+	}
 
 	const msg = {
-		// ★★★ 修正箇所 ★★★
-		typeUrl: '/datachain.datastore.v1.MsgCreateStoredChunk',
+		typeUrl: '/bluzelle.curium.storage.MsgCreateChunk',
 		value: {
 			creator: account.address,
 			index: chunkIndex,
@@ -57,28 +69,34 @@ export async function uploadChunkToDataChain(
 	};
 
 	const fee = {
-		amount: [{ denom: chainConfig[chainName].denom, amount: '30000' }],
+		amount: [{ denom: config.denom, amount: '30000' }],
 		gas: '3000000',
 	};
 
 	const result = await client.signAndBroadcast(account.address, [msg], fee, 'Upload chunk');
 	return result;
 }
+
 export async function uploadManifestToMetaChain(
+	chainName: ChainName, // ADDED: chainName parameter for consistency
 	url: string,
 	manifest: string,
 ) {
-	const chainName = 'meta-0';
 	const { client, wallet } = await getSigningClient(chainName);
 	const [account] = await wallet.getAccounts();
+	const chainConfigs = await getChainConfig();
+	const config = chainConfigs[chainName];
+
 
 	if (!account) {
 		throw new Error('Failed to get account from wallet.');
 	}
+	if (!config) {
+		throw new Error(`Configuration for chain "${chainName}" not found.`);
+	}
 
 	const msg = {
-		// ★★★ 修正箇所 ★★★
-		typeUrl: '/metachain.metastore.v1.MsgCreateStoredManifest',
+		typeUrl: '/bluzelle.curium.storage.MsgCreateManifest',
 		value: {
 			creator: account.address,
 			url: url,
@@ -87,7 +105,7 @@ export async function uploadManifestToMetaChain(
 	};
 
 	const fee = {
-		amount: [{ denom: chainConfig[chainName].denom, amount: '30000' }],
+		amount: [{ denom: config.denom, amount: '30000' }],
 		gas: '3000000',
 	};
 

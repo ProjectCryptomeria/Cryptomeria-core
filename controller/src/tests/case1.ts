@@ -5,6 +5,8 @@ const client = new RaidchainClient();
 const testFilePath = path.join(__dirname, 'test-file-limit.txt');
 
 async function main() {
+	await client.initialize(); // ADDED: Initialize the client
+
 	log.step('1. 【実験】単一チャンクでのアップロード上限を探します');
 	const sizesToTest = [16, 32, 64, 128, 256, 512]; // KB
 	let lastSuccessfulSize = 0;
@@ -12,13 +14,12 @@ async function main() {
 	for (const size of sizesToTest) {
 		log.step(`--- サイズ: ${size} KB ---`);
 		const originalContent = await client.createTestFile(testFilePath, size);
-		const siteUrl = `limit-test/${size}kb`;
+		const siteUrl = `limit-test/${size}kb-${Date.now()}`;
 
 		try {
 			// uploadFileが完了した時点で、データはAPIで確認可能になっている
+			// chunkSizeをファイルサイズより大きくすることで、1チャンクでアップロードさせる
 			await client.uploadFile(testFilePath, siteUrl, { chunkSize: (size + 1) * 1024 });
-
-			// (★★★ 修正箇所: 待機処理を削除 ★★★)
 
 			// 検証
 			log.info('アップロードしたデータを検証します...');
@@ -31,9 +32,9 @@ async function main() {
 
 			log.success(`${size} KBのアップロードと検証に成功しました。`);
 			lastSuccessfulSize = size;
-		} catch (error) {
+		} catch (error: any) { // CHANGED: Explicitly type error
 			log.error(`${size} KBのアップロードまたは検証に失敗しました。`);
-			console.error(error);
+			console.error(error.message);
 			break; // 失敗した時点でループを抜ける
 		}
 	}

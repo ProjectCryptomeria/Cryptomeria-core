@@ -19,6 +19,13 @@ spec:
         {{- include "raidchain.selectorLabels" $ | nindent 8 }}
         app.kubernetes.io/component: chain
         app.kubernetes.io/instance: {{ .name }}
+        # ▼▼▼▼▼▼▼▼▼▼▼ このロジックが重要です ▼▼▼▼▼▼▼▼▼▼▼
+        {{- if hasPrefix .name "data-" }}
+        app.kubernetes.io/role: datachain
+        {{- else if hasPrefix .name "meta-" }}
+        app.kubernetes.io/role: metachain
+        {{- end }}
+    # ▼▼▼▼▼▼▼▼▼▼▼ spec: のインデントが正しいことを確認 ▼▼▼▼▼▼▼▼▼▼▼
     spec:
       containers:
         - name: chain

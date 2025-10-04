@@ -1,122 +1,110 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { uploadChunkToDataChain, uploadManifestToMetaChain } from '../blockchain';
 import { queryStoredChunk, queryStoredManifest } from '../blockchain-query';
-import { splitFileIntoChunks } from '../chunker';
+import { getChainInfo } from '../k8s-client';
+import { ChunkInfo, log, RaidchainClient } from '../lib/raidchain-util';
 
-// --- 色付きログ出力用のヘルパー ---
-const log = {
-	info: (msg: string) => console.log(`\x1b[36m[INFO]\x1b[0m ${msg}`),
-	success: (msg: string) => console.log(`\x1b[32m[SUCCESS]\x1b[0m ${msg}`),
-	error: (msg: string) => console.error(`\x1b[31m[ERROR]\x1b[0m ${msg}`),
-	step: (msg: string) => console.log(`\n\x1b[1;33m--- ${msg} ---\x1b[0m`),
-};
-
-// --- メインのテスト関数 ---
 async function main() {
 	log.step('🚀 Starting End-to-End Upload and Verification Test...');
+	const client = new RaidchainClient();
+	await client.initialize(); // ADDED: Initialize the client
 
-	// --- 1. テストデータの準備 ---
+	// --- 1. Test Data Preparation ---
 	log.step('1. Preparing Test Data');
 	const testFilePath = path.join(__dirname, 'test-file.txt');
 	const originalContent = `This is a test file for the Raidchain project. It will be split into multiple chunks and uploaded to different datachains. Unique ID: ${Date.now()}`;
 	await fs.writeFile(testFilePath, originalContent);
 	log.info(`Test file created at: ${testFilePath}`);
-	const chunks = await splitFileIntoChunks(testFilePath);
+	const chunks = await require('../chunker').splitFileIntoChunks(testFilePath);
 	log.success(`File split into ${chunks.length} chunk(s).`);
 
-	// --- 2. チェーンへのアップロード ---
+	// --- 2. Upload Data to Chains ---
 	log.step('2. Uploading Data to Chains');
-	const uniqueSuffix = `e2e-test-${Date.now()}`;
-	const chunkUploadPromises = chunks.map(async (chunk: Buffer, i: number) => {
-		const chunkIndex = `${uniqueSuffix}-${i}`;
-		const targetChain = (i % 2 === 0 ? 'data-0' : 'data-1') as 'data-0' | 'data-1';
-		log.info(`  -> Uploading chunk ${chunkIndex} to ${targetChain}...`);
-		const result = await uploadChunkToDataChain(targetChain, chunkIndex, chunk);
-		log.info(`  ✅ Chunk ${chunkIndex} uploaded. TxHash: ${result.transactionHash}`);
-		return { chunkIndex, targetChain, originalData: chunk };
+	const siteUrl = `my-e2e-test.com/${Date.now()}`;
+	const { manifest, urlIndex } = await client.uploadFile(testFilePath, siteUrl, {
+		distributionStrategy: 'auto',
 	});
-
-	const uploadedChunks = await Promise.all(chunkUploadPromises);
-
-	const siteUrl = `my-e2e-test.com/${uniqueSuffix}`;
-	const urlIndexHash = encodeURIComponent(siteUrl);
-	const manifest = {
-		filepath: 'test-file.txt',
-		chunks: uploadedChunks.map(c => c.chunkIndex),
-	};
-	const manifestString = JSON.stringify(manifest);
-
-	log.info(`\n📦 Uploading manifest for ${siteUrl} to meta-0...`);
-	const manifestResult = await uploadManifestToMetaChain(urlIndexHash, manifestString);
-	log.success(`Manifest uploaded successfully! TxHash: ${manifestResult.transactionHash}`);
 
 	log.info('\n⏳ Waiting 10 seconds for transactions to be processed and indexed...');
 	await new Promise(resolve => setTimeout(resolve, 10000));
 
-	// --- 3. チェーンからのデータ検証 ---
+	// --- 3. Verify Data on Chains ---
 	log.step('3. Verifying Data on Chains');
 	let allTestsPassed = true;
 
-	// 各データチャンクを検証
-	for (const uploaded of uploadedChunks) {
-		log.info(`  -> Verifying chunk ${uploaded.chunkIndex} on ${uploaded.targetChain}...`);
+	// Verify each data chunk
+	for (let i = 0; i < manifest.chunks.length; i++) {
+		const chunkInfo = manifest.chunks[i] as ChunkInfo;
+		log.info(`  -> Verifying chunk ${chunkInfo.index} on ${chunkInfo.chain}...`);
 		try {
-			const queryResult = await queryStoredChunk(uploaded.targetChain, uploaded.chunkIndex);
+			const queryResult = await queryStoredChunk(chunkInfo.chain, chunkInfo.index);
 
-			// (★★★ 修正箇所 ★★★) Goが出力するsnake_caseのキーにアクセスする
 			if (!queryResult.stored_chunk || !queryResult.stored_chunk.data) {
-				log.error(`  🔥 Invalid response structure for chunk ${uploaded.chunkIndex}: ${JSON.stringify(queryResult)}`);
+				log.error(`  🔥 Invalid response structure for chunk ${chunkInfo.index}: ${JSON.stringify(queryResult)}`);
 				allTestsPassed = false;
 				continue;
 			}
 			const storedDataB64 = queryResult.stored_chunk.data;
 			const storedData = Buffer.from(storedDataB64, 'base64');
 
-			if (Buffer.compare(uploaded.originalData, storedData) !== 0) {
-				log.error(`  🔥 Data mismatch for chunk ${uploaded.chunkIndex}!`);
+			if (Buffer.compare(chunks[i], storedData) !== 0) {
+				log.error(`  🔥 Data mismatch for chunk ${chunkInfo.index}!`);
 				allTestsPassed = false;
 			} else {
-				log.success(`  ✅ Chunk ${uploaded.chunkIndex} data is correct.`);
+				log.success(`  ✅ Chunk ${chunkInfo.index} data is correct.`);
 			}
-		} catch (err) {
-			log.error(`  🔥 Failed to query or verify chunk ${uploaded.chunkIndex}: ${err}`);
+		} catch (err: any) {
+			log.error(`  🔥 Failed to query or verify chunk ${chunkInfo.index}: ${err.message}`);
 			allTestsPassed = false;
 		}
 	}
 
-	// マニフェストを検証
-	log.info(`\n  -> Verifying manifest for ${siteUrl} on meta-0...`);
-	try {
-		const queryResult = await queryStoredManifest(urlIndexHash);
-				
-		// (★★★ 修正箇所 ★★★) Goが出力するsnake_caseのキーにアクセスする
-		if (!queryResult.stored_manifest || !queryResult.stored_manifest.manifest) {
-			log.error(`  🔥 Invalid response structure for manifest ${siteUrl}: ${JSON.stringify(queryResult)}`);
-			allTestsPassed = false;
-		} else {
-			const storedManifestString = queryResult.stored_manifest.manifest;
-			if (storedManifestString !== manifestString) {
-				log.error(`  🔥 Manifest mismatch for URL ${siteUrl}!`);
-				log.error(`     Expected: ${manifestString}`);
-				log.error(`     Received: ${storedManifestString}`);
-				allTestsPassed = false;
-			} else {
-				log.success(`  ✅ Manifest for ${siteUrl} is correct.`);
-			}
-		}
-	} catch (err) {
-		log.error(`  🔥 Failed to query or verify manifest for ${siteUrl}: ${err}`);
+	// Verify manifest
+	const chainInfos = await getChainInfo();
+	const metaChainInfo = chainInfos.find(c => c.type === 'metachain');
+	if (!metaChainInfo) {
+		log.error("🔥 Cannot find metachain to verify manifest.");
 		allTestsPassed = false;
+	} else {
+		log.info(`\n  -> Verifying manifest for ${siteUrl} on ${metaChainInfo.name}...`);
+		try {
+			const queryResult = await queryStoredManifest(metaChainInfo.name, urlIndex);
+
+			if (!queryResult.manifest || !queryResult.manifest.manifest) {
+				log.error(`  🔥 Invalid response structure for manifest ${siteUrl}: ${JSON.stringify(queryResult)}`);
+				allTestsPassed = false;
+			} else {
+				const storedManifestString = queryResult.manifest.manifest;
+				const storedManifest = JSON.parse(storedManifestString);
+
+				// Re-create the expected manifest for a deep comparison
+				const expectedManifest = {
+					filepath: path.basename(testFilePath),
+					chunks: manifest.chunks
+				};
+
+				if (JSON.stringify(storedManifest) !== JSON.stringify(expectedManifest)) {
+					log.error(`  🔥 Manifest mismatch for URL ${siteUrl}!`);
+					log.error(`     Expected: ${JSON.stringify(expectedManifest)}`);
+					log.error(`     Received: ${storedManifestString}`);
+					allTestsPassed = false;
+				} else {
+					log.success(`  ✅ Manifest for ${siteUrl} is correct.`);
+				}
+			}
+		} catch (err: any) {
+			log.error(`  🔥 Failed to query or verify manifest for ${siteUrl}: ${err.message}`);
+			allTestsPassed = false;
+		}
 	}
 
 
-	// --- 4. テスト結果の判定 ---
+	// --- 4. Test Conclusion ---
 	log.step('4. Test Conclusion');
 	if (allTestsPassed) {
 		log.success('🎉🎉🎉 All tests passed! Data was successfully uploaded and verified. 🎉🎉🎉');
 	} else {
-		log.error('🔥🔥🔥 One or more tests failed. Please review the logs. 🔥🔥🔥');
+		log.error('🔥🔥🔥 One or more tests failed. Please review the logs.');
 		process.exit(1);
 	}
 }

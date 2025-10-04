@@ -1,31 +1,36 @@
 import {
-	getChainEndpoints,
-	getChainNamesFromSecret,
-	getCreatorMnemonicFromSecret
+	getChainInfo,
 } from './k8s-client';
 
-// --- Kubernetes Configuration ---
 export const K8S_NAMESPACE = 'raidchain';
 export const SECRET_NAME = 'raidchain-mnemonics';
-
-// ★★★ NodePortの開始ポート番号をvalues.yamlと合わせる ★★★
 export const NODE_PORT_RPC_START = 30057;
-// (★★★ この行を追加 ★★★)
 export const NODE_PORT_API_START = 30067;
+export const CHUNK_SIZE = 16 * 1024; // 16 KB
 
+// 動的に生成されるチェーン設定を保持するための変数
+let chainConfigCache: { [key: string]: { chainId: string; prefix: string; denom: string } } | null = null;
 
-// --- Chain Configuration ---
-export const chainConfig = {
-	'data-0': { chainId: 'data-0', prefix: 'cosmos', denom: 'uatom' },
-	'data-1': { chainId: 'data-1', prefix: 'cosmos', denom: 'uatom' },
-	'meta-0': { chainId: 'meta-0', prefix: 'cosmos', denom: 'uatom' },
-};
+/**
+ * Kubernetesクラスターからチェーン情報を取得し、設定オブジェクトを生成します。
+ * 結果はキャッシュされ、2回目以降の呼び出しではキャッシュされた値を返します。
+ */
+export async function getChainConfig() {
+	if (chainConfigCache) {
+		return chainConfigCache;
+	}
 
+	const chainInfos = await getChainInfo();
+	const config: { [key: string]: { chainId: string; prefix: string; denom: string } } = {};
 
-export const getRpcEndpoints = getChainEndpoints(NODE_PORT_RPC_START);
-export const getCreatorMnemonic = getCreatorMnemonicFromSecret;
-export const getChainNames = getChainNamesFromSecret;
+	for (const info of chainInfos) {
+		config[info.name] = {
+			chainId: info.name,
+			prefix: 'cosmos',
+			denom: 'uatom'
+		};
+	}
 
-
-// --- File Chunk Configuration ---
-export const CHUNK_SIZE = 16 * 1024;
+	chainConfigCache = config;
+	return config;
+}

@@ -1,70 +1,34 @@
-import * as fs from 'fs/promises'; // ★★★ 修正箇所1: 静的インポートに変更 ★★★
+import * as fs from 'fs/promises';
 import * as path from 'path';
-import { uploadChunkToDataChain, uploadManifestToMetaChain } from '../blockchain';
-import { splitFileIntoChunks } from '../chunker';
+import { RaidchainClient, log } from '../lib/raidchain-util';
 
-
-// --- メインの実行関数 ---
 async function main() {
-	console.log('🚀 Starting file upload test...');
+	log.step('🚀 Starting file upload test...');
 
-	// 1. テスト用のファイルを作成・分割
+	const client = new RaidchainClient();
+	await client.initialize(); // ADDED: Initialize the client
+
+	// 1. テスト用のファイルを作成
 	const testFilePath = path.join(__dirname, 'test-file.txt');
-	await fs.writeFile( // ★★★ 修正箇所2: fsから直接呼び出し ★★★
+	await fs.writeFile(
 		testFilePath,
 		'This is a test file for the Raidchain project. It will be split into multiple chunks and uploaded to different datachains.'
 	);
-	const chunks = await splitFileIntoChunks(testFilePath);
+	log.info(`Test file created at: ${testFilePath}`);
 
-	// 2. 各チャンクをdatachainに並列でアップロード
-	const uniqueSuffix = `test-${Date.now()}`;
-	// ★★★ 修正箇所3: 各引数に型を明示的に指定 ★★★
-	const chunkUploadPromises = chunks.map(async (chunk: Buffer, i: number) => {
-		const chunkIndex = `${uniqueSuffix}-${i}`;
-		// ラウンドロビンでdata-0とdata-1に振り分ける
-		const targetChain = i % 2 === 0 ? 'data-0' : 'data-1';
-		console.log(`  -> Uploading chunk ${chunkIndex} to ${targetChain}...`);
-		try {
-			const result = await uploadChunkToDataChain(targetChain, chunkIndex, chunk);
-			// 成功したらインデックスを返す
-			console.log(`  ✅ Chunk ${chunkIndex} uploaded. TxHash: ${result.transactionHash}`);
-			return chunkIndex;
-		} catch (err) {
-			console.error(`  🔥 Failed to upload chunk ${chunkIndex} to ${targetChain}:`, err);
-			return null;
-		}
-	});
+	// 2. ファイルをアップロード
+	const siteUrl = `my-test-site.com/${Date.now()}`;
 
-	const uploadedChunkIndexes = (await Promise.all(chunkUploadPromises)).filter(
-		(index: string | null): index is string => index !== null
-	);
-
-	if (uploadedChunkIndexes.length !== chunks.length) {
-		console.error('🔥 Some chunks failed to upload. Aborting.');
-		return;
-	}
-
-	// 3. マニフェストを作成
-	const siteUrl = `my-test-site.com/${uniqueSuffix}`;
-	const manifest = {
-		filepath: 'test-file.txt',
-		chunks: uploadedChunkIndexes,
-	};
-
-	// 4. マニフェストをmetachainにアップロード
-	console.log(`\n📦 Uploading manifest for ${siteUrl} to meta-0...`);
 	try {
-		const result = await uploadManifestToMetaChain(siteUrl, JSON.stringify(manifest));
-		console.log('✅ Manifest uploaded successfully!');
-		console.log(`  -> Site URL: ${siteUrl}`);
-		console.log(`  -> TxHash: ${result.transactionHash}`);
-	} catch (err) {
-		console.error('🔥 Failed to upload manifest:', err);
+		await client.uploadFile(testFilePath, siteUrl);
+		log.success(`File uploaded successfully. Access it via: ${siteUrl}`);
+	} catch (error) {
+		log.error('Upload process failed.');
+		console.error(error);
+		process.exit(1);
 	}
 
-	console.log('\n🎉 Test complete!');
+	log.info('\n🎉 Test complete!');
 }
 
-
-// --- スクリプトの実行 ---
 main().catch(console.error);
