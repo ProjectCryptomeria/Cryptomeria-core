@@ -1,6 +1,6 @@
 import * as k8s from '@kubernetes/client-node';
 import { V1Pod } from '@kubernetes/client-node';
-import { K8S_NAMESPACE, NODE_PORT_API_START, NODE_PORT_RPC_START, SECRET_NAME } from './config';
+import { K8S_NAMESPACE, NODE_PORT_API_START, NODE_PORT_RPC_START, SECRET_NAME } from '../config';
 
 // ADDED: Type definitions for clarity and safety
 export type ChainType = 'datachain' | 'metachain';

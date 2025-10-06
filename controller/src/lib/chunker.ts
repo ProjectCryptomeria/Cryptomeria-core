@@ -1,5 +1,5 @@
 import * as fs from 'fs/promises';
-import { CHUNK_SIZE } from './config';
+import { CHUNK_SIZE } from '../config';
 
 /**
  * ファイルを指定されたサイズのチャンクに分割する

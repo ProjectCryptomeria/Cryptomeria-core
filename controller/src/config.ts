@@ -1,6 +1,6 @@
 import {
-	getChainInfo,
-} from './k8s-client';
+    getChainInfo,
+} from './lib/k8s-client';
 
 export const K8S_NAMESPACE = 'raidchain';
 export const SECRET_NAME = 'raidchain-mnemonics';

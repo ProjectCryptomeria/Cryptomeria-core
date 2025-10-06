@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { queryStoredChunk, queryStoredManifest } from '../blockchain-query';
-import { getChainInfo } from '../k8s-client';
+import { queryStoredChunk, queryStoredManifest } from '../lib/blockchain-query';
+import { getChainInfo } from '../lib/k8s-client';
 import { ChunkInfo, log, RaidchainClient } from '../lib/raidchain-util';
 
 async function main() {

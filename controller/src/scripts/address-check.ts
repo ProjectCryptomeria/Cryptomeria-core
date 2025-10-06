@@ -1,7 +1,7 @@
 import { HdPath, stringToPath } from "@cosmjs/crypto";
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
 import { getChainConfig } from '../config';
-import { getCreatorMnemonic } from '../k8s-client'; // CHANGED: Import from k8s-client
+import { getCreatorMnemonic } from '../lib/k8s-client'; // CHANGED: Import from k8s-client
 
 async function main() {
 	console.log('🔬 Starting address derivation check...');

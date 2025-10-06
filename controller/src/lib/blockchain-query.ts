@@ -1,4 +1,4 @@
-import { NODE_PORT_API_START } from './config';
+import { NODE_PORT_API_START } from '../config';
 import { ChainInfo, getChainInfo } from './k8s-client';
 
 type ChainName = string;
