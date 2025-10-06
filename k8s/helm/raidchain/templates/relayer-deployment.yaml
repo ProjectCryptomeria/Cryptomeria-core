@@ -10,9 +10,6 @@ spec:
       app.kubernetes.io/component: relayer
   template:
     metadata:
-      # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-      # ★★★ このannotationsブロックを追加してください ★★★
-      # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:

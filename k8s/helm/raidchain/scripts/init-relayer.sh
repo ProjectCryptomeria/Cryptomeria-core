@@ -78,6 +78,7 @@ EOF
     echo "--- Waiting for all chains to be ready... ---"
     for CHAIN_ID in $CHAIN_IDS; do
         RPC_ADDR="http://${RELEASE_NAME}-${CHAIN_ID}-0.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local:26657"
+        echo "--> RPC Address : $RPC_ADDR"
         echo "--> Waiting for chain '$CHAIN_ID' to reach height 5..."
         ATTEMPTS=0; MAX_ATTEMPTS=30
         until [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; do

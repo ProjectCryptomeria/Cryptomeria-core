@@ -36,14 +36,15 @@ docker run --rm \
 echo "==> 🐳 Executing in container: $@"
 
 docker run --rm -it \
-    -e DOCKER_IN_DOCKER=true \
     -v "$(pwd):/workspace" \
     -v "/var/run/docker.sock:/var/run/docker.sock" \
     -v "${HOME}/.kube:/home/ubuntu/.kube" \
     -v "${GO_MOD_VOLUME}:/go/pkg/mod" \
+    -e DOCKER_IN_DOCKER=true \
     -e IN_CONTAINER=true \
     -e DO_NOT_TRACK=1 \
     -e EXECUTION_MODE=local \
+    --network="host" \
     --workdir /workspace \
     "${DEV_IMAGE}" \
     "$@"

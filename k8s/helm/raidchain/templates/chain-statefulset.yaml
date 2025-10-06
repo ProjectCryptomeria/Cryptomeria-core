@@ -1,4 +1,3 @@
-{{- /* values.yaml の chains リストをループ処理 */}}
 {{- range .Values.chains }}
 ---
 apiVersion: apps/v1
@@ -10,15 +9,11 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: raidchain
-      app.kubernetes.io/instance: {{ .name }}
-      app.kubernetes.io/component: {{ .type }}
+      {{- include "raidchain.chainSelectorLabels" (dict "Values" $.Values "instanceName" .name "componentType" .type) | nindent 6 }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: raidchain
-        app.kubernetes.io/instance: {{ .name }}
-        app.kubernetes.io/component: {{ .type }}
+        {{- include "raidchain.chainSelectorLabels" (dict "Values" $.Values "instanceName" .name "componentType" .type) | nindent 8 }}
     spec:
       containers:
         - name: chain
