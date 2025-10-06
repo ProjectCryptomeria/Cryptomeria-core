@@ -26,7 +26,6 @@ const getK8sApi = () => {
 
 /**
  * Kubernetes APIから実行中のPod情報を取得し、チェーンの構成情報を動的に生成する
- * 結果はキャッシュされ、2回目以降の呼び出しではキャッシュされた値を返す
  * @returns {Promise<ChainInfo[]>} チェーン情報の配列
  */
 export async function getChainInfo(): Promise<ChainInfo[]> {
@@ -37,7 +36,6 @@ export async function getChainInfo(): Promise<ChainInfo[]> {
 	try {
 		console.log(`🧐 Discovering chains in namespace "${K8S_NAMESPACE}"...`);
 		const k8sApi = getK8sApi();
-		// CHANGED: Correctly use labelSelector for filtering pods
 		const res = await k8sApi.listNamespacedPod({
 			namespace: K8S_NAMESPACE,
 			labelSelector: 'app.kubernetes.io/component in (datachain, metachain)'
