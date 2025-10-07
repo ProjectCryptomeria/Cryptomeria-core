@@ -9,11 +9,15 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "raidchain.chainSelectorLabels" (dict "Values" $.Values "instanceName" .name "componentType" .type) | nindent 6 }}
+      app.kubernetes.io/name: raidchain
+      app.kubernetes.io/instance: {{ .name }}
+      app.kubernetes.io/component: {{ .type }}
   template:
     metadata:
       labels:
-        {{- include "raidchain.chainSelectorLabels" (dict "Values" $.Values "instanceName" .name "componentType" .type) | nindent 8 }}
+        app.kubernetes.io/name: raidchain
+        app.kubernetes.io/instance: {{ .name }}
+        app.kubernetes.io/component: {{ .type }}
     spec:
       containers:
         - name: chain
