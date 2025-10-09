@@ -27,6 +27,10 @@ chains:
     type: datachain
   - name: data-1
     type: datachain
+  - name: data-2
+    type: datachain
+  - name: data-3
+    type: datachain
   - name: meta-0
     type: metachain
 

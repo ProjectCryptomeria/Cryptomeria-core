@@ -44,6 +44,7 @@ docker run --rm -it \
     -e IN_CONTAINER=true \
     -e DO_NOT_TRACK=1 \
     -e EXECUTION_MODE=local \
+    -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     --network="host" \
     --workdir /workspace \
     "${DEV_IMAGE}" \

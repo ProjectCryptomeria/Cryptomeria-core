@@ -6,14 +6,16 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "raidchain.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/name: raidchain
+      app.kubernetes.io/instance: rly-0
       app.kubernetes.io/component: relayer
   template:
     metadata:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
-        {{- include "raidchain.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/name: raidchain
+        app.kubernetes.io/instance: rly-0
         app.kubernetes.io/component: relayer
     spec:
       containers:
@@ -21,7 +23,6 @@ spec:
           image: "{{ .Values.relayer.repository }}:{{ .Values.relayer.tag }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
           command: ["/bin/sh", "-c", "/scripts/init-relayer.sh"]
-          # command: ["/bin/sh", "-c", "sleep infinity"]
           env:
             - name: HEADLESS_SERVICE_NAME
               value: {{ include "raidchain.fullname" . }}-chain-headless
