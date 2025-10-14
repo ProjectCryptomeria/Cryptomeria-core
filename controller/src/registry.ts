@@ -84,9 +84,7 @@ const MsgCreateStoredManifest = {
 // -----------------------------------------------------------------------------
 
 const myTypes: ReadonlyArray<[string, GeneratedType]> = [
-	// ★★★ 修正箇所 ★★★
 	['/datachain.datastore.v1.MsgCreateStoredChunk', MsgCreateStoredChunk as GeneratedType],
-	// ★★★ 修正箇所 ★★★
 	['/metachain.metastore.v1.MsgCreateStoredManifest', MsgCreateStoredManifest as GeneratedType],
 ];
 

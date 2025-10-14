@@ -146,7 +146,7 @@ export class RaidchainClient {
 	public async uploadFile(filePath: string, siteUrl: string, options: UploadOptions = {}): Promise<{ manifest: Manifest, urlIndex: string }> {
 		await this.initialize(); // 最初に初期化を実行
 		const { distributionStrategy = 'round-robin', targetChain } = options;
-		log.info(`'${filePath}' をアップロードします。戦略: ${distributionStrategy}`);
+		log.info(`'${filePath}' をアップロードします。方式: ${distributionStrategy}`);
 
 		const fileBuffer = await fs.readFile(filePath);
 		const chunks = options.chunkSize ? this.splitBufferIntoChunks(fileBuffer, options.chunkSize) : await splitFileIntoChunks(filePath);
