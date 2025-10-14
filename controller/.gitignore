@@ -15,4 +15,4 @@ node_modules
 
 #!.yarn/cache
 .pnp.*
-tests/*.txt
+src/tests/*.txt
