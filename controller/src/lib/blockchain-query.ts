@@ -1,5 +1,4 @@
-import { NODE_PORT_API_START } from '../config';
-import { ChainInfo, getChainInfo } from './k8s-client';
+import { getApiEndpoints } from './k8s-client'; // getApiEndpoints をインポート
 import { log } from './logger';
 
 // --- Type Definitions for API Responses ---
@@ -44,27 +43,13 @@ async function getRestEndpoints(): Promise<Record<string, string>> {
 		return endpointsCache;
 	}
 
-	const chainInfos: ChainInfo[] = await getChainInfo();
-	const endpoints: Record<string, string> = {};
-	const isLocal = process.env.NODE_ENV !== 'production';
-
-	log.info(`Generating REST API endpoints in "${isLocal ? 'local-nodeport' : 'cluster'}" mode...`);
-
-	chainInfos.forEach((chain, index) => {
-		const chainName = chain.name;
-		if (isLocal) {
-			const apiNodePort = NODE_PORT_API_START + index;
-			endpoints[chainName] = `http://localhost:${apiNodePort}`;
-		} else {
-			const serviceName = `raidchain-chain-headless`;
-			const podName = `raidchain-${chainName}-0`;
-			endpoints[chainName] = `http://${podName}.${serviceName}.raidchain.svc.cluster.local:1317`;
-		}
-	});
-
-	log.info(`REST Endpoints generated: ${JSON.stringify(endpoints, null, 2)}`);
+	// ★★★ ここから修正 ★★★
+	// 古い静的なエンドポイント生成ロジックを削除し、
+	// k8s-clientに実装された動的な関数を呼び出すように変更
+	const endpoints = await getApiEndpoints();
 	endpointsCache = endpoints;
 	return endpoints;
+	// ★★★ ここまで修正 ★★★
 }
 
 /**
