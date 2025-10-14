@@ -101,7 +101,7 @@ export class RaidchainClient {
 	private async _uploadAndVerifyChunk(targetChain: DataChainId, chunkIndex: string, chunk: Buffer): Promise<DeliverTxResponse> {
 		const txResult = await uploadChunkToDataChain(targetChain, chunkIndex, chunk);
 		if (txResult.code !== 0) {
-			throw new Error(`チャンク ${chunkIndex} の ${targetChain} へのアップロードトランザクションが失敗しました (Code: ${txResult.code}): ${txResult.rawLog}`);
+			throw new Error(`チャンク ${chunkIndex} の ${targetChain} へのアップロードトランザクションが失敗しました (Code: ${txResult.code}): ${txResult.msgResponses}`);
 		}
 		log.info(`  ... tx (${txResult.transactionHash.slice(0, 10)}...) 成功。検証中...`);
 
@@ -130,7 +130,7 @@ export class RaidchainClient {
 		}
 		const txResult = await uploadManifestToMetaChain(this.metaChain, urlIndex, manifestString);
 		if (txResult.code !== 0) {
-			throw new Error(`マニフェスト ${urlIndex} のアップロードトランザクションが失敗しました (Code: ${txResult.code}): ${txResult.rawLog}`);
+			throw new Error(`マニフェスト ${urlIndex} のアップロードトランザクションが失敗しました (Code: ${txResult.code}): ${txResult.msgResponses}`);
 		}
 		log.info(`  ... tx (${txResult.transactionHash.slice(0, 10)}...) 成功。検証中...`);
 
@@ -264,11 +264,11 @@ export class RaidchainClient {
 		log.info(`${this.metaChain} からURL '${siteUrl}' のマニフェストを取得します`);
 		const manifestResult = await queryStoredManifest(this.metaChain, urlIndex);
 
-		if (!manifestResult.manifest || !manifestResult.manifest.manifest) {
+		if (!manifestResult.stored_manifest || !manifestResult.stored_manifest.manifest) {
 			throw new Error(`マニフェストが見つからないか、レスポンスの形式が不正です: ${JSON.stringify(manifestResult)}`);
 		}
 
-		const manifest: Manifest = JSON.parse(manifestResult.manifest.manifest);
+		const manifest: Manifest = JSON.parse(manifestResult.stored_manifest.manifest);
 		log.success(`マニフェストを発見しました。${manifest.chunks.length}個のチャンクをダウンロードします。`);
 
 		const chunkDownloadPromises = manifest.chunks.map(chunkInfo => {
