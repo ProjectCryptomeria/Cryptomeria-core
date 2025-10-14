@@ -2,6 +2,11 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "raidchain.fullname" . }}-chain-headless
+  labels:
+      app.kubernetes.io/name: raidchain
+      app.kubernetes.io/category: chain
+      app.kubernetes.io/instance: {{ .name }}
+      app.kubernetes.io/component: {{ .type }}  
 spec:
   # Headless Serviceにするための設定
   clusterIP: None

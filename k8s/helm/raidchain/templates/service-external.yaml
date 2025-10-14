@@ -8,6 +8,11 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "raidchain.fullname" $ }}-{{ .name }}-headless
+  labels:
+      app.kubernetes.io/name: raidchain
+      app.kubernetes.io/category: chain
+      app.kubernetes.io/instance: {{ .name }}
+      app.kubernetes.io/component: {{ .type }}
 spec:
   # Serviceの種類をNodePortに設定
   type: NodePort
@@ -16,17 +21,10 @@ spec:
       # コンテナ側のポート
       port: 26657
       targetPort: 26657
-      # ホストマシン(Node)側で公開されるポート
-      # 30057, 30058, 30059... のように動的に割り当てる
-      nodePort: {{ add $.Values.service.external.startPortRpc $index }}
-    # (★★★ このポート定義を追加 ★★★)
     - name: api
       # コンテナ側のポート
       port: 1317
       targetPort: 1317
-      # ホストマシン(Node)側で公開されるポート
-      # 30067, 30068, 30069... のように動的に割り当てる
-      nodePort: {{ add $.Values.service.external.startPortApi $index }}
   # このサービスが通信を転送する対象のPodを選択
   selector:
     # chain-statefulset.yamlで定義されているPodラベルと一致させる

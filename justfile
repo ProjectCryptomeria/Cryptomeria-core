@@ -9,6 +9,7 @@ NAMESPACE         := "raidchain"
 IMAGE_DATACHAIN   := "raidchain/datachain:latest"
 IMAGE_METACHAIN   := "raidchain/metachain:latest"
 IMAGE_RELAYER     := "raidchain/relayer:latest"
+DEFAULT_CHAINS    := "7"
 
 # justコマンドのデフォルトの挙動を設定。コマンド一覧を表示する。
 default:
@@ -22,13 +23,18 @@ init-runtime:
     DOCKER_GID=$(getent group docker | cut -d: -f3)
     docker build --build-arg DOCKER_GID=${DOCKER_GID} -t {{DEV_IMAGE}} -f develop.Dockerfile .
 
+# コンテナ内でコマンドを実行するためのラッパー
 run *args:
     @{{RUN_SCRIPT}} {{args}}
 
 # --- Workflow ---
 
 # [一括実行] クリーンアップ、再生成、ビルド、デプロイを全て実行
-all-in-one: clean-all scaffold-chain build deploy
+all-in-one chains=DEFAULT_CHAINS:
+    @just clean-all
+    @just scaffold-chain
+    @just build
+    @just deploy {{chains}}
     @echo "✅ All-in-one process complete!"
 
 # --- Build Tasks ---
@@ -53,10 +59,20 @@ build-relayer:
 
 # --- Kubernetes Tasks ---
 
-# Helmを使い、Kubernetesクラスタにデプロイ
-deploy:
-    @{{RUN_SCRIPT}} helm dependency update k8s/helm/raidchain
-    @{{RUN_SCRIPT}} helm install {{HELM_RELEASE_NAME}} k8s/helm/raidchain --namespace {{NAMESPACE}} --create-namespace
+# Helmを使い、Kubernetesクラスタにデプロイ (datachainの数を指定可能)
+# 例: just deploy 4
+deploy chains=DEFAULT_CHAINS:
+    #!/usr/bin/env sh
+    set -e
+    echo "--> 🚀 Deploying with {{chains}} datachain(s)..."
+    TEMP_VALUES_FILE=".helm-temp-values.yaml"
+    trap 'rm -f -- "$TEMP_VALUES_FILE"' EXIT
+    ./scripts/helm/generate-values.sh {{chains}} > "$TEMP_VALUES_FILE"
+    {{RUN_SCRIPT}} helm dependency update k8s/helm/raidchain
+    {{RUN_SCRIPT}} helm install {{HELM_RELEASE_NAME}} k8s/helm/raidchain \
+        --namespace {{NAMESPACE}} \
+        --create-namespace \
+        -f "$TEMP_VALUES_FILE"
 
 # デプロイされたアプリケーションと関連PVCをクラスタからアンインストール
 undeploy:
@@ -64,7 +80,11 @@ undeploy:
     @echo "--> 🗑️ Deleting Persistent Volume Claims..."
     @-{{RUN_SCRIPT}} kubectl -n {{NAMESPACE}} delete pvc -l app.kubernetes.io/name={{HELM_RELEASE_NAME}}
 
-deploy-clean: clean-k8s deploy
+# K8sリソースをクリーンアップしてからデプロイ (datachainの数を指定可能)
+# 例: just deploy-clean 4
+deploy-clean chains=DEFAULT_CHAINS:
+    @just clean-k8s
+    @just deploy {{chains}}
     @echo "✅ Redeployment complete!"
 
 upgrade:
@@ -119,8 +139,6 @@ clean-chain:
 clean-k8s: undeploy
     @echo "--> 🗑️ Deleting namespace {{NAMESPACE}}..."
     @{{RUN_SCRIPT}} kubectl delete namespace {{NAMESPACE}} --ignore-not-found
-    
-
 
 # --- Controller Tasks ---
 # [コントローラー] 依存パッケージをインストール

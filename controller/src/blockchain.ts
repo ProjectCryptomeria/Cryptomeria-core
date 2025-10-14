@@ -35,7 +35,6 @@ async function getSigningClient(chainName: ChainName) {
 	if (!endpoint) {
 		throw new Error(`RPC endpoint for chain "${chainName}" not found.`);
 	}
-	// console.log(customRegistry);
 	
 	const client = await SigningStargateClient.connectWithSigner(endpoint, wallet, {
 		registry: customRegistry,

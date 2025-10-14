@@ -1,9 +1,9 @@
 import * as k8s from '@kubernetes/client-node';
 import { V1Pod } from '@kubernetes/client-node';
-import { K8S_NAMESPACE, NODE_PORT_API_START, NODE_PORT_RPC_START, SECRET_NAME } from '../config';
+import { K8S_NAMESPACE, SECRET_NAME } from '../config';
 import { log } from './logger';
 
-// ADDED: Type definitions for clarity and safety
+// --- Type Definitions (変更なし) ---
 export type ChainType = 'datachain' | 'metachain';
 
 export interface ChainInfo {
@@ -13,7 +13,7 @@ export interface ChainInfo {
 
 export type ChainEndpoints = { [key: string]: string };
 
-// --- Caches ---
+// --- Caches (変更なし) ---
 const mnemonicCache = new Map<string, string>();
 let chainInfoCache: ChainInfo[] | null = null;
 let apiEndpointsCache: ChainEndpoints | null = null;
@@ -25,10 +25,7 @@ const getK8sApi = () => {
 	return kc.makeApiClient(k8s.CoreV1Api);
 };
 
-/**
- * Kubernetes APIから実行中のPod情報を取得し、チェーンの構成情報を動的に生成する
- * @returns {Promise<ChainInfo[]>} チェーン情報の配列
- */
+// --- getChainInfo, getCreatorMnemonic (変更なし) ---
 export async function getChainInfo(): Promise<ChainInfo[]> {
 	if (chainInfoCache) {
 		return chainInfoCache;
@@ -42,7 +39,7 @@ export async function getChainInfo(): Promise<ChainInfo[]> {
 			labelSelector: 'app.kubernetes.io/component in (datachain, metachain)'
 		});
 
-		const pods = res.items; 
+		const pods = res.items;
 		if (pods.length === 0) {
 			throw new Error('No chain pods found in the cluster. Is the application deployed?');
 		}
@@ -55,37 +52,23 @@ export async function getChainInfo(): Promise<ChainInfo[]> {
 				return null;
 			}
 			return { name, type };
-		}).filter((item): item is ChainInfo => item !== null) // Type guard to filter out nulls
-			.sort((a, b) => a.name.localeCompare(b.name)); // Sort for consistent ordering
+		}).filter((item): item is ChainInfo => item !== null)
+			.sort((a, b) => a.name.localeCompare(b.name));
 
 		log.info(`Discovered chains: ${JSON.stringify(info, null, 2)}`);
 		chainInfoCache = info;
 		return info;
 	} catch (err) {
-		log.error('Failed to discover chains from Kubernetes API.'); // CHANGED
+		log.error('Failed to discover chains from Kubernetes API.');
 		if (err instanceof Error) {
-			log.error(`   Error: ${err.message}`); // CHANGED
+			log.error(`   Error: ${err.message}`);
 		} else {
-			log.error(`   Unknown error: ${err}`); // CHANGED
+			log.error(`   Unknown error: ${err}`);
 		}
 		process.exit(1);
 	}
 }
 
-/**
- * Kubernetes Secretのキーからチェーン名の一覧を取得する (DEPRECATED: use getChainInfo)
- * @returns チェーン名の配列 (e.g., ['data-0', 'data-1', 'meta-0'])
- */
-export async function getChainNamesFromSecret(): Promise<string[]> {
-	const chainInfo = await getChainInfo();
-	return chainInfo.map(c => c.name);
-}
-
-/**
- * Kubernetes Secretから指定されたチェーンのcreatorニーモニックを非同期で取得・デコードする
- * @param chainName ニーモニックを取得したいチェーン名 (e.g., 'data-0')
- * @returns デコードされたニーモニック
- */
 export async function getCreatorMnemonic(chainName: string): Promise<string> {
 	if (mnemonicCache.has(chainName)) {
 		return mnemonicCache.get(chainName)!;
@@ -96,7 +79,6 @@ export async function getCreatorMnemonic(chainName: string): Promise<string> {
 		const MNEMONIC_KEY = `${chainName}.mnemonic`;
 
 		log.info(`Fetching key "${MNEMONIC_KEY}" from secret "${SECRET_NAME}"...`);
-		// CHANGED: Correct method signature for readNamespacedSecret
 		const res = await k8sApi.readNamespacedSecret({
 			name: SECRET_NAME,
 			namespace: K8S_NAMESPACE
@@ -129,7 +111,9 @@ export async function getCreatorMnemonic(chainName: string): Promise<string> {
 	}
 }
 
+
 /**
+ * 【★★★ここから修正★★★】
  * 実行環境に応じて、各チェーンのRPCエンドポイントを動的に生成する
  * @returns チェーン名とRPCエンドポイントURLのマップ
  */
@@ -144,17 +128,29 @@ export async function getRpcEndpoints(): Promise<ChainEndpoints> {
 
 	log.info(`Generating RPC endpoints in "${isLocal ? 'local-nodeport' : 'cluster'}" mode...`);
 
-	chainInfos.forEach((chain, index) => {
-		const chainName = chain.name;
-		if (isLocal) {
-			// ローカル開発モード: localhostのNodePortに接続
-			endpoints[chainName] = `http://localhost:${NODE_PORT_RPC_START + index}`;
-		} else {
-			// クラスタ内実行モード: K8sの内部DNS名を使用
-			const serviceName = `raidchain-chain-headless`;
-			endpoints[chainName] = `http://raidchain-${chainName}-0.${serviceName}.${K8S_NAMESPACE}.svc.cluster.local:26657`;
+	if (isLocal) {
+		const k8sApi = getK8sApi();
+		const res = await k8sApi.listNamespacedService({
+			namespace: K8S_NAMESPACE,
+			labelSelector: "app.kubernetes.io/category=chain"
+		});
+		const services = res.items;
+		for (const chain of chainInfos) {
+			const serviceName = `raidchain-${chain.name}-headless`;
+			const service = services.find(s => s.metadata?.name === serviceName);
+			if (!service || !service.spec?.ports) throw new Error(`Service "${serviceName}" not found.`);
+
+			const portInfo = service.spec.ports.find(p => p.name === 'rpc');
+			if (!portInfo || !portInfo.nodePort) throw new Error(`RPC NodePort not found for service "${serviceName}".`);
+
+			endpoints[chain.name] = `http://localhost:${portInfo.nodePort}`;
 		}
-	});
+	} else {
+		for (const chain of chainInfos) {
+			const serviceName = `raidchain-chain-headless`;
+			endpoints[chain.name] = `http://raidchain-${chain.name}-0.${serviceName}.${K8S_NAMESPACE}.svc.cluster.local:26657`;
+		}
+	}
 
 	log.info(`RPC Endpoints generated: ${JSON.stringify(endpoints, null, 2)}`);
 	rpcEndpointsCache = endpoints;
@@ -176,17 +172,30 @@ export async function getApiEndpoints(): Promise<ChainEndpoints> {
 
 	log.info(`Generating API endpoints in "${isLocal ? 'local-nodeport' : 'cluster'}" mode...`);
 
-	chainInfos.forEach((chain, index) => {
-		const chainName = chain.name;
-		if (isLocal) {
-			// ローカル開発モード: localhostのNodePortに接続
-			endpoints[chainName] = `http://localhost:${NODE_PORT_API_START + index}`;
-		} else {
-			// クラスタ内実行モード: K8sの内部DNS名を使用
-			const serviceName = `raidchain-chain-headless`;
-			endpoints[chainName] = `http://raidchain-${chainName}-0.${serviceName}.${K8S_NAMESPACE}.svc.cluster.local:1317`;
+	if (isLocal) {
+		const k8sApi = getK8sApi();
+		const res = await k8sApi.listNamespacedService({
+			namespace: K8S_NAMESPACE,
+			labelSelector: "app.kubernetes.io/category=chain"
+		});
+		const services = res.items;
+
+		for (const chain of chainInfos) {
+			const serviceName = `raidchain-${chain.name}-headless`;
+			const service = services.find(s => s.metadata?.name === serviceName);
+			if (!service || !service.spec?.ports) throw new Error(`Service "${serviceName}" not found.`);
+
+			const portInfo = service.spec.ports.find(p => p.name === 'api');
+			if (!portInfo || !portInfo.nodePort) throw new Error(`API NodePort not found for service "${serviceName}".`);
+
+			endpoints[chain.name] = `http://localhost:${portInfo.nodePort}`;
 		}
-	});
+	} else {
+		for (const chain of chainInfos) {
+			const serviceName = `raidchain-chain-headless`;
+			endpoints[chain.name] = `http://raidchain-${chain.name}-0.${serviceName}.${K8S_NAMESPACE}.svc.cluster.local:1317`;
+		}
+	}
 
 	log.info(`API Endpoints generated: ${JSON.stringify(endpoints, null, 2)}`);
 	apiEndpointsCache = endpoints;
