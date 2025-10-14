@@ -36,6 +36,12 @@ export interface UploadOptions {
 	onChunkUploaded?: (info: { chunkIndex: string; chain: DataChainId }) => void;
 }
 
+// クライアント初期化時に指定可能なオプション
+export interface InitializeOptions {
+	chainCount?: number; // 使用するデータチェーンの数を指定
+}
+
+
 // uploadFileメソッドの返り値の型定義
 export interface UploadResult {
 	manifest: Manifest;
@@ -67,14 +73,28 @@ export class RaidchainClient {
 	constructor() { }
 
 	// クライアントを初期化する
-	async initialize() {
+	async initialize(options: InitializeOptions = {}) {
 		if (this.isInitialized) return;
 
 		log.info('RaidchainClientを初期化しています。チェーン情報を取得中...');
 		const chainInfos = await getChainInfo();
-		this.dataChains = chainInfos
+
+		let allDataChains = chainInfos
 			.filter(c => c.type === 'datachain')
 			.map(c => c.name);
+
+		// chainCountオプションに基づいて使用するチェーンを制限
+		if (options.chainCount && options.chainCount > 0) {
+			if (options.chainCount > allDataChains.length) {
+				log.error(`要求されたチェーン数 (${options.chainCount}) が利用可能なデータチェーン数 (${allDataChains.length}) を超えています。`);
+				throw new Error("Cannot initialize with more chains than available.");
+			}
+			this.dataChains = allDataChains.slice(0, options.chainCount);
+			log.info(`指定された 'chainCount'=${options.chainCount} に基づいて、${this.dataChains.length}個のデータチェーンを利用します。`);
+		} else {
+			this.dataChains = allDataChains;
+		}
+
 
 		const metaChainInfo = chainInfos.find(c => c.type === 'metachain');
 		if (metaChainInfo) {
@@ -154,7 +174,9 @@ export class RaidchainClient {
 	 * @returns 生成されたマニフェストとURLのインデックス
 	 */
 	public async uploadFile(filePath: string, siteUrl: string, options: UploadOptions = {}): Promise<UploadResult> {
-		await this.initialize();
+		if (!this.isInitialized) {
+			await this.initialize();
+		}
 		const tracker = new PerformanceTracker();
 		tracker.start();
 
@@ -183,7 +205,8 @@ export class RaidchainClient {
 
 					log.info(`  -> [ワーカー: ${chainId}] チャンク '${job.index}' を処理中...`);
 					const txResult = await this._uploadAndVerifyChunk(chainId, job.index, job.chunk, options);
-					tracker.recordTransaction(txResult.gasUsed);
+					// ★★★ 修正点: gasUsed (number) を bigint に変換 ★★★
+					tracker.recordTransaction(BigInt(txResult.gasUsed));
 					uploadedChunks.push({ index: job.index, chain: chainId });
 				}
 			};
@@ -211,7 +234,8 @@ export class RaidchainClient {
 
 				log.info(`  -> チャンク #${i} (${(chunk.length / 1024).toFixed(2)} KB) を ${uploadTarget} へアップロード中...`);
 				const txResult = await this._uploadAndVerifyChunk(uploadTarget, chunkIndex, chunk, options);
-				tracker.recordTransaction(txResult.gasUsed);
+				// ★★★ 修正点: gasUsed (number) を bigint に変換 ★★★
+				tracker.recordTransaction(BigInt(txResult.gasUsed));
 				uploadedChunks.push({ index: chunkIndex, chain: uploadTarget });
 			}
 		}
@@ -231,7 +255,8 @@ export class RaidchainClient {
 
 		log.info(`${this.metaChain} へURL '${siteUrl}' のマニフェストをアップロードします`);
 		const manifestTxResult = await this._uploadAndVerifyManifest(urlIndex, manifestString);
-		tracker.recordTransaction(manifestTxResult.gasUsed);
+		// ★★★ 修正点: gasUsed (number) を bigint に変換 ★★★
+		tracker.recordTransaction(BigInt(manifestTxResult.gasUsed));
 
 		tracker.stop();
 		log.success(`'${siteUrl}' のアップロードと検証が完了しました。`);
@@ -249,7 +274,10 @@ export class RaidchainClient {
 	 * @returns 復元されたファイルのBuffer
 	 */
 	async downloadFile(siteUrl: string): Promise<DownloadResult> {
-		await this.initialize();
+		if (!this.isInitialized) {
+			await this.initialize();
+		}
+
 		const startTime = performance.now();
 
 		const urlIndex = encodeURIComponent(siteUrl);
