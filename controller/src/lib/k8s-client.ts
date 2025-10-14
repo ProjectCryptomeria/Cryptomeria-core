@@ -1,6 +1,7 @@
 import * as k8s from '@kubernetes/client-node';
 import { V1Pod } from '@kubernetes/client-node';
 import { K8S_NAMESPACE, NODE_PORT_API_START, NODE_PORT_RPC_START, SECRET_NAME } from '../config';
+import { log } from './logger';
 
 // ADDED: Type definitions for clarity and safety
 export type ChainType = 'datachain' | 'metachain';
@@ -34,7 +35,7 @@ export async function getChainInfo(): Promise<ChainInfo[]> {
 	}
 
 	try {
-		console.log(`🧐 Discovering chains in namespace "${K8S_NAMESPACE}"...`);
+		log.info(`Discovering chains in namespace "${K8S_NAMESPACE}"...`);
 		const k8sApi = getK8sApi();
 		const res = await k8sApi.listNamespacedPod({
 			namespace: K8S_NAMESPACE,
@@ -57,15 +58,15 @@ export async function getChainInfo(): Promise<ChainInfo[]> {
 		}).filter((item): item is ChainInfo => item !== null) // Type guard to filter out nulls
 			.sort((a, b) => a.name.localeCompare(b.name)); // Sort for consistent ordering
 
-		console.log('✅ Discovered chains:', info);
+		log.info(`Discovered chains: ${JSON.stringify(info, null, 2)}`);
 		chainInfoCache = info;
 		return info;
 	} catch (err) {
-		console.error('🔥 Failed to discover chains from Kubernetes API.');
+		log.error('Failed to discover chains from Kubernetes API.'); // CHANGED
 		if (err instanceof Error) {
-			console.error('   Error:', err.message);
+			log.error(`   Error: ${err.message}`); // CHANGED
 		} else {
-			console.error('   Unknown error:', err);
+			log.error(`   Unknown error: ${err}`); // CHANGED
 		}
 		process.exit(1);
 	}
@@ -94,7 +95,7 @@ export async function getCreatorMnemonic(chainName: string): Promise<string> {
 		const k8sApi = getK8sApi();
 		const MNEMONIC_KEY = `${chainName}.mnemonic`;
 
-		console.log(`🤫 Fetching key "${MNEMONIC_KEY}" from secret "${SECRET_NAME}"...`);
+		log.info(`Fetching key "${MNEMONIC_KEY}" from secret "${SECRET_NAME}"...`);
 		// CHANGED: Correct method signature for readNamespacedSecret
 		const res = await k8sApi.readNamespacedSecret({
 			name: SECRET_NAME,
@@ -113,7 +114,7 @@ export async function getCreatorMnemonic(chainName: string): Promise<string> {
 			throw new Error(`Failed to decode mnemonic for key "${MNEMONIC_KEY}".`);
 		}
 
-		console.log(`✅ Successfully fetched and decoded mnemonic for "${chainName}".`);
+		log.info(`Successfully fetched and decoded mnemonic for "${chainName}".`);
 		mnemonicCache.set(chainName, decodedMnemonic);
 		return decodedMnemonic;
 
@@ -141,7 +142,7 @@ export async function getRpcEndpoints(): Promise<ChainEndpoints> {
 	const endpoints: ChainEndpoints = {};
 	const isLocal = process.env.NODE_ENV !== 'production';
 
-	console.log(`🌐 Generating RPC endpoints in "${isLocal ? 'local-nodeport' : 'cluster'}" mode...`);
+	log.info(`Generating RPC endpoints in "${isLocal ? 'local-nodeport' : 'cluster'}" mode...`);
 
 	chainInfos.forEach((chain, index) => {
 		const chainName = chain.name;
@@ -155,7 +156,7 @@ export async function getRpcEndpoints(): Promise<ChainEndpoints> {
 		}
 	});
 
-	console.log('✅ RPC Endpoints generated:', endpoints);
+	log.info(`RPC Endpoints generated: ${JSON.stringify(endpoints, null, 2)}`);
 	rpcEndpointsCache = endpoints;
 	return endpoints;
 }
@@ -173,7 +174,7 @@ export async function getApiEndpoints(): Promise<ChainEndpoints> {
 	const endpoints: ChainEndpoints = {};
 	const isLocal = process.env.NODE_ENV !== 'production';
 
-	console.log(`🌐 Generating API endpoints in "${isLocal ? 'local-nodeport' : 'cluster'}" mode...`);
+	log.info(`Generating API endpoints in "${isLocal ? 'local-nodeport' : 'cluster'}" mode...`);
 
 	chainInfos.forEach((chain, index) => {
 		const chainName = chain.name;
@@ -187,7 +188,7 @@ export async function getApiEndpoints(): Promise<ChainEndpoints> {
 		}
 	});
 
-	console.log('✅ API Endpoints generated:', endpoints);
+	log.info(`API Endpoints generated: ${JSON.stringify(endpoints, null, 2)}`);
 	apiEndpointsCache = endpoints;
 	return endpoints;
 }
