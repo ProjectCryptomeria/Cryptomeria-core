@@ -1,5 +1,6 @@
 // src/tests/test-case.ts
 import * as path from 'path';
+import { CHUNK_SIZE } from '../config';
 import { log } from '../lib/logger';
 import { RaidchainClient } from '../lib/raidchain-util';
 
@@ -10,12 +11,16 @@ interface TestResult {
 	iteration: number;
 	case: string;
 	param: string; // size(KB) or strategy
+	fileSizeKB: number;
+	chunkSizeKB: number;
 	uploadTimeMs: number;
 	downloadTimeMs: number;
 	totalTx: number;
 	totalGas: bigint;
 	avgGas: bigint;
 	verified: boolean;
+	chainsUsedCount: number;
+	chainsUsedList: string;
 }
 
 const client = new RaidchainClient();
@@ -25,15 +30,23 @@ const client = new RaidchainClient();
 function printResults(results: TestResult[]) {
 	if (results.length === 0) return;
 
+	const maxListLength = 50; // テーブル表示時のチェーンリストの最大文字数
+
 	// 1. 見やすいテーブル形式
 	console.log('\n--- 📊 個別実行結果 ---');
 	console.table(results.map(r => ({
 		'Iteration': r.iteration,
 		'Case': r.case,
 		'Parameter': r.param,
+		'File Size (KB)': r.fileSizeKB,
+		'Chunk Size (KB)': r.chunkSizeKB,
 		'Upload (ms)': r.uploadTimeMs.toFixed(2),
 		'Download (ms)': r.downloadTimeMs.toFixed(2),
-		'Total Txs': r.totalTx,
+		'Chains (Count)': r.chainsUsedCount,
+		// 'Used Chains (List)': r.chainsUsedList.length > maxListLength
+		// 	? `${r.chainsUsedList.substring(0, maxListLength)}...`
+		// 	: r.chainsUsedList,
+		// 'Total Txs': r.totalTx,
 		'Total Gas': r.totalGas.toString(),
 		'Avg Gas/Tx': r.avgGas.toString(),
 		'Verified': r.verified ? '✅' : '🔥',
@@ -41,37 +54,65 @@ function printResults(results: TestResult[]) {
 
 	// 2. CSV形式
 	console.log('\n--- 📋 CSV形式 (コピー用) ---');
-	const header = 'Iteration,Case,Parameter,Upload(ms),Download(ms),TotalTxs,TotalGas,AvgGasPerTx,Verified';
-	const rows = results.map(r =>
+	const header = 'Iteration,Case,Parameter,FileSize(KB),ChunkSize(KB),Upload(ms),Download(ms),ChainsCount,ChainsList,TotalTxs,TotalGas,AvgGasPerTx,Verified';
+	const csvRows = results.map(r =>
 		[
 			r.iteration,
 			r.case,
 			r.param,
+			r.fileSizeKB,
+			r.chunkSizeKB,
 			r.uploadTimeMs.toFixed(2),
 			r.downloadTimeMs.toFixed(2),
-			r.totalTx,
+			r.chainsUsedCount,
+			`"${r.chainsUsedList}"`,
+			// r.totalTx,
 			r.totalGas.toString(),
 			r.avgGas.toString(),
 			r.verified,
 		].join(',')
 	);
-	console.log([header, ...rows].join('\n'));
+	console.log([header, ...csvRows].join('\n'));
 
-	// 3. 平均値の計算と出力
+	// 3. TSV形式 (Excel用)
+	// console.log('\n--- 📋 TSV形式 (Excelコピー用) ---');
+	const tsvHeader = 'Iteration\tCase\tParameter\tFileSize(KB)\tChunkSize(KB)\tUpload(ms)\tDownload(ms)\tChainsCount\tChainsList\tTotalTxs\tTotalGas\tAvgGasPerTx\tVerified';
+	const tsvRows = results.map(r =>
+		[
+			r.iteration,
+			r.case,
+			r.param,
+			r.fileSizeKB,
+			r.chunkSizeKB,
+			r.uploadTimeMs.toFixed(2),
+			r.downloadTimeMs.toFixed(2),
+			r.chainsUsedCount,
+			r.chainsUsedList, // TSVではダブルクオート不要
+			// r.totalTx,
+			r.totalGas.toString(),
+			r.avgGas.toString(),
+			r.verified,
+		].join('\t')
+	);
+	// console.log([tsvHeader, ...tsvRows].join('\n'));
+
+	// 4. 平均値の計算と出力
 	if (results.length > 1) {
 		const avg = results.reduce((acc, r, _, arr) => ({
 			uploadTimeMs: acc.uploadTimeMs + r.uploadTimeMs / arr.length,
 			downloadTimeMs: acc.downloadTimeMs + r.downloadTimeMs / arr.length,
+			chainsUsedCount: acc.chainsUsedCount + r.chainsUsedCount / arr.length,
 			totalTx: acc.totalTx + r.totalTx / arr.length,
 			totalGas: acc.totalGas + r.totalGas / BigInt(arr.length),
 			avgGas: acc.avgGas + r.avgGas / BigInt(arr.length),
-		}), { uploadTimeMs: 0, downloadTimeMs: 0, totalTx: 0, totalGas: 0n, avgGas: 0n });
+		}), { uploadTimeMs: 0, downloadTimeMs: 0, chainsUsedCount: 0, totalTx: 0, totalGas: 0n, avgGas: 0n });
 
 		const avgResult = {
 			'Case': results[0]!.case,
 			'Parameter': results[0]!.param,
 			'Avg Upload (ms)': avg.uploadTimeMs.toFixed(2),
 			'Avg Download (ms)': avg.downloadTimeMs.toFixed(2),
+			'Avg Used Chains (Count)': avg.chainsUsedCount.toFixed(2),
 			'Avg Total Txs': avg.totalTx.toFixed(2),
 			'Avg Total Gas': avg.totalGas.toString(),
 			'Avg Gas/Tx': avg.avgGas.toString(),
@@ -81,9 +122,14 @@ function printResults(results: TestResult[]) {
 		console.table([avgResult]);
 
 		console.log('\n--- 📋 平均CSV形式 (コピー用) ---');
-		const avgHeader = 'Case,Parameter,AvgUpload(ms),AvgDownload(ms),AvgTotalTxs,AvgTotalGas,AvgAvgGasPerTx';
-		const avgRow = Object.values(avgResult).join(',');
-		console.log([avgHeader, avgRow].join('\n'));
+		const avgCsvHeader = 'Case,Parameter,AvgUpload(ms),AvgDownload(ms),AvgUsedChainsCount,AvgTotalTxs,AvgTotalGas,AvgAvgGasPerTx';
+		const avgCsvRow = Object.values(avgResult).join(',');
+		console.log([avgCsvHeader, avgCsvRow].join('\n'));
+
+		console.log('\n--- 📋 平均TSV形式 (Excelコピー用) ---');
+		const avgTsvHeader = 'Case\tParameter\tAvgUpload(ms)\tAvgDownload(ms)\tAvgUsedChainsCount\tAvgTotalTxs\tAvgTotalGas\tAvgAvgGasPerTx';
+		const avgTsvRow = Object.values(avgResult).join('\t');
+		console.log([avgTsvHeader, avgTsvRow].join('\n'));
 	}
 }
 
@@ -99,9 +145,15 @@ async function runCase1(): Promise<TestResult[]> {
 		log.step(`--- Testing Size: ${size} KB ---`);
 		const originalContent = await client.createTestFile(testFilePath, size);
 		const siteUrl = `limit-test/${size}kb-${Date.now()}`;
+		const usedChains = new Set<string>();
 
 		try {
-			const { uploadStats } = await client.uploadFile(testFilePath, siteUrl, { chunkSize: (size + 1) * 1024 });
+			const chunkSize = (size + 1) * 1024;
+			const { uploadStats } = await client.uploadFile(testFilePath, siteUrl, {
+				chunkSize: chunkSize,
+				onChunkUploaded: (info) => usedChains.add(info.chain),
+			});
+			const chainsUsedList = Array.from(usedChains).sort();
 			const { data, downloadTimeMs } = await client.downloadFile(siteUrl);
 			const verified = originalContent === data.toString('utf-8');
 			if (!verified) throw new Error("File content mismatch");
@@ -110,21 +162,26 @@ async function runCase1(): Promise<TestResult[]> {
 				iteration: 1,
 				case: 'Case1-SingleChunkLimit',
 				param: `${size}KB`,
+				fileSizeKB: size,
+				chunkSizeKB: size, // 1チャンクなのでファイルサイズと同じ
 				uploadTimeMs: uploadStats.durationMs,
 				downloadTimeMs: downloadTimeMs,
 				totalTx: uploadStats.transactionCount,
 				totalGas: uploadStats.totalGasUsed,
 				avgGas: uploadStats.averageGasPerTransaction,
 				verified: verified,
+				chainsUsedCount: chainsUsedList.length,
+				chainsUsedList: chainsUsedList.join(' '),
 			});
 		} catch (error: any) {
 			log.error(`${size} KB upload or verification failed.`);
 			console.error(error);
-			// 失敗した場合も結果を追加
 			allResults.push({
 				iteration: 1, case: 'Case1-SingleChunkLimit', param: `${size}KB`,
+				fileSizeKB: size, chunkSizeKB: size,
 				uploadTimeMs: 0, downloadTimeMs: 0, totalTx: 0,
-				totalGas: 0n, avgGas: 0n, verified: false
+				totalGas: 0n, avgGas: 0n, verified: false,
+				chainsUsedCount: 0, chainsUsedList: 'failed'
 			});
 		}
 	}
@@ -140,11 +197,14 @@ async function runCase2(): Promise<TestResult> {
 
 	const originalContent = await client.createTestFile(testFilePath, FILE_SIZE_KB);
 	const siteUrl = `manual-dist-test/${Date.now()}`;
+	const usedChains = new Set<string>();
 
 	const { uploadStats } = await client.uploadFile(testFilePath, siteUrl, {
-		distributionStrategy: 'manual', targetChain: TARGET_CHAIN
+		distributionStrategy: 'manual',
+		targetChain: TARGET_CHAIN,
+		onChunkUploaded: (info) => usedChains.add(info.chain),
 	});
-
+	const chainsUsedList = Array.from(usedChains).sort();
 	const { data: downloaded, downloadTimeMs } = await client.downloadFile(siteUrl);
 	const verified = originalContent === downloaded.toString('utf-8');
 
@@ -152,12 +212,16 @@ async function runCase2(): Promise<TestResult> {
 		iteration: 0, // 後で設定される
 		case: 'Case2-Manual',
 		param: TARGET_CHAIN,
+		fileSizeKB: FILE_SIZE_KB,
+		chunkSizeKB: CHUNK_SIZE / 1024,
 		uploadTimeMs: uploadStats.durationMs,
 		downloadTimeMs: downloadTimeMs,
 		totalTx: uploadStats.transactionCount,
 		totalGas: uploadStats.totalGasUsed,
 		avgGas: uploadStats.averageGasPerTransaction,
 		verified: verified,
+		chainsUsedCount: chainsUsedList.length,
+		chainsUsedList: chainsUsedList.join(' '),
 	};
 }
 
@@ -169,11 +233,13 @@ async function runCase3(): Promise<TestResult> {
 
 	const originalContent = await client.createTestFile(testFilePath, FILE_SIZE_KB);
 	const siteUrl = `round-robin-dist-test/${Date.now()}`;
+	const usedChains = new Set<string>();
 
 	const { uploadStats } = await client.uploadFile(testFilePath, siteUrl, {
-		distributionStrategy: 'round-robin'
+		distributionStrategy: 'round-robin',
+		onChunkUploaded: (info) => usedChains.add(info.chain),
 	});
-
+	const chainsUsedList = Array.from(usedChains).sort();
 	const { data: downloaded, downloadTimeMs } = await client.downloadFile(siteUrl);
 	const verified = originalContent === downloaded.toString('utf-8');
 
@@ -181,12 +247,16 @@ async function runCase3(): Promise<TestResult> {
 		iteration: 0, // 後で設定される
 		case: 'Case3-RoundRobin',
 		param: 'round-robin',
+		fileSizeKB: FILE_SIZE_KB,
+		chunkSizeKB: CHUNK_SIZE / 1024,
 		uploadTimeMs: uploadStats.durationMs,
 		downloadTimeMs: downloadTimeMs,
 		totalTx: uploadStats.transactionCount,
 		totalGas: uploadStats.totalGasUsed,
 		avgGas: uploadStats.averageGasPerTransaction,
 		verified: verified,
+		chainsUsedCount: chainsUsedList.length,
+		chainsUsedList: chainsUsedList.join(' '),
 	};
 }
 
@@ -199,11 +269,13 @@ async function runCase4(): Promise<TestResult> {
 
 	const originalContent = await client.createTestFile(testFilePath, FILE_SIZE_KB);
 	const siteUrl = `auto-dist-test/${Date.now()}`;
+	const usedChains = new Set<string>();
 
 	const { uploadStats } = await client.uploadFile(testFilePath, siteUrl, {
 		distributionStrategy: 'auto',
+		onChunkUploaded: (info) => usedChains.add(info.chain),
 	});
-
+	const chainsUsedList = Array.from(usedChains).sort();
 	const { data: downloaded, downloadTimeMs } = await client.downloadFile(siteUrl);
 	const verified = originalContent === downloaded.toString('utf-8');
 
@@ -211,12 +283,16 @@ async function runCase4(): Promise<TestResult> {
 		iteration: 0, // 後で設定される
 		case: 'Case4-Auto',
 		param: 'auto',
+		fileSizeKB: FILE_SIZE_KB,
+		chunkSizeKB: CHUNK_SIZE / 1024,
 		uploadTimeMs: uploadStats.durationMs,
 		downloadTimeMs: downloadTimeMs,
 		totalTx: uploadStats.transactionCount,
 		totalGas: uploadStats.totalGasUsed,
 		avgGas: uploadStats.averageGasPerTransaction,
 		verified: verified,
+		chainsUsedCount: chainsUsedList.length,
+		chainsUsedList: chainsUsedList.join(' '),
 	};
 }
 

@@ -33,6 +33,7 @@ export interface UploadOptions {
 	chunkSize?: number;
 	distributionStrategy?: DistributionStrategy;
 	targetChain?: DataChainId;
+	onChunkUploaded?: (info: { chunkIndex: string; chain: DataChainId }) => void;
 }
 
 // uploadFileメソッドの返り値の型定義
@@ -91,10 +92,10 @@ export class RaidchainClient {
 	}
 
 	// 1つのチャンクをアップロードし、ブロックに取り込まれるまで確認する
-	private async _uploadAndVerifyChunk(targetChain: DataChainId, chunkIndex: string, chunk: Buffer): Promise<DeliverTxResponse> {
+	private async _uploadAndVerifyChunk(targetChain: DataChainId, chunkIndex: string, chunk: Buffer, options: UploadOptions): Promise<DeliverTxResponse> {
 		const txResult = await uploadChunkToDataChain(targetChain, chunkIndex, chunk);
 		if (txResult.code !== 0) {
-			throw new Error(`チャンク ${chunkIndex} の ${targetChain} へのアップロードトランザクションが失敗しました (Code: ${txResult.code}): ${txResult.msgResponses}`);
+			throw new Error(`チャンク ${chunkIndex} の ${targetChain} へのアップロードトランザクションが失敗しました (Code: ${txResult.code}): ${txResult.rawLog}`);
 		}
 		log.info(`  ... tx (${txResult.transactionHash.slice(0, 10)}...) 成功。検証中...`);
 
@@ -103,6 +104,7 @@ export class RaidchainClient {
 			try {
 				await queryStoredChunk(targetChain, chunkIndex);
 				log.info(`  ... チャンク '${chunkIndex}' がチェーン上で検証されました。`);
+				options.onChunkUploaded?.({ chunkIndex: chunkIndex, chain: targetChain });
 				return txResult;
 			} catch (error: any) {
 				// 'not found' エラーの場合はリトライを続ける
@@ -123,7 +125,7 @@ export class RaidchainClient {
 		}
 		const txResult = await uploadManifestToMetaChain(this.metaChain, urlIndex, manifestString);
 		if (txResult.code !== 0) {
-			throw new Error(`マニフェスト ${urlIndex} のアップロードトランザクションが失敗しました (Code: ${txResult.code}): ${txResult.msgResponses}`);
+			throw new Error(`マニフェスト ${urlIndex} のアップロードトランザクションが失敗しました (Code: ${txResult.code}): ${txResult.rawLog}`);
 		}
 		log.info(`  ... tx (${txResult.transactionHash.slice(0, 10)}...) 成功。検証中...`);
 
@@ -180,7 +182,7 @@ export class RaidchainClient {
 					if (!job) continue;
 
 					log.info(`  -> [ワーカー: ${chainId}] チャンク '${job.index}' を処理中...`);
-					const txResult = await this._uploadAndVerifyChunk(chainId, job.index, job.chunk);
+					const txResult = await this._uploadAndVerifyChunk(chainId, job.index, job.chunk, options);
 					tracker.recordTransaction(txResult.gasUsed);
 					uploadedChunks.push({ index: job.index, chain: chainId });
 				}
@@ -208,7 +210,7 @@ export class RaidchainClient {
 				}
 
 				log.info(`  -> チャンク #${i} (${(chunk.length / 1024).toFixed(2)} KB) を ${uploadTarget} へアップロード中...`);
-				const txResult = await this._uploadAndVerifyChunk(uploadTarget, chunkIndex, chunk);
+				const txResult = await this._uploadAndVerifyChunk(uploadTarget, chunkIndex, chunk, options);
 				tracker.recordTransaction(txResult.gasUsed);
 				uploadedChunks.push({ index: chunkIndex, chain: uploadTarget });
 			}
