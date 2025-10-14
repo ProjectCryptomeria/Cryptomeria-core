@@ -1,3 +1,4 @@
+// src/tests/case3.ts
 import * as path from 'path';
 import { RaidchainClient, log } from '../lib/raidchain-util';
 
@@ -6,7 +7,7 @@ const testFilePath = path.join(__dirname, 'test-file-auto.txt');
 const FILE_SIZE_KB = 100; // チャンク分割が必要なサイズ
 
 async function main() {
-	await client.initialize(); // ADDED: Initialize the client
+	await client.initialize();
 
 	log.step(`3. 【実験】${FILE_SIZE_KB}KBのファイルをチャンク化し、空いているチェーンへ自動でアップロードします`);
 
@@ -14,22 +15,32 @@ async function main() {
 	const siteUrl = `auto-dist-test/${Date.now()}`;
 
 	// アップロード
-	await client.uploadFile(testFilePath, siteUrl, {
+	const { uploadStats } = await client.uploadFile(testFilePath, siteUrl, {
 		distributionStrategy: 'auto',
 	});
 
 	// 検証
-	log.info(`\n検証のため、アップロードしたファイルを取得します...`);
-	// 10-second wait might not be necessary if uploadFile now waits for confirmation
-	// await new Promise(r => setTimeout(r, 10000));
-	const downloaded = await client.downloadFile(siteUrl);
+	log.info(`\nVerifying uploaded file...`);
+	const { data: downloaded, downloadTimeMs } = await client.downloadFile(siteUrl);
 	const downloadedContent = downloaded.toString('utf-8');
 
+	log.step('📊 Test Results');
+	console.log(`- Upload Time: ${uploadStats.durationMs.toFixed(2)} ms`);
+	console.log(`- Total Transactions: ${uploadStats.transactionCount}`);
+	console.log(`- Total Gas Used: ${uploadStats.totalGasUsed}`);
+	console.log(`- Average Gas per Tx: ${uploadStats.averageGasPerTransaction}`);
+	console.log(`- Download Time: ${downloadTimeMs.toFixed(2)} ms`);
+
 	if (originalContent === downloadedContent) {
-		log.success('🎉 検証成功！内容は完全に一致しました。');
+		log.success('\n🎉 Verification successful! Content matches perfectly.');
 	} else {
-		log.error('🔥 検証失敗！内容が一致しません。');
+		log.error('\n🔥 Verification failed! Content does not match.');
+		process.exit(1);
 	}
 }
 
-main();
+main().catch(err => {
+	log.error("Test execution failed.");
+	console.error(err);
+	process.exit(1);
+});

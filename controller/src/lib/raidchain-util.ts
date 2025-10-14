@@ -1,42 +1,57 @@
+// src/lib/raidchain-util.ts
+import { DeliverTxResponse } from '@cosmjs/stargate';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { performance } from 'perf_hooks';
 import { uploadChunkToDataChain, uploadManifestToMetaChain } from '../blockchain';
 import { queryStoredChunk, queryStoredManifest } from './blockchain-query';
 import { splitFileIntoChunks } from './chunker';
 import { getChainInfo, getRpcEndpoints } from './k8s-client';
+import { PerformanceReport, PerformanceTracker } from './performance-tracker';
 
 // データチェーンの一意な識別子（例: "data-0", "data-1"）
 export type DataChainId = string;
 
 // ファイルのチャンクをどのデータチェーンに分散させるかの戦略
-// 'round-robin': 均等に分散
-// 'manual': 特定のチェーンに固定
-// 'auto': 空いているチェーンに自動的に割り振る
 export type DistributionStrategy = 'round-robin' | 'manual' | 'auto';
 
 // ファイルの個々の断片（チャンク）に関する情報
 export interface ChunkInfo {
-	index: string; // チャンクの一意なID
-	chain: DataChainId; // このチャンクが保存されているデータチェーンのID
+	index: string;
+	chain: DataChainId;
 }
 
 // ファイル全体の構造を定義するマニフェスト
 export interface Manifest {
-	filepath: string; // 元のファイル名
-	chunks: ChunkInfo[]; // ファイルを構成するチャンクのリスト
+	filepath: string;
+	chunks: ChunkInfo[];
 }
 
 // ファイルアップロード時に指定可能なオプション
 export interface UploadOptions {
-	chunkSize?: number; // 各チャンクのサイズ（バイト単位）
-	distributionStrategy?: DistributionStrategy; // チャンクの分散戦略
-	targetChain?: DataChainId; // 'manual'戦略の時に使用するターゲットチェーン
+	chunkSize?: number;
+	distributionStrategy?: DistributionStrategy;
+	targetChain?: DataChainId;
 }
+
+// uploadFileメソッドの返り値の型定義
+export interface UploadResult {
+	manifest: Manifest;
+	urlIndex: string;
+	uploadStats: PerformanceReport;
+}
+
+// downloadFileメソッドの返り値の型定義
+export interface DownloadResult {
+	data: Buffer;
+	downloadTimeMs: number;
+}
+
 
 // 各チェーンの状態を表すインターフェース
 export interface ChainStatus {
-	chainId: DataChainId; // チェーンのID
-	pendingTxs: number; // 処理待ちのトランザクション数
+	chainId: DataChainId;
+	pendingTxs: number;
 }
 
 // ログ出力用のヘルパーオブジェクト
@@ -49,17 +64,17 @@ export const log = {
 
 // Raidchainとのやり取りを抽象化するクライアントクラス
 export class RaidchainClient {
-	private dataChains: DataChainId[] = []; // 利用可能なデータチェーンのリスト
-	private metaChain: string | null = null; // メタデータチェーンのID
-	private isInitialized = false; // 初期化が完了したかどうかのフラグ
-	private verificationTimeoutMs = 20000; // トランザクション検証のタイムアウト（ミリ秒）
-	private verificationPollIntervalMs = 1000; // トランザクション検証のポーリング間隔（ミリ秒）
+	private dataChains: DataChainId[] = [];
+	private metaChain: string | null = null;
+	private isInitialized = false;
+	private verificationTimeoutMs = 20000;
+	private verificationPollIntervalMs = 1000;
 
 	constructor() { }
 
 	// クライアントを初期化する
 	async initialize() {
-		if (this.isInitialized) return; // すでに初期化済みなら何もしない
+		if (this.isInitialized) return;
 
 		log.info('RaidchainClientを初期化しています。チェーン情報を取得中...');
 		const chainInfos = await getChainInfo();
@@ -83,7 +98,7 @@ export class RaidchainClient {
 	}
 
 	// 1つのチャンクをアップロードし、ブロックに取り込まれるまで確認する
-	private async _uploadAndVerifyChunk(targetChain: DataChainId, chunkIndex: string, chunk: Buffer): Promise<void> {
+	private async _uploadAndVerifyChunk(targetChain: DataChainId, chunkIndex: string, chunk: Buffer): Promise<DeliverTxResponse> {
 		const txResult = await uploadChunkToDataChain(targetChain, chunkIndex, chunk);
 		if (txResult.code !== 0) {
 			throw new Error(`チャンク ${chunkIndex} の ${targetChain} へのアップロードトランザクションが失敗しました (Code: ${txResult.code}): ${txResult.rawLog}`);
@@ -95,7 +110,7 @@ export class RaidchainClient {
 			try {
 				await queryStoredChunk(targetChain, chunkIndex);
 				log.success(`  ... チャンク '${chunkIndex}' がチェーン上で検証されました。`);
-				return;
+				return txResult;
 			} catch (error: any) {
 				// 'not found' エラーの場合はリトライを続ける
 				if (error.message && error.message.includes('not found')) {
@@ -109,7 +124,7 @@ export class RaidchainClient {
 	}
 
 	// マニフェストファイルをアップロードし、ブロックに取り込まれるまで確認する
-	private async _uploadAndVerifyManifest(urlIndex: string, manifestString: string): Promise<void> {
+	private async _uploadAndVerifyManifest(urlIndex: string, manifestString: string): Promise<DeliverTxResponse> {
 		if (!this.metaChain) {
 			throw new Error("メタチェーンが初期化されていません。");
 		}
@@ -124,7 +139,7 @@ export class RaidchainClient {
 			try {
 				await queryStoredManifest(this.metaChain, urlIndex);
 				log.success(`  ... マニフェスト '${urlIndex}' がチェーン上で検証されました。`);
-				return;
+				return txResult;
 			} catch (error: any) {
 				if (error.message && error.message.includes('not found')) {
 					await new Promise(resolve => setTimeout(resolve, this.verificationPollIntervalMs));
@@ -143,8 +158,11 @@ export class RaidchainClient {
 	 * @param options アップロードに関するオプション
 	 * @returns 生成されたマニフェストとURLのインデックス
 	 */
-	public async uploadFile(filePath: string, siteUrl: string, options: UploadOptions = {}): Promise<{ manifest: Manifest, urlIndex: string }> {
-		await this.initialize(); // 最初に初期化を実行
+	public async uploadFile(filePath: string, siteUrl: string, options: UploadOptions = {}): Promise<UploadResult> {
+		await this.initialize();
+		const tracker = new PerformanceTracker();
+		tracker.start();
+
 		const { distributionStrategy = 'round-robin', targetChain } = options;
 		log.info(`'${filePath}' をアップロードします。方式: ${distributionStrategy}`);
 
@@ -169,7 +187,8 @@ export class RaidchainClient {
 					if (!job) continue;
 
 					log.info(`  -> [ワーカー: ${chainId}] チャンク '${job.index}' を処理中...`);
-					await this._uploadAndVerifyChunk(chainId, job.index, job.chunk);
+					const txResult = await this._uploadAndVerifyChunk(chainId, job.index, job.chunk);
+					tracker.recordTransaction(txResult.gasUsed);
 					uploadedChunks.push({ index: job.index, chain: chainId });
 				}
 			};
@@ -196,7 +215,8 @@ export class RaidchainClient {
 				}
 
 				log.info(`  -> チャンク #${i} (${(chunk.length / 1024).toFixed(2)} KB) を ${uploadTarget} へアップロード中...`);
-				await this._uploadAndVerifyChunk(uploadTarget, chunkIndex, chunk);
+				const txResult = await this._uploadAndVerifyChunk(uploadTarget, chunkIndex, chunk);
+				tracker.recordTransaction(txResult.gasUsed);
 				uploadedChunks.push({ index: chunkIndex, chain: uploadTarget });
 			}
 		}
@@ -215,10 +235,17 @@ export class RaidchainClient {
 		const manifestString = JSON.stringify(manifest);
 
 		log.info(`${this.metaChain} へURL '${siteUrl}' のマニフェストをアップロードします`);
-		await this._uploadAndVerifyManifest(urlIndex, manifestString);
+		const manifestTxResult = await this._uploadAndVerifyManifest(urlIndex, manifestString);
+		tracker.recordTransaction(manifestTxResult.gasUsed);
 
+		tracker.stop();
 		log.success(`'${siteUrl}' のアップロードと検証が完了しました。`);
-		return { manifest, urlIndex };
+
+		return {
+			manifest,
+			urlIndex,
+			uploadStats: tracker.getReport(),
+		};
 	}
 
 	/**
@@ -226,8 +253,10 @@ export class RaidchainClient {
 	 * @param siteUrl ダウンロードしたいファイルのURL
 	 * @returns 復元されたファイルのBuffer
 	 */
-	async downloadFile(siteUrl: string): Promise<Buffer> {
+	async downloadFile(siteUrl: string): Promise<DownloadResult> {
 		await this.initialize();
+		const startTime = performance.now();
+
 		const urlIndex = encodeURIComponent(siteUrl);
 		if (!this.metaChain) {
 			throw new Error("メタチェーンが初期化されていません。");
@@ -235,11 +264,11 @@ export class RaidchainClient {
 		log.info(`${this.metaChain} からURL '${siteUrl}' のマニフェストを取得します`);
 		const manifestResult = await queryStoredManifest(this.metaChain, urlIndex);
 
-		if (!manifestResult.stored_manifest || !manifestResult.stored_manifest.manifest) {
+		if (!manifestResult.manifest || !manifestResult.manifest.manifest) {
 			throw new Error(`マニフェストが見つからないか、レスポンスの形式が不正です: ${JSON.stringify(manifestResult)}`);
 		}
 
-		const manifest: Manifest = JSON.parse(manifestResult.stored_manifest.manifest);
+		const manifest: Manifest = JSON.parse(manifestResult.manifest.manifest);
 		log.success(`マニフェストを発見しました。${manifest.chunks.length}個のチャンクをダウンロードします。`);
 
 		const chunkDownloadPromises = manifest.chunks.map(chunkInfo => {
@@ -257,7 +286,12 @@ export class RaidchainClient {
 		});
 
 		// チャンクを結合して元のファイルを復元
-		return Buffer.concat(chunkBuffers);
+		const data = Buffer.concat(chunkBuffers);
+		const endTime = performance.now();
+		const downloadTimeMs = endTime - startTime;
+
+		log.success(`ファイルの復元が完了しました。(${downloadTimeMs.toFixed(2)} ms)`);
+		return { data, downloadTimeMs };
 	}
 
 	/**
