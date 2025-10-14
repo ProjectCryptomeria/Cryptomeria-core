@@ -235,11 +235,11 @@ export class RaidchainClient {
 		log.info(`${this.metaChain} からURL '${siteUrl}' のマニフェストを取得します`);
 		const manifestResult = await queryStoredManifest(this.metaChain, urlIndex);
 
-		if (!manifestResult.manifest || !manifestResult.manifest.manifest) {
+		if (!manifestResult.stored_manifest || !manifestResult.stored_manifest.manifest) {
 			throw new Error(`マニフェストが見つからないか、レスポンスの形式が不正です: ${JSON.stringify(manifestResult)}`);
 		}
 
-		const manifest: Manifest = JSON.parse(manifestResult.manifest.manifest);
+		const manifest: Manifest = JSON.parse(manifestResult.stored_manifest.manifest);
 		log.success(`マニフェストを発見しました。${manifest.chunks.length}個のチャンクをダウンロードします。`);
 
 		const chunkDownloadPromises = manifest.chunks.map(chunkInfo => {

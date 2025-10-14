@@ -61,7 +61,7 @@ export async function uploadChunkToDataChain(
 	}
 
 	const msg = {
-		typeUrl: '/bluzelle.curium.storage.MsgCreateChunk',
+		typeUrl: '/datachain.datastore.v1.MsgCreateStoredChunk',
 		value: {
 			creator: account.address,
 			index: chunkIndex,
@@ -97,7 +97,7 @@ export async function uploadManifestToMetaChain(
 	}
 
 	const msg = {
-		typeUrl: '/bluzelle.curium.storage.MsgCreateManifest',
+		typeUrl: '/metachain.metastore.v1.MsgCreateStoredManifest',
 		value: {
 			creator: account.address,
 			url: url,

@@ -40,7 +40,7 @@ export async function queryStoredChunk(chainName: string, index: string): Promis
 	if (!restEndpoint) {
 		throw new Error(`REST endpoint not found for chain: ${chainName}`);
 	}
-	const url = `${restEndpoint}/bluzelle/curium/storage/stored_chunk/${index}`;
+	const url = `${restEndpoint}/datachain/datastore/v1/stored_chunk/${index}`;
 
 	console.log(`  🔍 Querying: ${url}`);
 	const response = await fetch(url);
@@ -57,7 +57,7 @@ export async function queryStoredManifest(chainName: string, url: string): Promi
 	if (!restEndpoint) {
 		throw new Error(`REST endpoint not found for chain: ${chainName}`);
 	}
-	const queryUrl = `${restEndpoint}/bluzelle/curium/storage/manifest/${encodeURIComponent(url)}`;
+	const queryUrl = `${restEndpoint}/metachain/metastore/v1/stored_manifest/${encodeURIComponent(url)}`;
 
 	console.log(`  🔍 Querying: ${queryUrl}`);
 	const response = await fetch(queryUrl);
