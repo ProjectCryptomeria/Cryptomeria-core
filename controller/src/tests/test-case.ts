@@ -158,11 +158,119 @@ async function runSingleTest(
 }
 
 
-// (省略: Case 1-4 は runSingleTest を使うようにリファクタ可能ですが、今回は変更しません)
-async function runCase1(): Promise<TestResult[]> { return []; }
-async function runCase2(): Promise<TestResult> { return {} as TestResult; }
-async function runCase3(): Promise<TestResult> { return {} as TestResult; }
-async function runCase4(): Promise<TestResult> { return {} as TestResult; }
+// --- Test Case 1: 単一チャンク上限テスト ---
+async function runCase1(): Promise<TestResult[]> {
+	const testFilePath = path.join(__dirname, 'test-file-limit.txt');
+	log.step('1. 【実験】単一チャンクでのアップロード上限を探します');
+
+	const sizesToTest = [16, 32, 64, 128, 256, 512]; // KB
+	const allResults: TestResult[] = [];
+	const client = new RaidchainClient();
+	await client.initialize();
+
+	for (const size of sizesToTest) {
+		log.step(`--- Testing Size: ${size} KB ---`);
+		const originalContent = await client.createTestFile(testFilePath, size);
+		const siteUrl = `limit-test/${size}kb-${Date.now()}`;
+		const usedChains = new Set<string>();
+
+		try {
+			// ファイル全体を1つのチャンクとして扱うため、ファイルサイズより大きい値を設定
+			const chunkSize = (size + 1) * 1024;
+			const { uploadStats } = await client.uploadFile(testFilePath, siteUrl, {
+				chunkSize: chunkSize,
+				distributionStrategy: 'auto', // 1チャンクなのでどれでも同じ
+				onChunkUploaded: (info) => usedChains.add(info.chain),
+			});
+
+			const chainsUsedList = Array.from(usedChains).sort();
+			const { data, downloadTimeMs } = await client.downloadFile(siteUrl);
+			const verified = originalContent === data.toString('utf-8');
+			if (!verified) throw new Error("File content mismatch");
+
+			const throughputKBps = size / (uploadStats.durationMs / 1000);
+			const gasPerKB = size > 0 ? uploadStats.totalGasUsed / BigInt(size) : 0n;
+
+			allResults.push({
+				iteration: 1,
+				case: 'Case1-SingleChunkLimit',
+				param: `${size}KB`,
+				fileSizeKB: size,
+				chunkSizeKB: size,
+				uploadTimeMs: uploadStats.durationMs,
+				downloadTimeMs,
+				throughputKBps,
+				totalTx: uploadStats.transactionCount,
+				totalGas: uploadStats.totalGasUsed,
+				gasPerKB,
+				avgGas: uploadStats.averageGasPerTransaction,
+				verified,
+				chainsUsedCount: chainsUsedList.length,
+				chainsUsedList: chainsUsedList.join(' '),
+			});
+		} catch (error: any) {
+			log.error(`${size} KB upload or verification failed.`);
+			console.error(error.message);
+			allResults.push({
+				iteration: 1, case: 'Case1-SingleChunkLimit', param: `${size}KB`,
+				fileSizeKB: size, chunkSizeKB: size,
+				uploadTimeMs: 0, downloadTimeMs: 0, throughputKBps: 0, totalTx: 0,
+				totalGas: 0n, gasPerKB: 0n, avgGas: 0n, verified: false,
+				chainsUsedCount: 0, chainsUsedList: 'failed'
+			});
+		}
+	}
+	return allResults;
+}
+
+
+// --- Test Case 2: Manual (単一チェーン) 分散テスト ---
+async function runCase2(): Promise<TestResult> {
+	const FILE_SIZE_KB = 100;
+	const TARGET_CHAIN = 'data-1';
+	log.step(`2. 【実験】${FILE_SIZE_KB}KBのファイルをチャンク化し、全て'${TARGET_CHAIN}'にアップロードします`);
+
+	return runSingleTest({
+		caseName: 'Case2-Manual',
+		param: TARGET_CHAIN,
+		filePath: path.join(__dirname, 'test-file-manual.txt'),
+		fileSizeKB: FILE_SIZE_KB,
+		siteUrl: `manual-dist-test/${Date.now()}`,
+		distributionStrategy: 'manual',
+		targetChain: TARGET_CHAIN,
+	});
+}
+
+// --- Test Case 3: Round-Robin 分散テスト ---
+async function runCase3(): Promise<TestResult> {
+	const FILE_SIZE_KB = 100;
+	log.step(`3. 【実験】${FILE_SIZE_KB}KBのファイルをチャンク化し、ラウンドロビンにアップロードします`);
+
+	return runSingleTest({
+		caseName: 'Case3-RoundRobin',
+		param: 'round-robin',
+		filePath: path.join(__dirname, 'test-file-round-robin.txt'),
+		fileSizeKB: FILE_SIZE_KB,
+		siteUrl: `round-robin-dist-test/${Date.now()}`,
+		distributionStrategy: 'round-robin',
+	});
+}
+
+// --- Test Case 4: Auto (負荷分散) テスト ---
+async function runCase4(): Promise<TestResult> {
+	const FILE_SIZE_KB = 100;
+	log.step(`4. 【実験】${FILE_SIZE_KB}KBのファイルをチャンク化し、空いているチェーンへ自動でアップロードします`);
+
+	return runSingleTest({
+		caseName: 'Case4-Auto',
+		param: 'auto',
+		filePath: path.join(__dirname, 'test-file-auto.txt'),
+		fileSizeKB: FILE_SIZE_KB,
+		siteUrl: `auto-dist-test/${Date.now()}`,
+		distributionStrategy: 'auto',
+	});
+}
+
 
 // --- Test Case 5: 水平スケーラビリティ測定テスト ---
 async function runCase5(chainCounts: number[]): Promise<TestResult[]> {
@@ -260,6 +368,10 @@ async function main() {
 			let results: TestResult[] = [];
 			switch (caseNumber) {
 				case '1':
+					if (iterations > 1) {
+						log.error("ケース1は内部で複数シナリオを実行するため、--iter オプションをサポートしていません。");
+						process.exit(1);
+					}
 					results = await runCase1();
 					break;
 				case '2':
@@ -279,6 +391,10 @@ async function main() {
 					results = await runCase5(chainCounts);
 					break;
 				case '6':
+					if (iterations > 1) {
+						log.error("ケース6は内部で複数シナリオを実行するため、--iter オプションをサポートしていません。");
+						process.exit(1);
+					}
 					results = await runCase6();
 					break;
 				default:
@@ -290,7 +406,7 @@ async function main() {
 				r.iteration = i;
 				allResults.push(r);
 				if (!r.verified) {
-					throw new Error(`Iteration ${i} failed verification.`);
+					throw new Error(`Iteration ${i}, Case ${r.case}, Param ${r.param} failed verification.`);
 				}
 			});
 
