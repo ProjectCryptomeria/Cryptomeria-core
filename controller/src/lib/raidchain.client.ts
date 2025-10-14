@@ -1,89 +1,73 @@
-// src/lib/raidchain-util.ts
+// src/lib/raidchain.client.ts
 import { DeliverTxResponse } from '@cosmjs/stargate';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { performance } from 'perf_hooks';
-import { uploadChunkToDataChain, uploadManifestToMetaChain } from '../blockchain';
-import { queryStoredChunk, queryStoredManifest } from './blockchain-query';
+import { BlockchainService } from '../services/blockchain.service';
+import { ChainInfo, InfrastructureService } from '../services/infrastructure.service';
 import { splitFileIntoChunks } from './chunker';
-import { getChainInfo, getRpcEndpoints } from './k8s-client';
 import { log } from './logger';
 import { PerformanceReport, PerformanceTracker } from './performance-tracker';
 
-// データチェーンの一意な識別子（例: "data-0", "data-1"）
+// --- Type Definitions (No Change) ---
 export type DataChainId = string;
-
-// ファイルのチャンクをどのデータチェーンに分散させるかの戦略
 export type DistributionStrategy = 'round-robin' | 'manual' | 'auto';
-
-// ファイルの個々の断片（チャンク）に関する情報
 export interface ChunkInfo {
 	index: string;
 	chain: DataChainId;
 }
-
-// ファイル全体の構造を定義するマニフェスト
 export interface Manifest {
 	filepath: string;
 	chunks: ChunkInfo[];
 }
-
-// ファイルアップロード時に指定可能なオプション
 export interface UploadOptions {
 	chunkSize?: number;
 	distributionStrategy?: DistributionStrategy;
 	targetChain?: DataChainId;
 	onChunkUploaded?: (info: { chunkIndex: string; chain: DataChainId }) => void;
 }
-
-// クライアント初期化時に指定可能なオプション
 export interface InitializeOptions {
-	chainCount?: number; // 使用するデータチェーンの数を指定
+	chainCount?: number;
 }
-
-
-// uploadFileメソッドの返り値の型定義
 export interface UploadResult {
 	manifest: Manifest;
 	urlIndex: string;
 	uploadStats: PerformanceReport;
 }
-
-// downloadFileメソッドの返り値の型定義
 export interface DownloadResult {
 	data: Buffer;
 	downloadTimeMs: number;
 }
-
-
-// 各チェーンの状態を表すインターフェース
 export interface ChainStatus {
 	chainId: DataChainId;
 	pendingTxs: number;
 }
 
-// Raidchainとのやり取りを抽象化するクライアントクラス
+
 export class RaidchainClient {
-	private dataChains: DataChainId[] = [];
-	private metaChain: string | null = null;
+	private dataChains: ChainInfo[] = [];
+	private metaChain: ChainInfo | null = null;
 	private isInitialized = false;
 	private verificationTimeoutMs = 20000;
 	private verificationPollIntervalMs = 1000;
 
-	constructor() { }
+	// --- Services ---
+	private infraService: InfrastructureService;
+	private blockchainService: BlockchainService;
 
-	// クライアントを初期化する
+	constructor() {
+		this.infraService = new InfrastructureService();
+		this.blockchainService = new BlockchainService(this.infraService);
+	}
+
 	async initialize(options: InitializeOptions = {}) {
 		if (this.isInitialized) return;
 
 		log.info('RaidchainClientを初期化しています。チェーン情報を取得中...');
-		const chainInfos = await getChainInfo();
+		const chainInfos = await this.infraService.getChainInfo();
 
-		let allDataChains = chainInfos
-			.filter(c => c.type === 'datachain')
-			.map(c => c.name);
+		let allDataChains = chainInfos.filter(c => c.type === 'datachain');
 
-		// chainCountオプションに基づいて使用するチェーンを制限
 		if (options.chainCount && options.chainCount > 0) {
 			if (options.chainCount > allDataChains.length) {
 				log.error(`要求されたチェーン数 (${options.chainCount}) が利用可能なデータチェーン数 (${allDataChains.length}) を超えています。`);
@@ -95,25 +79,20 @@ export class RaidchainClient {
 			this.dataChains = allDataChains;
 		}
 
-
-		const metaChainInfo = chainInfos.find(c => c.type === 'metachain');
-		if (metaChainInfo) {
-			this.metaChain = metaChainInfo.name;
-		} else {
+		this.metaChain = chainInfos.find(c => c.type === 'metachain') ?? null;
+		if (!this.metaChain) {
 			throw new Error("メタチェーンがクラスタ内で見つかりません。");
 		}
-
 		if (this.dataChains.length === 0) {
 			console.warn("警告: データチェーンが見つかりません。");
 		}
 
 		this.isInitialized = true;
-		log.info(`RaidchainClientの初期化が完了しました。データチェーン: ${this.dataChains.length}個, メタチェーン: '${this.metaChain}'`);
+		log.info(`RaidchainClientの初期化が完了しました。データチェーン: ${this.dataChains.length}個, メタチェーン: '${this.metaChain.name}'`);
 	}
 
-	// 1つのチャンクをアップロードし、ブロックに取り込まれるまで確認する
 	private async _uploadAndVerifyChunk(targetChain: DataChainId, chunkIndex: string, chunk: Buffer, options: UploadOptions): Promise<DeliverTxResponse> {
-		const txResult = await uploadChunkToDataChain(targetChain, chunkIndex, chunk);
+		const txResult = await this.blockchainService.uploadChunkToDataChain(targetChain, chunkIndex, chunk);
 		if (txResult.code !== 0) {
 			throw new Error(`チャンク ${chunkIndex} の ${targetChain} へのアップロードトランザクションが失敗しました (Code: ${txResult.code}): ${txResult.rawLog}`);
 		}
@@ -122,12 +101,11 @@ export class RaidchainClient {
 		const startTime = Date.now();
 		while (Date.now() - startTime < this.verificationTimeoutMs) {
 			try {
-				await queryStoredChunk(targetChain, chunkIndex);
+				await this.blockchainService.queryStoredChunk(targetChain, chunkIndex);
 				log.info(`  ... チャンク '${chunkIndex}' がチェーン上で検証されました。`);
 				options.onChunkUploaded?.({ chunkIndex: chunkIndex, chain: targetChain });
 				return txResult;
 			} catch (error: any) {
-				// 'not found' エラーの場合はリトライを続ける
 				if (error.message && error.message.includes('not found')) {
 					await new Promise(resolve => setTimeout(resolve, this.verificationPollIntervalMs));
 				} else {
@@ -138,12 +116,10 @@ export class RaidchainClient {
 		throw new Error(`チャンク '${chunkIndex}' の検証がタイムアウトしました。`);
 	}
 
-	// マニフェストファイルをアップロードし、ブロックに取り込まれるまで確認する
 	private async _uploadAndVerifyManifest(urlIndex: string, manifestString: string): Promise<DeliverTxResponse> {
-		if (!this.metaChain) {
-			throw new Error("メタチェーンが初期化されていません。");
-		}
-		const txResult = await uploadManifestToMetaChain(this.metaChain, urlIndex, manifestString);
+		if (!this.metaChain) throw new Error("メタチェーンが初期化されていません。");
+
+		const txResult = await this.blockchainService.uploadManifestToMetaChain(this.metaChain.name, urlIndex, manifestString);
 		if (txResult.code !== 0) {
 			throw new Error(`マニフェスト ${urlIndex} のアップロードトランザクションが失敗しました (Code: ${txResult.code}): ${txResult.rawLog}`);
 		}
@@ -152,7 +128,7 @@ export class RaidchainClient {
 		const startTime = Date.now();
 		while (Date.now() - startTime < this.verificationTimeoutMs) {
 			try {
-				await queryStoredManifest(this.metaChain, urlIndex);
+				await this.blockchainService.queryStoredManifest(this.metaChain.name, urlIndex);
 				log.info(`  ... マニフェスト '${urlIndex}' がチェーン上で検証されました。`);
 				return txResult;
 			} catch (error: any) {
@@ -166,17 +142,8 @@ export class RaidchainClient {
 		throw new Error(`マニフェスト '${urlIndex}' の検証がタイムアウトしました。`);
 	}
 
-	/**
-	 * ファイルをRaidchainネットワークにアップロードする
-	 * @param filePath アップロードするファイルのパス
-	 * @param siteUrl ファイルに紐付ける一意のURL
-	 * @param options アップロードに関するオプション
-	 * @returns 生成されたマニフェストとURLのインデックス
-	 */
 	public async uploadFile(filePath: string, siteUrl: string, options: UploadOptions = {}): Promise<UploadResult> {
-		if (!this.isInitialized) {
-			await this.initialize();
-		}
+		await this.initialize();
 		const tracker = new PerformanceTracker();
 		tracker.start();
 
@@ -187,7 +154,6 @@ export class RaidchainClient {
 		const chunks = options.chunkSize ? this.splitBufferIntoChunks(fileBuffer, options.chunkSize) : await splitFileIntoChunks(filePath);
 		const uniqueSuffix = `file-${Date.now()}`;
 		const urlIndex = encodeURIComponent(siteUrl);
-
 		const uploadedChunks: ChunkInfo[] = [];
 
 		if (distributionStrategy === 'auto') {
@@ -196,97 +162,62 @@ export class RaidchainClient {
 				chunk,
 				index: `${uniqueSuffix}-${i}`
 			}));
-
-			// ワーカー関数: 利用可能なチャンクを取得してアップロードする
-			const worker = async (chainId: DataChainId) => {
+			const worker = async (chain: ChainInfo) => {
 				while (chunksToUpload.length > 0) {
 					const job = chunksToUpload.shift();
 					if (!job) continue;
-
-					log.info(`  -> [ワーカー: ${chainId}] チャンク '${job.index}' を処理中...`);
-					const txResult = await this._uploadAndVerifyChunk(chainId, job.index, job.chunk, options);
-					// ★★★ 修正点: gasUsed (number) を bigint に変換 ★★★
+					log.info(`  -> [ワーカー: ${chain.name}] チャンク '${job.index}' を処理中...`);
+					const txResult = await this._uploadAndVerifyChunk(chain.name, job.index, job.chunk, options);
 					tracker.recordTransaction(BigInt(txResult.gasUsed));
-					uploadedChunks.push({ index: job.index, chain: chainId });
+					uploadedChunks.push({ index: job.index, chain: chain.name });
 				}
 			};
-
-			const workerPromises = this.dataChains.map(chainId => worker(chainId));
+			const workerPromises = this.dataChains.map(chain => worker(chain));
 			await Promise.all(workerPromises);
-
 		} else {
-			// 'manual' または 'round-robin' 戦略
 			for (const [i, chunk] of chunks.entries()) {
 				const chunkIndex = `${uniqueSuffix}-${i}`;
-				let uploadTarget: DataChainId;
-
+				let uploadTarget: ChainInfo;
 				if (distributionStrategy === 'manual') {
-					if (!targetChain || !this.dataChains.includes(targetChain)) {
-						throw new Error(`'manual'戦略では、有効なデータチェーンを'targetChain'で指定する必要があります。利用可能なチェーン: ${this.dataChains.join(', ')}`);
-					}
-					uploadTarget = targetChain;
-				} else { // 'round-robin'
-					if (this.dataChains.length === 0) {
-						throw new Error("アップロード可能なデータチェーンがありません。");
-					}
+					const foundChain = this.dataChains.find(c => c.name === targetChain);
+					if (!foundChain) throw new Error(`'manual'戦略では、有効なデータチェーンを'targetChain'で指定する必要があります。利用可能なチェーン: ${this.dataChains.map(c => c.name).join(', ')}`);
+					uploadTarget = foundChain;
+				} else {
+					if (this.dataChains.length === 0) throw new Error("アップロード可能なデータチェーンがありません。");
 					uploadTarget = this.dataChains[i % this.dataChains.length]!;
 				}
-
-				log.info(`  -> チャンク #${i} (${(chunk.length / 1024).toFixed(2)} KB) を ${uploadTarget} へアップロード中...`);
-				const txResult = await this._uploadAndVerifyChunk(uploadTarget, chunkIndex, chunk, options);
-				// ★★★ 修正点: gasUsed (number) を bigint に変換 ★★★
+				log.info(`  -> チャンク #${i} (${(chunk.length / 1024).toFixed(2)} KB) を ${uploadTarget.name} へアップロード中...`);
+				const txResult = await this._uploadAndVerifyChunk(uploadTarget.name, chunkIndex, chunk, options);
 				tracker.recordTransaction(BigInt(txResult.gasUsed));
-				uploadedChunks.push({ index: chunkIndex, chain: uploadTarget });
+				uploadedChunks.push({ index: chunkIndex, chain: uploadTarget.name });
 			}
 		}
 
-		// チャンクの順番を保証するためにソート
-		uploadedChunks.sort((a, b) => {
-			const indexA = parseInt(a.index.split('-').pop() ?? '0');
-			const indexB = parseInt(b.index.split('-').pop() ?? '0');
-			return indexA - indexB;
-		});
-
+		uploadedChunks.sort((a, b) => parseInt(a.index.split('-').pop() ?? '0') - parseInt(b.index.split('-').pop() ?? '0'));
 		const manifest: Manifest = {
 			filepath: path.basename(filePath),
 			chunks: uploadedChunks,
 		};
 		const manifestString = JSON.stringify(manifest);
 
-		log.info(`${this.metaChain} へURL '${siteUrl}' のマニフェストをアップロードします`);
+		if (!this.metaChain) throw new Error("メタチェーンが初期化されていません。");
+		log.info(`${this.metaChain.name} へURL '${siteUrl}' のマニフェストをアップロードします`);
 		const manifestTxResult = await this._uploadAndVerifyManifest(urlIndex, manifestString);
-		// ★★★ 修正点: gasUsed (number) を bigint に変換 ★★★
 		tracker.recordTransaction(BigInt(manifestTxResult.gasUsed));
 
 		tracker.stop();
 		log.success(`'${siteUrl}' のアップロードと検証が完了しました。`);
-
-		return {
-			manifest,
-			urlIndex,
-			uploadStats: tracker.getReport(),
-		};
+		return { manifest, urlIndex, uploadStats: tracker.getReport() };
 	}
 
-	/**
-	 * Raidchainネットワークからファイルをダウンロードする
-	 * @param siteUrl ダウンロードしたいファイルのURL
-	 * @returns 復元されたファイルのBuffer
-	 */
-	async downloadFile(siteUrl: string): Promise<DownloadResult> {
-		if (!this.isInitialized) {
-			await this.initialize();
-		}
-
+	public async downloadFile(siteUrl: string): Promise<DownloadResult> {
+		await this.initialize();
 		const startTime = performance.now();
-
 		const urlIndex = encodeURIComponent(siteUrl);
-		if (!this.metaChain) {
-			throw new Error("メタチェーンが初期化されていません。");
-		}
-		log.info(`${this.metaChain} からURL '${siteUrl}' のマニフェストを取得します`);
-		const manifestResult = await queryStoredManifest(this.metaChain, urlIndex);
+		if (!this.metaChain) throw new Error("メタチェーンが初期化されていません。");
 
+		log.info(`${this.metaChain.name} からURL '${siteUrl}' のマニフェストを取得します`);
+		const manifestResult = await this.blockchainService.queryStoredManifest(this.metaChain.name, urlIndex);
 		if (!manifestResult.stored_manifest || !manifestResult.stored_manifest.manifest) {
 			throw new Error(`マニフェストが見つからないか、レスポンスの形式が不正です: ${JSON.stringify(manifestResult)}`);
 		}
@@ -296,11 +227,10 @@ export class RaidchainClient {
 
 		const chunkDownloadPromises = manifest.chunks.map(chunkInfo => {
 			log.info(`  -> チャンク '${chunkInfo.index}' を ${chunkInfo.chain} から取得中...`);
-			return queryStoredChunk(chunkInfo.chain, chunkInfo.index);
+			return this.blockchainService.queryStoredChunk(chunkInfo.chain, chunkInfo.index);
 		});
 
 		const chunkQueryResults = await Promise.all(chunkDownloadPromises);
-
 		const chunkBuffers = chunkQueryResults.map((result, index) => {
 			if (!result.stored_chunk || !result.stored_chunk.data) {
 				throw new Error(`チャンク ${manifest.chunks[index]?.index} のデータ取得に失敗しました。レスポンス: ${JSON.stringify(result)}`);
@@ -308,73 +238,49 @@ export class RaidchainClient {
 			return Buffer.from(result.stored_chunk.data, 'base64');
 		});
 
-		// チャンクを結合して元のファイルを復元
 		const data = Buffer.concat(chunkBuffers);
 		const endTime = performance.now();
 		const downloadTimeMs = endTime - startTime;
-
 		log.info(`ファイルの復元が完了しました。(${downloadTimeMs.toFixed(2)} ms)`);
 		return { data, downloadTimeMs };
 	}
 
-	/**
-	 * 指定されたサイズのテストファイルを生成する
-	 * @param filePath ファイルを保存するパス
-	 * @param sizeInKb ファイルサイズ（キロバイト）
-	 * @returns 生成されたファイルの内容
-	 */
-	async createTestFile(filePath: string, sizeInKb: number): Promise<string> {
-		const buffer = Buffer.alloc(sizeInKb * 1024, 'a'); // 'a'で埋めたバッファを作成
+	public async createTestFile(filePath: string, sizeInKb: number): Promise<string> {
+		const buffer = Buffer.alloc(sizeInKb * 1024, 'a');
 		const content = `Test file of ${sizeInKb} KB. Unique ID: ${Date.now()}`;
 		buffer.write(content);
-
 		await fs.writeFile(filePath, buffer);
 		log.info(`${sizeInKb} KB のテストファイルを ${filePath} に作成しました。`);
 		return buffer.toString('utf-8');
 	}
 
-	/**
-	 * 最も負荷の低い（保留中のトランザクションが最も少ない）データチェーンを見つける
-	 * @returns 最も負荷の低いデータチェーンのID
-	 */
-	async getQuietestChain(): Promise<DataChainId> {
+	public async getQuietestChain(): Promise<DataChainId> {
 		await this.initialize();
-		if (this.dataChains.length === 0) {
-			throw new Error("最も空いているチェーンを判断するためのデータチェーンがありません。");
-		}
-
-		const statuses = await Promise.all(this.dataChains.map(id => this.getChainStatus(id)));
+		if (this.dataChains.length === 0) throw new Error("最も空いているチェーンを判断するためのデータチェーンがありません。");
+		const statuses = await Promise.all(this.dataChains.map(c => this.getChainStatus(c.name)));
 		const quietest = statuses.reduce((prev, curr) => (prev.pendingTxs < curr.pendingTxs ? prev : curr));
 		log.info(`自動選択されたチェーン: ${quietest.chainId} (保留中のTX: ${quietest.pendingTxs})`);
 		return quietest.chainId;
 	}
 
-	/**
-	 * 特定のチェーンの現在の状態（保留中のトランザクション数）を取得する
-	 * @param chainId 状態を取得するチェーンのID
-	 * @returns チェーンの状態
-	 */
-	async getChainStatus(chainId: DataChainId): Promise<ChainStatus> {
+	public async getChainStatus(chainId: DataChainId): Promise<ChainStatus> {
 		await this.initialize();
-		const rpcEndpoints = await getRpcEndpoints(); // rpcEndpointsの取得を待つ
+		const rpcEndpoints = await this.infraService.getRpcEndpoints();
 		const rpcEndpoint = rpcEndpoints[chainId];
-		if (!rpcEndpoint) {
-			throw new Error(`${chainId}のRPCエンドポイントが見つかりません。`);
-		}
+		if (!rpcEndpoint) throw new Error(`${chainId}のRPCエンドポイントが見つかりません。`);
 
 		try {
 			const response = await fetch(`${rpcEndpoint}/num_unconfirmed_txs`);
-			if (!response.ok) return { chainId, pendingTxs: Infinity }; // エラー時は無限大として扱う
+			if (!response.ok) return { chainId, pendingTxs: Infinity };
 			const data = await response.json();
 			const pendingTxs = parseInt(data.result?.n_txs ?? '0', 10);
 			return { chainId, pendingTxs };
 		} catch (error) {
 			log.error(`${chainId} のステータス取得に失敗: ${error}`);
-			return { chainId, pendingTxs: Infinity }; // エラー時は無限大として扱う
+			return { chainId, pendingTxs: Infinity };
 		}
 	}
 
-	// バッファを指定されたサイズのチャンクに分割するプライベートメソッド
 	private splitBufferIntoChunks(buffer: Buffer, chunkSize: number): Buffer[] {
 		const chunks: Buffer[] = [];
 		for (let i = 0; i < buffer.length; i += chunkSize) {

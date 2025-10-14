@@ -2,7 +2,7 @@
 import * as path from 'path';
 import { CHUNK_SIZE } from '../config';
 import { log } from '../lib/logger';
-import { InitializeOptions, RaidchainClient, UploadOptions } from '../lib/raidchain-util';
+import { InitializeOptions, RaidchainClient, UploadOptions } from '../lib/raidchain.client'; // ★★★ 修正箇所 ★★★
 
 // --- データ構造の定義 ---
 
@@ -106,7 +106,6 @@ async function runSingleTest(
 ): Promise<TestResult> {
 	const localClient = new RaidchainClient();
 
-	// ★★★ 修正点: `exactOptionalPropertyTypes`エラーを解消 ★★★
 	const initOptions: InitializeOptions = {};
 	if (options.chainCount !== undefined) {
 		initOptions.chainCount = options.chainCount;
@@ -117,7 +116,6 @@ async function runSingleTest(
 	const originalContent = await localClient.createTestFile(options.filePath, options.fileSizeKB);
 	const usedChains = new Set<string>();
 
-	// ★★★ 修正点: `exactOptionalPropertyTypes`エラーを解消 ★★★
 	const uploadOptions: UploadOptions = {
 		distributionStrategy: options.distributionStrategy,
 		onChunkUploaded: (info) => usedChains.add(info.chain),

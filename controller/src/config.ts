@@ -1,6 +1,4 @@
-import {
-    getChainInfo,
-} from './lib/k8s-client';
+import { InfrastructureService } from './services/infrastructure.service';
 
 export const K8S_NAMESPACE = 'raidchain';
 export const SECRET_NAME = 'raidchain-mnemonics';
@@ -20,7 +18,13 @@ export async function getChainConfig() {
 		return chainConfigCache;
 	}
 
-	const chainInfos = await getChainInfo();
+	// ★★★ ここから修正 ★★★
+	// この関数内でInfrastructureServiceをインスタンス化し、
+	// 依存を自己完結させる
+	const infraService = new InfrastructureService();
+	const chainInfos = await infraService.getChainInfo();
+	// ★★★ ここまで修正 ★★★
+
 	const config: { [key: string]: { chainId: string; prefix: string; denom: string } } = {};
 
 	for (const info of chainInfos) {
