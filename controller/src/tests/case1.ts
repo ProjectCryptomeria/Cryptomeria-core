@@ -48,7 +48,7 @@ async function main() {
 
 		} catch (error: any) {
 			log.error(`${size} KB upload or verification failed.`);
-			console.error(error.message);
+			console.error(error);
 			printSummary(results); // Print summary even if it fails
 			process.exit(1);
 		}
