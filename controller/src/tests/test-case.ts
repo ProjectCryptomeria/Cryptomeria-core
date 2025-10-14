@@ -1,6 +1,7 @@
 // src/tests/test-case.ts
 import * as path from 'path';
-import { RaidchainClient, log } from '../lib/raidchain-util';
+import { log } from '../lib/logger';
+import { RaidchainClient } from '../lib/raidchain-util';
 
 // --- データ構造の定義 ---
 

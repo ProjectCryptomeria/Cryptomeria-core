@@ -7,6 +7,7 @@ import { uploadChunkToDataChain, uploadManifestToMetaChain } from '../blockchain
 import { queryStoredChunk, queryStoredManifest } from './blockchain-query';
 import { splitFileIntoChunks } from './chunker';
 import { getChainInfo, getRpcEndpoints } from './k8s-client';
+import { log } from './logger';
 import { PerformanceReport, PerformanceTracker } from './performance-tracker';
 
 // データチェーンの一意な識別子（例: "data-0", "data-1"）
@@ -53,26 +54,6 @@ export interface ChainStatus {
 	chainId: DataChainId;
 	pendingTxs: number;
 }
-
-// --- ログ出力の制御 ---
-let isDebugMode = false;
-
-// ログ出力用のヘルパーオブジェクト
-export const log = {
-	// デバッグモードを設定
-	setDebugMode: (enabled: boolean) => {
-		isDebugMode = enabled;
-	},
-	info: (msg: string) => {
-		if (isDebugMode) console.log(`\x1b[36m[INFO]\x1b[0m ${msg}`);
-	},
-	success: (msg: string) => console.log(`\x1b[32m[SUCCESS]\x1b[0m ${msg}`),
-	error: (msg: string) => console.error(`\x1b[31m[ERROR]\x1b[0m ${msg}`),
-	step: (msg: string) => {
-		if (isDebugMode) console.log(`\n\x1b[1;33m--- ${msg} ---\x1b[0m`);
-	},
-};
-
 
 // Raidchainとのやり取りを抽象化するクライアントクラス
 export class RaidchainClient {

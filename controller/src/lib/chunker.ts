@@ -1,6 +1,6 @@
 import * as fs from 'fs/promises';
 import { CHUNK_SIZE } from '../config';
-
+import { log } from './logger';
 /**
  * ファイルを指定されたサイズのチャンクに分割する
  * @param filePath 分割するファイルのパス
@@ -15,6 +15,6 @@ export async function splitFileIntoChunks(filePath: string): Promise<Buffer[]> {
 		chunks.push(chunk);
 	}
 
-	console.log(`✅ File "${filePath}" was split into ${chunks.length} chunks.`);
+	log.info(`File "${filePath}" was split into ${chunks.length} chunks.`);
 	return chunks;
 }

@@ -1,5 +1,6 @@
 import { NODE_PORT_API_START } from '../config';
 import { ChainInfo, getChainInfo } from './k8s-client';
+import { log } from './logger';
 
 type ChainName = string;
 type QueryResponse = { [key: string]: any };
@@ -15,7 +16,7 @@ async function getRestEndpoints(): Promise<Record<string, string>> {
 	const endpoints: Record<string, string> = {};
 	const isLocal = process.env.NODE_ENV !== 'production';
 
-	console.log(`🌐 Generating REST API endpoints in "${isLocal ? 'local-nodeport' : 'cluster'}" mode...`);
+	log.info(`Generating REST API endpoints in "${isLocal ? 'local-nodeport' : 'cluster'}" mode...`);
 
 	chainInfos.forEach((chain, index) => {
 		const chainName = chain.name;
@@ -29,7 +30,7 @@ async function getRestEndpoints(): Promise<Record<string, string>> {
 		}
 	});
 
-	console.log('✅ REST Endpoints generated:', endpoints);
+	log.info(`REST Endpoints generated: ${JSON.stringify(endpoints, null, 2)}`);
 	endpointsCache = endpoints;
 	return endpoints;
 }
@@ -42,7 +43,7 @@ export async function queryStoredChunk(chainName: string, index: string): Promis
 	}
 	const url = `${restEndpoint}/datachain/datastore/v1/stored_chunk/${index}`;
 
-	console.log(`  🔍 Querying: ${url}`);
+	log.info(`  🔍 Querying: ${url}`);
 	const response = await fetch(url);
 	if (!response.ok) {
 		const errorBody = await response.text();
@@ -59,7 +60,7 @@ export async function queryStoredManifest(chainName: string, url: string): Promi
 	}
 	const queryUrl = `${restEndpoint}/metachain/metastore/v1/stored_manifest/${encodeURIComponent(url)}`;
 
-	console.log(`  🔍 Querying: ${queryUrl}`);
+	log.info(`  🔍 Querying: ${queryUrl}`);
 	const response = await fetch(queryUrl);
 	if (!response.ok) {
 		const errorBody = await response.text();

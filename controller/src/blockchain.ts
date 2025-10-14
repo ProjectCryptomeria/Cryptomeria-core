@@ -2,7 +2,7 @@ import { HdPath, stringToPath } from "@cosmjs/crypto";
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
 import { SigningStargateClient } from '@cosmjs/stargate';
 import { getChainConfig } from './config';
-import { getCreatorMnemonic, getRpcEndpoints } from './lib/k8s-client'; // CHANGED: Import from k8s-client
+import { getCreatorMnemonic, getRpcEndpoints } from './lib/k8s-client';
 import { customRegistry } from './registry';
 
 type ChainName = string;
