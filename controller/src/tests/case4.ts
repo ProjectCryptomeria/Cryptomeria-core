@@ -1,22 +1,22 @@
-// src/tests/case2.ts
+// src/tests/case3.ts
 import * as path from 'path';
 import { RaidchainClient, log } from '../lib/raidchain-util';
 
 const client = new RaidchainClient();
-const testFilePath = path.join(__dirname, 'test-file-manual.txt');
+const testFilePath = path.join(__dirname, 'test-file-auto.txt');
 const FILE_SIZE_KB = 100; // チャンク分割が必要なサイズ
 
 async function main() {
 	await client.initialize();
 
-	log.step(`2. 【実験】${FILE_SIZE_KB}KBのファイルをチャンク化し、ラウンドロビンにアップロードします`);
+	log.step(`3. 【実験】${FILE_SIZE_KB}KBのファイルをチャンク化し、空いているチェーンへ自動でアップロードします`);
 
 	const originalContent = await client.createTestFile(testFilePath, FILE_SIZE_KB);
-	const siteUrl = `manual-dist-test/${Date.now()}`;
+	const siteUrl = `auto-dist-test/${Date.now()}`;
 
 	// アップロード
 	const { uploadStats } = await client.uploadFile(testFilePath, siteUrl, {
-		distributionStrategy: 'round-robin'
+		distributionStrategy: 'auto',
 	});
 
 	// 検証
