@@ -13,15 +13,17 @@ async function main() {
 	}
 
 	const caseNumber = args[caseIndex + 1];
-	const testFilePath = path.join(__dirname, '..', 'tests', `case${caseNumber}.ts`);
+	// 実行するファイルを test-case.ts に固定
+	const testFilePath = path.join(__dirname, '..', 'tests', `test-case.ts`);
 
 	console.log(`\n--- テストケース ${caseNumber} を実行します ---`);
 	console.log(`ファイル: ${testFilePath}\n`);
 
 	// ts-nodeを使って指定されたテストファイルを実行
+	// --case と caseNumber を引数として渡す
 	const child = spawn(
 		'ts-node',
-		[testFilePath],
+		[testFilePath, '--case', `${caseNumber}`],
 		{ stdio: 'inherit' } // 親プロセスの標準入出力を共有
 	);
 

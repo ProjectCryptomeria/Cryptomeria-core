@@ -54,13 +54,25 @@ export interface ChainStatus {
 	pendingTxs: number;
 }
 
+// --- ログ出力の制御 ---
+let isDebugMode = false;
+
 // ログ出力用のヘルパーオブジェクト
 export const log = {
-	info: (msg: string) => console.log(`\x1b[36m[INFO]\x1b[0m ${msg}`),
+	// デバッグモードを設定
+	setDebugMode: (enabled: boolean) => {
+		isDebugMode = enabled;
+	},
+	info: (msg: string) => {
+		if (isDebugMode) console.log(`\x1b[36m[INFO]\x1b[0m ${msg}`);
+	},
 	success: (msg: string) => console.log(`\x1b[32m[SUCCESS]\x1b[0m ${msg}`),
 	error: (msg: string) => console.error(`\x1b[31m[ERROR]\x1b[0m ${msg}`),
-	step: (msg: string) => console.log(`\n\x1b[1;33m--- ${msg} ---\x1b[0m`),
+	step: (msg: string) => {
+		if (isDebugMode) console.log(`\n\x1b[1;33m--- ${msg} ---\x1b[0m`);
+	},
 };
+
 
 // Raidchainとのやり取りを抽象化するクライアントクラス
 export class RaidchainClient {
@@ -109,7 +121,7 @@ export class RaidchainClient {
 		while (Date.now() - startTime < this.verificationTimeoutMs) {
 			try {
 				await queryStoredChunk(targetChain, chunkIndex);
-				log.success(`  ... チャンク '${chunkIndex}' がチェーン上で検証されました。`);
+				log.info(`  ... チャンク '${chunkIndex}' がチェーン上で検証されました。`);
 				return txResult;
 			} catch (error: any) {
 				// 'not found' エラーの場合はリトライを続ける
@@ -138,7 +150,7 @@ export class RaidchainClient {
 		while (Date.now() - startTime < this.verificationTimeoutMs) {
 			try {
 				await queryStoredManifest(this.metaChain, urlIndex);
-				log.success(`  ... マニフェスト '${urlIndex}' がチェーン上で検証されました。`);
+				log.info(`  ... マニフェスト '${urlIndex}' がチェーン上で検証されました。`);
 				return txResult;
 			} catch (error: any) {
 				if (error.message && error.message.includes('not found')) {
@@ -269,7 +281,7 @@ export class RaidchainClient {
 		}
 
 		const manifest: Manifest = JSON.parse(manifestResult.stored_manifest.manifest);
-		log.success(`マニフェストを発見しました。${manifest.chunks.length}個のチャンクをダウンロードします。`);
+		log.info(`マニフェストを発見しました。${manifest.chunks.length}個のチャンクをダウンロードします。`);
 
 		const chunkDownloadPromises = manifest.chunks.map(chunkInfo => {
 			log.info(`  -> チャンク '${chunkInfo.index}' を ${chunkInfo.chain} から取得中...`);
@@ -290,7 +302,7 @@ export class RaidchainClient {
 		const endTime = performance.now();
 		const downloadTimeMs = endTime - startTime;
 
-		log.success(`ファイルの復元が完了しました。(${downloadTimeMs.toFixed(2)} ms)`);
+		log.info(`ファイルの復元が完了しました。(${downloadTimeMs.toFixed(2)} ms)`);
 		return { data, downloadTimeMs };
 	}
 
