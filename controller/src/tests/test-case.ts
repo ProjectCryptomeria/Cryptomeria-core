@@ -2,7 +2,8 @@
 import * as path from 'path';
 import { CHUNK_SIZE } from '../config';
 import { log } from '../lib/logger';
-import { InitializeOptions, RaidchainClient, UploadOptions } from '../lib/raidchain.client'; // ★★★ 修正箇所 ★★★
+import { PerformanceTracker } from '../lib/performance-tracker';
+import { InitializeOptions, RaidchainClient, UploadOptions } from '../lib/raidchain.client';
 
 // --- データ構造の定義 ---
 
@@ -18,6 +19,7 @@ interface TestResult {
 	throughputKBps: number; // スループット
 	totalTx: number;
 	totalGas: bigint;
+	totalFee: bigint;
 	gasPerKB: bigint; // KBあたりのガス
 	avgGas: bigint;
 	verified: boolean;
@@ -33,7 +35,6 @@ function printResults(results: TestResult[]) {
 	console.table(results.map(r => ({
 		'Iteration': r.iteration,
 		'Case': r.case,
-		// 'Parameter': r.param,
 		'FileSize (KB)': r.fileSizeKB,
 		'ChunkSize (KB)': r.chunkSizeKB,
 		'Upload (ms)': r.uploadTimeMs.toFixed(2),
@@ -41,28 +42,27 @@ function printResults(results: TestResult[]) {
 		'Throughput (KB/s)': r.throughputKBps.toFixed(2),
 		'Chains (Count)': r.chainsUsedCount,
 		'Total Gas': r.totalGas.toString(),
+		'Total Fee': r.totalFee.toString(),
 		'Gas/KB': r.gasPerKB.toString(),
-		// 'Verified': r.verified ? '✅' : '🔥',
 	})));
 
 	console.log('\n--- 📋 CSV形式 (コピー用) ---');
-	const header = 'Iteration,Case,FileSize(KB),ChunkSize(KB),Upload(ms),Download(ms),Throughput(KB/s),ChainsCount,ChainsList,TotalTxs,TotalGas,GasPerKB,AvgGasPerTx';
+	const header = 'Iteration,Case,FileSize(KB),ChunkSize(KB),Upload(ms),Download(ms),Throughput(KB/s),ChainsCount,ChainsList,TotalTxs,TotalGas,TotalFee,GasPerKB,AvgGasPerTx';
 	const csvRows = results.map(r =>
 		[
-			r.iteration, 
-			r.case, 
-			// r.param,
-			r.fileSizeKB, 
+			r.iteration,
+			r.case,
+			r.fileSizeKB,
 			r.chunkSizeKB,
-			r.uploadTimeMs.toFixed(2), 
+			r.uploadTimeMs.toFixed(2),
 			r.downloadTimeMs.toFixed(2),
 			r.throughputKBps.toFixed(2),
-			r.chainsUsedCount, 
-			`"${r.chainsUsedList}"`, 
+			r.chainsUsedCount,
+			`"${r.chainsUsedList}"`,
 			r.totalTx,
 			r.totalGas.toString(),
+			r.totalFee.toString(),
 			r.gasPerKB.toString(),
-			// r.avgGas.toString(), r.verified,
 		].join(',')
 	);
 	console.log([header, ...csvRows].join('\n'));
@@ -75,18 +75,19 @@ function printResults(results: TestResult[]) {
 			chainsUsedCount: acc.chainsUsedCount + r.chainsUsedCount / arr.length,
 			totalTx: acc.totalTx + r.totalTx / arr.length,
 			totalGas: acc.totalGas + r.totalGas / BigInt(arr.length),
+			totalFee: acc.totalFee + r.totalFee / BigInt(arr.length),
 			gasPerKB: acc.gasPerKB + r.gasPerKB / BigInt(arr.length),
 			avgGas: acc.avgGas + r.avgGas / BigInt(arr.length),
-		}), { uploadTimeMs: 0, downloadTimeMs: 0, throughputKBps: 0, chainsUsedCount: 0, totalTx: 0, totalGas: 0n, gasPerKB: 0n, avgGas: 0n });
+		}), { uploadTimeMs: 0, downloadTimeMs: 0, throughputKBps: 0, chainsUsedCount: 0, totalTx: 0, totalGas: 0n, totalFee: 0n, gasPerKB: 0n, avgGas: 0n });
 
 		const avgResult = {
 			'Case': results[0]!.case,
-			// 'Parameter': results[0]!.param,
 			'Avg Upload (ms)': avg.uploadTimeMs.toFixed(2),
 			'Avg Download (ms)': avg.downloadTimeMs.toFixed(2),
 			'Avg Throughput (KB/s)': avg.throughputKBps.toFixed(2),
 			'Avg Used Chains': avg.chainsUsedCount.toFixed(2),
 			'Avg Total Gas': avg.totalGas.toString(),
+			'Avg Total Fee': avg.totalFee.toString(),
 			'Avg Gas/KB': avg.gasPerKB.toString(),
 		};
 
@@ -111,6 +112,9 @@ async function runSingleTest(
 	}
 ): Promise<TestResult> {
 	const localClient = new RaidchainClient();
+	// ★★★ ここから追加 ★★★
+	const tracker = new PerformanceTracker();
+	// ★★★ ここまで追加 ★★★
 
 	const initOptions: InitializeOptions = {};
 	if (options.chainCount !== undefined) {
@@ -125,6 +129,11 @@ async function runSingleTest(
 	const uploadOptions: UploadOptions = {
 		distributionStrategy: options.distributionStrategy,
 		onChunkUploaded: (info) => usedChains.add(info.chain),
+		// ★★★ ここから追加 ★★★
+		onTransactionConfirmed: (result) => {
+			tracker.recordTransaction(result.gasUsed, result.feeAmount);
+		},
+		// ★★★ ここまで追加 ★★★
 	};
 	if (options.targetChain !== undefined) {
 		uploadOptions.targetChain = options.targetChain;
@@ -133,6 +142,7 @@ async function runSingleTest(
 		uploadOptions.chunkSize = options.chunkSize;
 	}
 
+	// ★★★ `uploadFile`の呼び出しを修正 ★★★
 	const { uploadStats } = await localClient.uploadFile(options.filePath, options.siteUrl, uploadOptions);
 
 	const chainsUsedList = Array.from(usedChains).sort();
@@ -153,6 +163,7 @@ async function runSingleTest(
 		throughputKBps: throughputKBps,
 		totalTx: uploadStats.transactionCount,
 		totalGas: uploadStats.totalGasUsed,
+		totalFee: uploadStats.totalFee,
 		gasPerKB: gasPerKB,
 		avgGas: uploadStats.averageGasPerTransaction,
 		verified: verified,
@@ -171,6 +182,7 @@ async function runCase1(): Promise<TestResult[]> {
 	const allResults: TestResult[] = [];
 	const client = new RaidchainClient();
 	await client.initialize();
+	const tracker = new PerformanceTracker(); // ★★★ 追加 ★★★
 
 	for (const size of sizesToTest) {
 		log.step(`--- Testing Size: ${size} KB ---`);
@@ -185,6 +197,11 @@ async function runCase1(): Promise<TestResult[]> {
 				chunkSize: chunkSize,
 				distributionStrategy: 'auto', // 1チャンクなのでどれでも同じ
 				onChunkUploaded: (info) => usedChains.add(info.chain),
+				// ★★★ ここから追加 ★★★
+				onTransactionConfirmed: (result) => {
+					tracker.recordTransaction(result.gasUsed, result.feeAmount);
+				},
+				// ★★★ ここまで追加 ★★★
 			});
 
 			const chainsUsedList = Array.from(usedChains).sort();
@@ -206,6 +223,7 @@ async function runCase1(): Promise<TestResult[]> {
 				throughputKBps,
 				totalTx: uploadStats.transactionCount,
 				totalGas: uploadStats.totalGasUsed,
+				totalFee: uploadStats.totalFee,
 				gasPerKB,
 				avgGas: uploadStats.averageGasPerTransaction,
 				verified,
@@ -219,7 +237,7 @@ async function runCase1(): Promise<TestResult[]> {
 				iteration: 1, case: 'Case1-SingleChunkLimit', param: `${size}KB`,
 				fileSizeKB: size, chunkSizeKB: size,
 				uploadTimeMs: 0, downloadTimeMs: 0, throughputKBps: 0, totalTx: 0,
-				totalGas: 0n, gasPerKB: 0n, avgGas: 0n, verified: false,
+				totalGas: 0n, totalFee: 0n, gasPerKB: 0n, avgGas: 0n, verified: false,
 				chainsUsedCount: 0, chainsUsedList: 'failed'
 			});
 		}

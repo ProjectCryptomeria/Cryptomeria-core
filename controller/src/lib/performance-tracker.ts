@@ -7,6 +7,7 @@ import { performance } from 'perf_hooks';
 export interface PerformanceReport {
 	durationMs: number;
 	totalGasUsed: bigint;
+	totalFee: bigint; // ★★★ 追加 ★★★
 	transactionCount: number;
 	averageGasPerTransaction: bigint;
 }
@@ -17,7 +18,8 @@ export interface PerformanceReport {
 export class PerformanceTracker {
 	private startTime: number = 0;
 	private endTime: number = 0;
-	private totalGasUsed: bigint = 0n; // bigintで初期化
+	private totalGasUsed: bigint = 0n;
+	private totalFee: bigint = 0n; // ★★★ 追加 ★★★
 	private transactionCount: number = 0;
 
 	/**
@@ -35,11 +37,13 @@ export class PerformanceTracker {
 	}
 
 	/**
-	 * トランザクションのガス使用量を記録します。
+	 * トランザクションのガス使用量と手数料を記録します。
 	 * @param gasUsed - トランザクションで使用されたガス量
+	 * @param fee - トランザクションで支払われた手数料
 	 */
-	public recordTransaction(gasUsed: bigint): void {
+	public recordTransaction(gasUsed: bigint, fee: bigint): void { // ★★★ 修正 ★★★
 		this.totalGasUsed += gasUsed;
+		this.totalFee += fee; // ★★★ 追加 ★★★
 		this.transactionCount++;
 	}
 
@@ -55,6 +59,7 @@ export class PerformanceTracker {
 		return {
 			durationMs,
 			totalGasUsed: this.totalGasUsed,
+			totalFee: this.totalFee, // ★★★ 追加 ★★★
 			transactionCount: this.transactionCount,
 			averageGasPerTransaction: averageGasPerTransaction,
 		};

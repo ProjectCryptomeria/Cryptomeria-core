@@ -3,6 +3,7 @@ import { DeliverTxResponse } from '@cosmjs/stargate';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { performance } from 'perf_hooks';
+import { getChainConfig } from '../config'; // ★★★ 追加 ★★★
 import { BlockchainService } from '../services/blockchain.service';
 import { ChainInfo, InfrastructureService } from '../services/infrastructure.service';
 import { splitFileIntoChunks } from './chunker';
@@ -25,6 +26,7 @@ export interface UploadOptions {
 	distributionStrategy?: DistributionStrategy;
 	targetChain?: DataChainId;
 	onChunkUploaded?: (info: { chunkIndex: string; chain: DataChainId }) => void;
+	onTransactionConfirmed?: (result: { gasUsed: bigint; feeAmount: bigint }) => void; // ★★★ 追加 ★★★
 }
 export interface InitializeOptions {
 	chainCount?: number;
@@ -98,6 +100,19 @@ export class RaidchainClient {
 		}
 		log.info(`  ... tx (${txResult.transactionHash.slice(0, 10)}...) 成功。検証中...`);
 
+		// ★★★ ここから修正 ★★★
+		if (options.onTransactionConfirmed) {
+			const chainConfigs = await getChainConfig();
+			const config = chainConfigs[targetChain];
+			if (config) {
+				options.onTransactionConfirmed({
+					gasUsed: BigInt(txResult.gasUsed),
+					feeAmount: BigInt(config.amount)
+				});
+			}
+		}
+		// ★★★ ここまで修正 ★★★
+
 		const startTime = Date.now();
 		while (Date.now() - startTime < this.verificationTimeoutMs) {
 			try {
@@ -116,7 +131,7 @@ export class RaidchainClient {
 		throw new Error(`チャンク '${chunkIndex}' の検証がタイムアウトしました。`);
 	}
 
-	private async _uploadAndVerifyManifest(urlIndex: string, manifestString: string): Promise<DeliverTxResponse> {
+	private async _uploadAndVerifyManifest(urlIndex: string, manifestString: string, options: UploadOptions): Promise<DeliverTxResponse> { // ★★★ 修正 ★★★
 		if (!this.metaChain) throw new Error("メタチェーンが初期化されていません。");
 
 		const txResult = await this.blockchainService.uploadManifestToMetaChain(this.metaChain.name, urlIndex, manifestString);
@@ -124,6 +139,19 @@ export class RaidchainClient {
 			throw new Error(`マニフェスト ${urlIndex} のアップロードトランザクションが失敗しました (Code: ${txResult.code}): ${txResult.rawLog}`);
 		}
 		log.info(`  ... tx (${txResult.transactionHash.slice(0, 10)}...) 成功。検証中...`);
+
+		// ★★★ ここから修正 ★★★
+		if (options.onTransactionConfirmed) {
+			const chainConfigs = await getChainConfig();
+			const config = chainConfigs[this.metaChain.name];
+			if (config) {
+				options.onTransactionConfirmed({
+					gasUsed: BigInt(txResult.gasUsed),
+					feeAmount: BigInt(config.amount)
+				});
+			}
+		}
+		// ★★★ ここまで修正 ★★★
 
 		const startTime = Date.now();
 		while (Date.now() - startTime < this.verificationTimeoutMs) {
@@ -142,10 +170,18 @@ export class RaidchainClient {
 		throw new Error(`マニフェスト '${urlIndex}' の検証がタイムアウトしました。`);
 	}
 
+
 	public async uploadFile(filePath: string, siteUrl: string, options: UploadOptions = {}): Promise<UploadResult> {
 		await this.initialize();
 		const tracker = new PerformanceTracker();
 		tracker.start();
+
+		// ★★★ ここから修正 ★★★
+		// onTransactionConfirmedコールバックが指定されていれば、それをトラッカーに接続
+		options.onTransactionConfirmed = (result) => {
+			tracker.recordTransaction(result.gasUsed, result.feeAmount);
+		};
+		// ★★★ ここまで修正 ★★★
 
 		const { distributionStrategy = 'round-robin', targetChain } = options;
 		log.info(`'${filePath}' をアップロードします。方式: ${distributionStrategy}`);
@@ -167,8 +203,7 @@ export class RaidchainClient {
 					const job = chunksToUpload.shift();
 					if (!job) continue;
 					log.info(`  -> [ワーカー: ${chain.name}] チャンク '${job.index}' を処理中...`);
-					const txResult = await this._uploadAndVerifyChunk(chain.name, job.index, job.chunk, options);
-					tracker.recordTransaction(BigInt(txResult.gasUsed));
+					await this._uploadAndVerifyChunk(chain.name, job.index, job.chunk, options);
 					uploadedChunks.push({ index: job.index, chain: chain.name });
 				}
 			};
@@ -187,8 +222,7 @@ export class RaidchainClient {
 					uploadTarget = this.dataChains[i % this.dataChains.length]!;
 				}
 				log.info(`  -> チャンク #${i} (${(chunk.length / 1024).toFixed(2)} KB) を ${uploadTarget.name} へアップロード中...`);
-				const txResult = await this._uploadAndVerifyChunk(uploadTarget.name, chunkIndex, chunk, options);
-				tracker.recordTransaction(BigInt(txResult.gasUsed));
+				await this._uploadAndVerifyChunk(uploadTarget.name, chunkIndex, chunk, options);
 				uploadedChunks.push({ index: chunkIndex, chain: uploadTarget.name });
 			}
 		}
@@ -202,13 +236,13 @@ export class RaidchainClient {
 
 		if (!this.metaChain) throw new Error("メタチェーンが初期化されていません。");
 		log.info(`${this.metaChain.name} へURL '${siteUrl}' のマニフェストをアップロードします`);
-		const manifestTxResult = await this._uploadAndVerifyManifest(urlIndex, manifestString);
-		tracker.recordTransaction(BigInt(manifestTxResult.gasUsed));
+		await this._uploadAndVerifyManifest(urlIndex, manifestString, options);
 
 		tracker.stop();
 		log.success(`'${siteUrl}' のアップロードと検証が完了しました。`);
 		return { manifest, urlIndex, uploadStats: tracker.getReport() };
 	}
+
 
 	public async downloadFile(siteUrl: string): Promise<DownloadResult> {
 		await this.initialize();
