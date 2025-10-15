@@ -100,18 +100,20 @@ export class RaidchainClient {
 		}
 		log.info(`  ... tx (${txResult.transactionHash.slice(0, 10)}...) 成功。検証中...`);
 
-		// ★★★ ここから修正 ★★★
 		if (options.onTransactionConfirmed) {
 			const chainConfigs = await getChainConfig();
 			const config = chainConfigs[targetChain];
 			if (config) {
+				// gasUsedとgasPriceから実際の手数料を計算
+				const gasPriceValue = parseFloat(config.gasPrice);
+				const feeAmount = BigInt(Math.ceil(Number(txResult.gasUsed) * gasPriceValue));
+
 				options.onTransactionConfirmed({
 					gasUsed: BigInt(txResult.gasUsed),
-					feeAmount: BigInt(config.amount)
+					feeAmount: feeAmount, // 計算した手数料を渡す
 				});
 			}
 		}
-		// ★★★ ここまで修正 ★★★
 
 		const startTime = Date.now();
 		while (Date.now() - startTime < this.verificationTimeoutMs) {
@@ -140,18 +142,20 @@ export class RaidchainClient {
 		}
 		log.info(`  ... tx (${txResult.transactionHash.slice(0, 10)}...) 成功。検証中...`);
 
-		// ★★★ ここから修正 ★★★
 		if (options.onTransactionConfirmed) {
 			const chainConfigs = await getChainConfig();
 			const config = chainConfigs[this.metaChain.name];
 			if (config) {
+				// gasUsedとgasPriceから実際の手数料を計算
+				const gasPriceValue = parseFloat(config.gasPrice);
+				const feeAmount = BigInt(Math.ceil(Number(txResult.gasUsed) * gasPriceValue));
+
 				options.onTransactionConfirmed({
 					gasUsed: BigInt(txResult.gasUsed),
-					feeAmount: BigInt(config.amount)
+					feeAmount: feeAmount, // 計算した手数料を渡す
 				});
 			}
 		}
-		// ★★★ ここまで修正 ★★★
 
 		const startTime = Date.now();
 		while (Date.now() - startTime < this.verificationTimeoutMs) {

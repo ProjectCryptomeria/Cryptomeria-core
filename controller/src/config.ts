@@ -10,8 +10,7 @@ interface ChainConfig {
 	chainId: string;
 	prefix: string;
 	denom: string;
-	amount: string;
-	gas: string;
+	gasPrice: string; // ★★★ amountとgasを削除し、これに変更 ★★★
 }
 
 // 動的に生成されるチェーン設定を保持するための変数
@@ -36,8 +35,7 @@ export async function getChainConfig() {
 			chainId: info.name,
 			prefix: 'cosmos',
 			denom: 'uatom',
-			amount: '3000000000',
-			gas: '300000000000',
+			gasPrice: '0.001', // ★★★ amountとgasを削除し、これに変更 ★★★
 		};
 	}
 

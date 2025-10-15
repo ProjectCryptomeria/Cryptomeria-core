@@ -178,7 +178,7 @@ async function runCase1(): Promise<TestResult[]> {
 	const testFilePath = path.join(__dirname, 'test-file-limit.txt');
 	log.step('1. 【実験】単一チャンクでのアップロード上限を探します');
 
-	const sizesToTest = [600]; // KB
+	const sizesToTest = [15000]; // KB
 	const allResults: TestResult[] = [];
 	const client = new RaidchainClient();
 	await client.initialize();

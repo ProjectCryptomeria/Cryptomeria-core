@@ -1,6 +1,6 @@
 import { HdPath, stringToPath } from "@cosmjs/crypto";
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
-import { DeliverTxResponse, SigningStargateClient } from '@cosmjs/stargate';
+import { DeliverTxResponse, GasPrice, SigningStargateClient } from '@cosmjs/stargate';
 import { getChainConfig } from '../config';
 import { log } from '../lib/logger';
 import { customRegistry } from '../registry';
@@ -58,9 +58,12 @@ export class BlockchainService {
 		if (!endpoint) {
 			throw new Error(`RPC endpoint for chain "${chainName}" not found.`);
 		}
+		// configからGasPriceオブジェクトを作成
+		const gasPrice = GasPrice.fromString(`${config.gasPrice}${config.denom}`);
 
 		const client = await SigningStargateClient.connectWithSigner(endpoint, wallet, {
 			registry: customRegistry,
+			gasPrice: gasPrice, // ★★★ clientにgasPriceオプションを渡す ★★★
 		});
 		return { client, wallet };
 	}
@@ -91,12 +94,7 @@ export class BlockchainService {
 			},
 		};		
 
-		const fee = {
-			amount: [{ denom: config.denom, amount: config.amount }],
-			gas: config.gas,
-		};
-
-		return await client.signAndBroadcast(account.address, [msg], fee, 'Upload chunk');
+		return await client.signAndBroadcast(account.address, [msg], "auto", 'Upload chunk');
 	}
 
 	public async uploadManifestToMetaChain(
@@ -124,13 +122,7 @@ export class BlockchainService {
 				manifest: manifest,
 			},
 		};
-
-		const fee = {
-			amount: [{ denom: config.denom, amount: config.amount }],
-			gas: config.gas,
-		};
-
-		return await client.signAndBroadcast(account.address, [msg], fee, 'Upload manifest');
+		return await client.signAndBroadcast(account.address, [msg], "auto", 'Upload manifest');
 	}
 
 	private async queryChainAPI<T>(url: string): Promise<T> {
