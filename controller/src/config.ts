@@ -5,12 +5,13 @@ export const SECRET_NAME = 'raidchain-mnemonics';
 export const NODE_PORT_RPC_START = 30057;
 export const NODE_PORT_API_START = 30067;
 export const CHUNK_SIZE = 16 * 1024; // 16 KB
+export const BLOCK_SIZE_LIMIT_MB = 22; // 22MB Block size limit
 
 interface ChainConfig {
 	chainId: string;
 	prefix: string;
 	denom: string;
-	gasPrice: string; // ★★★ amountとgasを削除し、これに変更 ★★★
+	gasPrice: string;
 }
 
 // 動的に生成されるチェーン設定を保持するための変数
@@ -35,7 +36,7 @@ export async function getChainConfig() {
 			chainId: info.name,
 			prefix: 'cosmos',
 			denom: 'uatom',
-			gasPrice: '0.001', // ★★★ amountとgasを削除し、これに変更 ★★★
+			gasPrice: '0.00001',
 		};
 	}
 

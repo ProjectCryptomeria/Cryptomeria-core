@@ -3,10 +3,9 @@ import { DeliverTxResponse } from '@cosmjs/stargate';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { performance } from 'perf_hooks';
-import { getChainConfig } from '../config'; // ★★★ 追加 ★★★
+import { BLOCK_SIZE_LIMIT_MB, CHUNK_SIZE, getChainConfig } from '../config';
 import { BlockchainService } from '../services/blockchain.service';
 import { ChainInfo, InfrastructureService } from '../services/infrastructure.service';
-import { splitFileIntoChunks } from './chunker';
 import { log } from './logger';
 import { PerformanceReport, PerformanceTracker } from './performance-tracker';
 
@@ -22,11 +21,11 @@ export interface Manifest {
 	chunks: ChunkInfo[];
 }
 export interface UploadOptions {
-	chunkSize?: number;
+	chunkSize?: number | 'auto';
 	distributionStrategy?: DistributionStrategy;
 	targetChain?: DataChainId;
 	onChunkUploaded?: (info: { chunkIndex: string; chain: DataChainId }) => void;
-	onTransactionConfirmed?: (result: { gasUsed: bigint; feeAmount: bigint }) => void; // ★★★ 追加 ★★★
+	onTransactionConfirmed?: (result: { gasUsed: bigint; feeAmount: bigint }) => void;
 }
 export interface InitializeOptions {
 	chainCount?: number;
@@ -56,6 +55,10 @@ export class RaidchainClient {
 	// --- Services ---
 	private infraService: InfrastructureService;
 	private blockchainService: BlockchainService;
+
+	public get dataChainCount(): number {
+		return this.dataChains.length;
+	}
 
 	constructor() {
 		this.infraService = new InfrastructureService();
@@ -104,13 +107,12 @@ export class RaidchainClient {
 			const chainConfigs = await getChainConfig();
 			const config = chainConfigs[targetChain];
 			if (config) {
-				// gasUsedとgasPriceから実際の手数料を計算
 				const gasPriceValue = parseFloat(config.gasPrice);
 				const feeAmount = BigInt(Math.ceil(Number(txResult.gasUsed) * gasPriceValue));
 
 				options.onTransactionConfirmed({
 					gasUsed: BigInt(txResult.gasUsed),
-					feeAmount: feeAmount, // 計算した手数料を渡す
+					feeAmount: feeAmount,
 				});
 			}
 		}
@@ -133,7 +135,7 @@ export class RaidchainClient {
 		throw new Error(`チャンク '${chunkIndex}' の検証がタイムアウトしました。`);
 	}
 
-	private async _uploadAndVerifyManifest(urlIndex: string, manifestString: string, options: UploadOptions): Promise<DeliverTxResponse> { // ★★★ 修正 ★★★
+	private async _uploadAndVerifyManifest(urlIndex: string, manifestString: string, options: UploadOptions): Promise<DeliverTxResponse> {
 		if (!this.metaChain) throw new Error("メタチェーンが初期化されていません。");
 
 		const txResult = await this.blockchainService.uploadManifestToMetaChain(this.metaChain.name, urlIndex, manifestString);
@@ -146,13 +148,12 @@ export class RaidchainClient {
 			const chainConfigs = await getChainConfig();
 			const config = chainConfigs[this.metaChain.name];
 			if (config) {
-				// gasUsedとgasPriceから実際の手数料を計算
 				const gasPriceValue = parseFloat(config.gasPrice);
 				const feeAmount = BigInt(Math.ceil(Number(txResult.gasUsed) * gasPriceValue));
 
 				options.onTransactionConfirmed({
 					gasUsed: BigInt(txResult.gasUsed),
-					feeAmount: feeAmount, // 計算した手数料を渡す
+					feeAmount: feeAmount,
 				});
 			}
 		}
@@ -174,24 +175,38 @@ export class RaidchainClient {
 		throw new Error(`マニフェスト '${urlIndex}' の検証がタイムアウトしました。`);
 	}
 
-
 	public async uploadFile(filePath: string, siteUrl: string, options: UploadOptions = {}): Promise<UploadResult> {
 		await this.initialize();
 		const tracker = new PerformanceTracker();
 		tracker.start();
 
-		// ★★★ ここから修正 ★★★
-		// onTransactionConfirmedコールバックが指定されていれば、それをトラッカーに接続
 		options.onTransactionConfirmed = (result) => {
 			tracker.recordTransaction(result.gasUsed, result.feeAmount);
 		};
-		// ★★★ ここまで修正 ★★★
 
 		const { distributionStrategy = 'round-robin', targetChain } = options;
 		log.info(`'${filePath}' をアップロードします。方式: ${distributionStrategy}`);
 
 		const fileBuffer = await fs.readFile(filePath);
-		const chunks = options.chunkSize ? this.splitBufferIntoChunks(fileBuffer, options.chunkSize) : await splitFileIntoChunks(filePath);
+
+		let chunkSize = CHUNK_SIZE; // デフォルト値
+		if (options.chunkSize) {
+			if (options.chunkSize === 'auto') {
+				if (this.dataChains.length > 0) {
+					const fileSize = fileBuffer.length;
+					const blockSizeLimitBytes = BLOCK_SIZE_LIMIT_MB * 1024 * 1024;
+					const idealChunkSize = Math.ceil(fileSize / this.dataChains.length);
+					chunkSize = Math.min(idealChunkSize, blockSizeLimitBytes);
+					log.info(`"auto" chunk size selected. File size: ${fileSize} bytes, Chains: ${this.dataChains.length}. Calculated chunk size: ${chunkSize} bytes.`);
+				} else {
+					log.error("Cannot use 'auto' chunk size with 0 data chains. Falling back to default.");
+				}
+			} else { // It's a number
+				chunkSize = options.chunkSize;
+			}
+		}
+
+		const chunks = this.splitBufferIntoChunks(fileBuffer, chunkSize);
 		const uniqueSuffix = `file-${Date.now()}`;
 		const urlIndex = encodeURIComponent(siteUrl);
 		const uploadedChunks: ChunkInfo[] = [];
@@ -289,7 +304,8 @@ export class RaidchainClient {
 		buffer.write(content);
 		await fs.writeFile(filePath, buffer);
 		log.info(`${sizeInKb} KB のテストファイルを ${filePath} に作成しました。`);
-		return buffer.toString('utf-8');
+		// ★★★ 修正箇所: ファイル全体ではなく、検証用の短い文字列のみを返す ★★★
+		return content;
 	}
 
 	public async getQuietestChain(): Promise<DataChainId> {

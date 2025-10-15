@@ -1,6 +1,6 @@
 import { HdPath, stringToPath } from "@cosmjs/crypto";
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
-import { DeliverTxResponse, GasPrice, SigningStargateClient } from '@cosmjs/stargate';
+import { calculateFee, DeliverTxResponse, GasPrice, SigningStargateClient } from '@cosmjs/stargate';
 import { getChainConfig } from '../config';
 import { log } from '../lib/logger';
 import { customRegistry } from '../registry';
@@ -58,12 +58,11 @@ export class BlockchainService {
 		if (!endpoint) {
 			throw new Error(`RPC endpoint for chain "${chainName}" not found.`);
 		}
-		// configからGasPriceオブジェクトを作成
 		const gasPrice = GasPrice.fromString(`${config.gasPrice}${config.denom}`);
 
 		const client = await SigningStargateClient.connectWithSigner(endpoint, wallet, {
 			registry: customRegistry,
-			gasPrice: gasPrice, // ★★★ clientにgasPriceオプションを渡す ★★★
+			gasPrice: gasPrice,
 		});
 		return { client, wallet };
 	}
@@ -92,9 +91,13 @@ export class BlockchainService {
 				index: chunkIndex,
 				data: Buffer.from(chunkData),
 			},
-		};		
+		};
 
-		return await client.signAndBroadcast(account.address, [msg], "auto", 'Upload chunk');
+		const gasPrice = GasPrice.fromString(`${config.gasPrice}${config.denom}`);
+	const gasEstimated = await client.simulate(account.address, [msg], 'Upload chunk');
+		const fee = calculateFee(Math.round(gasEstimated * 1.5), gasPrice);
+
+		return await client.signAndBroadcast(account.address, [msg], fee, 'Upload chunk');
 	}
 
 	public async uploadManifestToMetaChain(
@@ -122,7 +125,12 @@ export class BlockchainService {
 				manifest: manifest,
 			},
 		};
-		return await client.signAndBroadcast(account.address, [msg], "auto", 'Upload manifest');
+
+		const gasPrice = GasPrice.fromString(`${config.gasPrice}${config.denom}`);
+		const gasEstimated = await client.simulate(account.address, [msg], 'Upload manifest');
+		const fee = calculateFee(Math.round(gasEstimated * 1.5), gasPrice);
+
+		return await client.signAndBroadcast(account.address, [msg], fee, 'Upload manifest');
 	}
 
 	private async queryChainAPI<T>(url: string): Promise<T> {

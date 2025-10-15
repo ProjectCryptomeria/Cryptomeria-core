@@ -1,5 +1,4 @@
 import * as k8s from '@kubernetes/client-node';
-import { V1Pod } from '@kubernetes/client-node';
 import { K8S_NAMESPACE, SECRET_NAME } from '../config';
 import { log } from '../lib/logger';
 
@@ -18,6 +17,7 @@ export class InfrastructureService {
 	private k8sApi: k8s.CoreV1Api;
 	private mnemonicCache = new Map<string, string>();
 	private chainInfoCache: ChainInfo[] | null = null;
+	private chainInfoPromise: Promise<ChainInfo[]> | null = null;
 	private apiEndpointsCache: ChainEndpoints | null = null;
 	private rpcEndpointsCache: ChainEndpoints | null = null;
 
@@ -27,16 +27,32 @@ export class InfrastructureService {
 		this.k8sApi = kc.makeApiClient(k8s.CoreV1Api);
 	}
 
+	// ★★★ 修正箇所 ★★★
 	public async getChainInfo(): Promise<ChainInfo[]> {
 		if (this.chainInfoCache) {
 			return this.chainInfoCache;
 		}
 
+		if (this.chainInfoPromise) {
+			return this.chainInfoPromise;
+		}
+
+		this.chainInfoPromise = this._fetchChainInfo();
+		try {
+			const info = await this.chainInfoPromise;
+			this.chainInfoCache = info;
+			return info;
+		} finally {
+			this.chainInfoPromise = null;
+		}
+	}
+
+	private async _fetchChainInfo(): Promise<ChainInfo[]> {
 		try {
 			log.info(`Discovering chains in namespace "${K8S_NAMESPACE}"...`);
 			const res = await this.k8sApi.listNamespacedPod({
-				namespace: K8S_NAMESPACE,
-				labelSelector: 'app.kubernetes.io/component in (datachain, metachain)'
+				namespace:K8S_NAMESPACE,
+				labelSelector:'app.kubernetes.io/component in (datachain, metachain)'
 			});
 
 			const pods = res.items;
@@ -44,7 +60,7 @@ export class InfrastructureService {
 				throw new Error('No chain pods found in the cluster. Is the application deployed?');
 			}
 
-			const info: ChainInfo[] = pods.map((pod: V1Pod) => {
+			const info: ChainInfo[] = pods.map((pod: k8s.V1Pod) => {
 				const name = pod.metadata?.labels?.['app.kubernetes.io/instance'];
 				const type = pod.metadata?.labels?.['app.kubernetes.io/component'] as ChainType;
 				if (!name) {
@@ -56,7 +72,6 @@ export class InfrastructureService {
 				.sort((a, b) => a.name.localeCompare(b.name));
 
 			log.info(`Discovered chains: ${JSON.stringify(info, null, 2)}`);
-			this.chainInfoCache = info;
 			return info;
 		} catch (err) {
 			log.error('Failed to discover chains from Kubernetes API.');
