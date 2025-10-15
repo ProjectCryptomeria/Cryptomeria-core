@@ -94,8 +94,15 @@ export class BlockchainService {
 		};
 
 		const gasPrice = GasPrice.fromString(`${config.gasPrice}${config.denom}`);
-	const gasEstimated = await client.simulate(account.address, [msg], 'Upload chunk');
-		const fee = calculateFee(Math.round(gasEstimated * 1.5), gasPrice);
+
+		// ★★★ ここから修正 ★★★
+		// 巨大なデータの場合にsimulateがOOMを引き起こすため、ガス代をデータサイズから計算する
+		// 基本ガス(50,000) + データ1バイトあたり10ガス + 安全マージン という想定
+		const GAS_PER_BYTE = 50000;
+		const BASE_GAS = 100000;
+		const gasEstimated = BigInt(BASE_GAS + (chunkData.length * GAS_PER_BYTE));
+		const fee = calculateFee(Number(gasEstimated), gasPrice);
+		// ★★★ ここまで修正 ★★★
 
 		return await client.signAndBroadcast(account.address, [msg], fee, 'Upload chunk');
 	}
@@ -126,6 +133,7 @@ export class BlockchainService {
 			},
 		};
 
+		// マニフェストは小さいので、従来通りsimulateを使用する
 		const gasPrice = GasPrice.fromString(`${config.gasPrice}${config.denom}`);
 		const gasEstimated = await client.simulate(account.address, [msg], 'Upload manifest');
 		const fee = calculateFee(Math.round(gasEstimated * 1.5), gasPrice);

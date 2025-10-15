@@ -210,8 +210,8 @@ async function runCase1(targetSizeKB: number): Promise<TestResult[]> {
 			filePath: testFilePath,
 			targetSizeKB: targetSizeKB,
 			siteUrl: `limit-test/${targetSizeKB}kb-${Date.now()}`,
-			chunkSizeKB: (originalSizeKB + 1) * 1024, // ファイル全体を1チャンクとして扱う
-			distributionStrategy: 'auto',
+			chunkSizeKB: "auto",
+			distributionStrategy: 'round-robin',
 		});
 		allResults.push(result);
 	} catch (error: any) {

@@ -5,7 +5,7 @@ export const SECRET_NAME = 'raidchain-mnemonics';
 export const NODE_PORT_RPC_START = 30057;
 export const NODE_PORT_API_START = 30067;
 export const CHUNK_SIZE = 16 * 1024; // 16 KB
-export const BLOCK_SIZE_LIMIT_MB = 22; // 22MB Block size limit
+export const BLOCK_SIZE_LIMIT_MB = 20; // 20MB Block size limit
 
 interface ChainConfig {
 	chainId: string;
