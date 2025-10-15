@@ -89,11 +89,11 @@ export class BlockchainService {
 				index: chunkIndex,
 				data: Buffer.from(chunkData),
 			},
-		};
+		};		
 
 		const fee = {
-			amount: [{ denom: config.denom, amount: '300000' }],
-			gas: '30000000',
+			amount: [{ denom: config.denom, amount: config.amount }],
+			gas: config.gas,
 		};
 
 		return await client.signAndBroadcast(account.address, [msg], fee, 'Upload chunk');
@@ -126,8 +126,8 @@ export class BlockchainService {
 		};
 
 		const fee = {
-			amount: [{ denom: config.denom, amount: '300000' }],
-			gas: '30000000',
+			amount: [{ denom: config.denom, amount: config.amount }],
+			gas: config.gas,
 		};
 
 		return await client.signAndBroadcast(account.address, [msg], fee, 'Upload manifest');

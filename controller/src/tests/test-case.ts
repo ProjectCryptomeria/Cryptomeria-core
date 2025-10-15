@@ -33,30 +33,36 @@ function printResults(results: TestResult[]) {
 	console.table(results.map(r => ({
 		'Iteration': r.iteration,
 		'Case': r.case,
-		'Parameter': r.param,
-		'File Size (KB)': r.fileSizeKB,
-		'Chunk Size (KB)': r.chunkSizeKB,
+		// 'Parameter': r.param,
+		'FileSize (KB)': r.fileSizeKB,
+		'ChunkSize (KB)': r.chunkSizeKB,
 		'Upload (ms)': r.uploadTimeMs.toFixed(2),
 		'Download (ms)': r.downloadTimeMs.toFixed(2),
 		'Throughput (KB/s)': r.throughputKBps.toFixed(2),
 		'Chains (Count)': r.chainsUsedCount,
 		'Total Gas': r.totalGas.toString(),
 		'Gas/KB': r.gasPerKB.toString(),
-		'Verified': r.verified ? '✅' : '🔥',
+		// 'Verified': r.verified ? '✅' : '🔥',
 	})));
 
 	console.log('\n--- 📋 CSV形式 (コピー用) ---');
-	const header = 'Iteration,Case,Parameter,FileSize(KB),ChunkSize(KB),Upload(ms),Download(ms),Throughput(KB/s),ChainsCount,ChainsList,TotalTxs,TotalGas,GasPerKB,AvgGasPerTx,Verified';
+	const header = 'Iteration,Case,FileSize(KB),ChunkSize(KB),Upload(ms),Download(ms),Throughput(KB/s),ChainsCount,ChainsList,TotalTxs,TotalGas,GasPerKB,AvgGasPerTx';
 	const csvRows = results.map(r =>
 		[
-			r.iteration, r.case, r.param,
-			r.fileSizeKB, r.chunkSizeKB,
-			r.uploadTimeMs.toFixed(2), r.downloadTimeMs.toFixed(2),
+			r.iteration, 
+			r.case, 
+			// r.param,
+			r.fileSizeKB, 
+			r.chunkSizeKB,
+			r.uploadTimeMs.toFixed(2), 
+			r.downloadTimeMs.toFixed(2),
 			r.throughputKBps.toFixed(2),
-			r.chainsUsedCount, `"${r.chainsUsedList}"`, r.totalTx,
+			r.chainsUsedCount, 
+			`"${r.chainsUsedList}"`, 
+			r.totalTx,
 			r.totalGas.toString(),
 			r.gasPerKB.toString(),
-			r.avgGas.toString(), r.verified,
+			// r.avgGas.toString(), r.verified,
 		].join(',')
 	);
 	console.log([header, ...csvRows].join('\n'));
@@ -75,7 +81,7 @@ function printResults(results: TestResult[]) {
 
 		const avgResult = {
 			'Case': results[0]!.case,
-			'Parameter': results[0]!.param,
+			// 'Parameter': results[0]!.param,
 			'Avg Upload (ms)': avg.uploadTimeMs.toFixed(2),
 			'Avg Download (ms)': avg.downloadTimeMs.toFixed(2),
 			'Avg Throughput (KB/s)': avg.throughputKBps.toFixed(2),
@@ -161,7 +167,7 @@ async function runCase1(): Promise<TestResult[]> {
 	const testFilePath = path.join(__dirname, 'test-file-limit.txt');
 	log.step('1. 【実験】単一チャンクでのアップロード上限を探します');
 
-	const sizesToTest = [16, 32, 64, 128, 256, 512]; // KB
+	const sizesToTest = [600]; // KB
 	const allResults: TestResult[] = [];
 	const client = new RaidchainClient();
 	await client.initialize();

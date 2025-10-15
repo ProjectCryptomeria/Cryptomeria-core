@@ -9,6 +9,7 @@ USER_HOME="/home/$CHAIN_APP_NAME"
 CHAIN_HOME="$USER_HOME/.$CHAIN_APP_NAME"
 CHAIN_BINARY="${CHAIN_APP_NAME}d"
 MNEMONIC_FILE="/etc/mnemonics/${CHAIN_INSTANCE_NAME}.mnemonic"
+TX_SIZE_COST_PER_BYTE=1  # 1バイトあたりのコストを設定
 
 # --- 初期化処理 ---
 if [ ! -d "$CHAIN_HOME/config" ]; then
@@ -41,10 +42,17 @@ if [ ! -d "$CHAIN_HOME/config" ]; then
     echo "--- Validating genesis file ---"
     $CHAIN_BINARY genesis validate --home "$CHAIN_HOME"
 
+
     CONFIG_TOML="$CHAIN_HOME/config/config.toml"
     APP_TOML="$CHAIN_HOME/config/app.toml"
+    
+    # --- APP_TOMLの設定変更 ---
     sed -i 's/laddr = "tcp:\/\/127.0.0.1:26657"/laddr = "tcp:\/\/0.0.0.0:26657"/' "$CONFIG_TOML"
     sed -i 's/cors_allowed_origins = \[\]/cors_allowed_origins = \["\*"\]/' "$CONFIG_TOML"
+    # minimum-gas-pricesを調整
+    sed -i 's/^minimum-gas-prices = ".*"/minimum-gas-prices = "0.000000001uatom"/' "$APP_TOML"
+
+    # API, gRPCの設定変更
     sed -i '/\[api\]/,/\[/{s/enable = false/enable = true/}' "$APP_TOML"
     sed -i '/\[api\]/,/\[/{s/address = "tcp:\/\/localhost:1317"/address = "tcp:\/\/0.0.0.0:1317"/}' "$APP_TOML"
     sed -i '/\[grpc\]/,/\[/{s/enable = false/enable = true/}' "$APP_TOML"
