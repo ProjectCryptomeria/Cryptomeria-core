@@ -1,3 +1,4 @@
+// src/services/infrastructure.service.ts
 import * as k8s from '@kubernetes/client-node';
 import { K8S_NAMESPACE, SECRET_NAME } from '../config';
 import { log } from '../lib/logger';
@@ -48,40 +49,52 @@ export class InfrastructureService {
 	}
 
 	private async _fetchChainInfo(): Promise<ChainInfo[]> {
-		try {
-			log.info(`Discovering chains in namespace "${K8S_NAMESPACE}"...`);
-			const res = await this.k8sApi.listNamespacedPod({
-				namespace:K8S_NAMESPACE,
-				labelSelector:'app.kubernetes.io/component in (datachain, metachain)'
-			});
+		const MAX_RETRIES = 10;
+		let retries = 0;
+		let lastError: any;
 
-			const pods = res.items;
-			if (pods.length === 0) {
-				throw new Error('No chain pods found in the cluster. Is the application deployed?');
-			}
+		while (retries < MAX_RETRIES) {
+			try {
+				log.info(`Discovering chains in namespace "${K8S_NAMESPACE}"... (Attempt ${retries + 1}/${MAX_RETRIES})`);
+				const res = await this.k8sApi.listNamespacedPod({
+					namespace: K8S_NAMESPACE,
+					labelSelector: 'app.kubernetes.io/component in (datachain, metachain)'
+				});
 
-			const info: ChainInfo[] = pods.map((pod: k8s.V1Pod) => {
-				const name = pod.metadata?.labels?.['app.kubernetes.io/instance'];
-				const type = pod.metadata?.labels?.['app.kubernetes.io/component'] as ChainType;
-				if (!name) {
-					console.warn(`Pod ${pod.metadata?.name} is missing the 'app.kubernetes.io/instance' label. Skipping.`);
-					return null;
+				const pods = res.items;
+				if (pods.length === 0) {
+					throw new Error('No chain pods found in the cluster. Is the application deployed?');
 				}
-				return { name, type };
-			}).filter((item): item is ChainInfo => item !== null)
-				.sort((a, b) => a.name.localeCompare(b.name));
 
-			log.info(`Discovered chains: ${JSON.stringify(info, null, 2)}`);
-			return info;
-		} catch (err) {
-			log.error('Failed to discover chains from Kubernetes API.');
-			if (err instanceof Error) {
-				log.error(`   Error: ${err.message}`);
-			} else {
-				log.error(`   Unknown error: ${err}`);
+				const info: ChainInfo[] = pods.map((pod: k8s.V1Pod) => {
+					const name = pod.metadata?.labels?.['app.kubernetes.io/instance'];
+					const type = pod.metadata?.labels?.['app.kubernetes.io/component'] as ChainType;
+					if (!name) {
+						console.warn(`Pod ${pod.metadata?.name} is missing the 'app.kubernetes.io/instance' label. Skipping.`);
+						return null;
+					}
+					return { name, type };
+				}).filter((item): item is ChainInfo => item !== null)
+					.sort((a, b) => a.name.localeCompare(b.name));
+
+				log.info(`Discovered chains: ${JSON.stringify(info, null, 2)}`);
+				return info;
+			} catch (err) {
+				lastError = err;
+				if (retries < MAX_RETRIES - 1) {
+					log.info(`Failed to discover chains. Retrying in 2 seconds...`);
+					await new Promise(resolve => setTimeout(resolve, 2000));
+				}
+				retries++;
 			}
-			process.exit(1);
 		}
+		log.error('Failed to discover chains from Kubernetes API after multiple retries.');
+		if (lastError instanceof Error) {
+			log.error(`   Error: ${lastError.message}`);
+		} else {
+			log.error(`   Unknown error: ${lastError}`);
+		}
+		process.exit(1);
 	}
 
 	public async getCreatorMnemonic(chainName: string): Promise<string> {
@@ -137,10 +150,33 @@ export class InfrastructureService {
 		log.info(`Generating RPC endpoints in "${isLocal ? 'local-nodeport' : 'cluster'}" mode...`);
 
 		if (isLocal) {
-			const res = await this.k8sApi.listNamespacedService({
-				namespace: K8S_NAMESPACE,
-				labelSelector: "app.kubernetes.io/category=chain"
-			});
+			const MAX_RETRIES = 10;
+			let retries = 0;
+			let res: k8s.V1ServiceList | undefined;
+			let lastError: any;
+
+			while (retries < MAX_RETRIES) {
+				try {
+					log.info(`Listing services... (Attempt ${retries + 1}/${MAX_RETRIES})`);
+					res = await this.k8sApi.listNamespacedService({
+						namespace: K8S_NAMESPACE,
+						labelSelector: "app.kubernetes.io/category=chain"
+					});
+					break;
+				} catch (err) {
+					lastError = err;
+					if (retries < MAX_RETRIES - 1) {
+						log.info(`Failed to list services. Retrying in 2 seconds...`);
+						await new Promise(resolve => setTimeout(resolve, 2000));
+					}
+					retries++;
+				}
+			}
+			if (!res) {
+				log.error('Failed to list services after multiple retries.');
+				throw lastError;
+			}
+
 			const services = res.items;
 			for (const chain of chainInfos) {
 				const serviceName = `raidchain-${chain.name}-headless`;
@@ -176,10 +212,32 @@ export class InfrastructureService {
 		log.info(`Generating API endpoints in "${isLocal ? 'local-nodeport' : 'cluster'}" mode...`);
 
 		if (isLocal) {
-			const res = await this.k8sApi.listNamespacedService({
-				namespace: K8S_NAMESPACE,
-				labelSelector: "app.kubernetes.io/category=chain"
-			});
+			const MAX_RETRIES = 10;
+			let retries = 0;
+			let res: k8s.V1ServiceList | undefined;
+			let lastError: any;
+
+			while (retries < MAX_RETRIES) {
+				try {
+					log.info(`Listing services... (Attempt ${retries + 1}/${MAX_RETRIES})`);
+					res = await this.k8sApi.listNamespacedService({
+						namespace: K8S_NAMESPACE,
+						labelSelector: "app.kubernetes.io/category=chain"
+					});
+					break;
+				} catch (err) {
+					lastError = err;
+					if (retries < MAX_RETRIES - 1) {
+						log.info(`Failed to list services. Retrying in 2 seconds...`);
+						await new Promise(resolve => setTimeout(resolve, 2000));
+					}
+					retries++;
+				}
+			}
+			if (!res) {
+				log.error('Failed to list services after multiple retries.');
+				throw lastError;
+			}
 			const services = res.items;
 
 			for (const chain of chainInfos) {

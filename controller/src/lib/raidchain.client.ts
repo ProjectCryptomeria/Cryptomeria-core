@@ -4,10 +4,12 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { performance } from 'perf_hooks';
 import { BLOCK_SIZE_LIMIT_MB, CHUNK_SIZE, getChainConfig } from '../config';
+// ★★★ 修正箇所: InfrastructureServiceからChainEndpointsをインポート ★★★
 import { BlockchainService } from '../services/blockchain.service';
-import { ChainInfo, InfrastructureService } from '../services/infrastructure.service';
+import { ChainInfo, InfrastructureService, ChainEndpoints } from '../services/infrastructure.service';
 import { log } from './logger';
 import { PerformanceReport, PerformanceTracker } from './performance-tracker';
+import fetch from 'node-fetch'; // fetchのインポートを追加
 
 // --- Type Definitions (No Change) ---
 export type DataChainId = string;
@@ -44,13 +46,27 @@ export interface ChainStatus {
 	pendingTxs: number;
 }
 
+// ★★★ 修正箇所: Tendermint RPCの応答型を定義 ★★★
+interface UnconfirmedTxsResponse {
+	result?: {
+		n_txs?: string;
+		// 他のフィールドは無視
+	};
+}
+
 
 export class RaidchainClient {
 	private dataChains: ChainInfo[] = [];
 	private metaChain: ChainInfo | null = null;
 	private isInitialized = false;
-	private verificationTimeoutMs = 20000;
+
+	// ★★★ 修正箇所: RPC/APIエンドポイントの内部キャッシュを追加 ★★★
+	private rpcEndpoints: ChainEndpoints = {};
+	private apiEndpoints: ChainEndpoints = {};
+
+	private verificationTimeoutMs = 180000; // チャンク/マニフェストの確認タイムアウト (180秒)
 	private verificationPollIntervalMs = 1000;
+	private chainReadinessTimeoutMs = 300000; // 5分
 
 	// --- Services ---
 	private infraService: InfrastructureService;
@@ -65,11 +81,56 @@ export class RaidchainClient {
 		this.blockchainService = new BlockchainService(this.infraService);
 	}
 
+	private async _waitForChainReadiness(chains: ChainInfo[]): Promise<void> {
+		log.info(`全てのチェーンの起動を待機しています... (最大 ${this.chainReadinessTimeoutMs / 1000} 秒)`);
+		const startTime = Date.now();
+		// ★★★ 修正箇所: 内部キャッシュの rpcEndpoints を使用 ★★★
+		const endpoints = this.rpcEndpoints;
+		const allChainsReady = new Set<string>();
+
+		while (Date.now() - startTime < this.chainReadinessTimeoutMs) {
+			for (const chain of chains) {
+				if (allChainsReady.has(chain.name)) {
+					continue;
+				}
+
+				const rpcEndpoint = endpoints[chain.name];
+				if (!rpcEndpoint) {
+					log.warn(`RPCエンドポイントが見つかりません: ${chain.name}`);
+					allChainsReady.add(chain.name);
+					continue;
+				}
+
+				try {
+					const response = await fetch(`${rpcEndpoint}/status`);
+					if (response.ok) {
+						log.info(`✅ チェーン '${chain.name}' が応答しました。`);
+						allChainsReady.add(chain.name);
+					}
+				} catch (e) {
+					// 接続エラーは無視して再試行
+				}
+			}
+
+			if (allChainsReady.size === chains.length) {
+				log.success("全てのチェーンが応答可能になりました。");
+				return;
+			}
+			await new Promise(resolve => setTimeout(resolve, 2000));
+		}
+		throw new Error(`チェーンの起動待機がタイムアウトしました。`);
+	}
+
 	async initialize(options: InitializeOptions = {}) {
 		if (this.isInitialized) return;
 
-		log.info('RaidchainClientを初期化しています。チェーン情報を取得中...');
 		const chainInfos = await this.infraService.getChainInfo();
+
+		// ★★★ 修正箇所: エンドポイントを初期化時に取得してキャッシュし、BlockchainServiceに渡す ★★★
+		this.rpcEndpoints = await this.infraService.getRpcEndpoints();
+		this.apiEndpoints = await this.infraService.getApiEndpoints();
+		this.blockchainService.setEndpoints(this.rpcEndpoints, this.apiEndpoints);
+
 
 		let allDataChains = chainInfos.filter(c => c.type === 'datachain');
 
@@ -89,8 +150,11 @@ export class RaidchainClient {
 			throw new Error("メタチェーンがクラスタ内で見つかりません。");
 		}
 		if (this.dataChains.length === 0) {
-			console.warn("警告: データチェーンが見つかりません。");
+			log.warn("警告: データチェーンが見つかりません。");
 		}
+
+		// 選択された全チェーンの準備完了を待つ
+		await this._waitForChainReadiness([...this.dataChains, this.metaChain]);
 
 		this.isInitialized = true;
 		log.info(`RaidchainClientの初期化が完了しました。データチェーン: ${this.dataChains.length}個, メタチェーン: '${this.metaChain.name}'`);
@@ -118,6 +182,9 @@ export class RaidchainClient {
 		}
 
 		const startTime = Date.now();
+		// @cosmjs/stargate のデフォルトの待機時間は60秒。
+		// それを超えても処理が遅延している可能性があるため、
+		// verificationTimeoutMsを長くすることで、クエリでの確認を長く試行する
 		while (Date.now() - startTime < this.verificationTimeoutMs) {
 			try {
 				await this.blockchainService.queryStoredChunk(targetChain, chunkIndex);
@@ -319,14 +386,16 @@ export class RaidchainClient {
 
 	public async getChainStatus(chainId: DataChainId): Promise<ChainStatus> {
 		await this.initialize();
-		const rpcEndpoints = await this.infraService.getRpcEndpoints();
-		const rpcEndpoint = rpcEndpoints[chainId];
+		// ★★★ 修正箇所: 内部キャッシュの rpcEndpoints を使用 ★★★
+		const rpcEndpoint = this.rpcEndpoints[chainId];
 		if (!rpcEndpoint) throw new Error(`${chainId}のRPCエンドポイントが見つかりません。`);
 
 		try {
 			const response = await fetch(`${rpcEndpoint}/num_unconfirmed_txs`);
 			if (!response.ok) return { chainId, pendingTxs: Infinity };
-			const data = await response.json();
+
+			// ★★★ 修正箇所: 型キャストを追加 ★★★
+			const data = await response.json() as UnconfirmedTxsResponse;
 			const pendingTxs = parseInt(data.result?.n_txs ?? '0', 10);
 			return { chainId, pendingTxs };
 		} catch (error) {

@@ -1,6 +1,8 @@
+// src/services/blockchain.service.ts
 import { HdPath, stringToPath } from "@cosmjs/crypto";
 import { DirectSecp256k1HdWallet } from '@cosmjs/proto-signing';
 import { calculateFee, DeliverTxResponse, GasPrice, SigningStargateClient } from '@cosmjs/stargate';
+import fetch from 'node-fetch'; // fetchのインポートを追加
 import { getChainConfig } from '../config';
 import { log } from '../lib/logger';
 import { customRegistry } from '../registry';
@@ -23,11 +25,40 @@ export interface StoredManifestResponse {
 }
 
 
+// src/services/blockchain.service.ts
+import { ChainEndpoints } from './infrastructure.service'; // ★★★ 修正箇所: ChainEndpointsをインポート ★★★
+
+// --- Type Definitions for API Responses ---
+export interface StoredChunk {
+	index: string;
+	data: string; // base64 encoded string
+}
+export interface StoredChunkResponse {
+	stored_chunk: StoredChunk;
+}
+export interface StoredManifest {
+	url: string;
+	manifest: string; // JSON string of the Manifest interface
+}
+export interface StoredManifestResponse {
+	stored_manifest: StoredManifest;
+}
+
+
 export class BlockchainService {
 	private infraService: InfrastructureService;
+	// ★★★ 修正箇所: エンドポイントをコンストラクタで受け取るための内部プロパティを追加 ★★★
+	private rpcEndpointsCache: ChainEndpoints | null = null;
+	private apiEndpointsCache: ChainEndpoints | null = null;
 
 	constructor(infraService: InfrastructureService) {
 		this.infraService = infraService;
+	}
+
+	// ★★★ 修正箇所: エンドポイントのキャッシュを外部から設定するメソッドを追加 ★★★
+	public setEndpoints(rpcEndpoints: ChainEndpoints, apiEndpoints: ChainEndpoints) {
+		this.rpcEndpointsCache = rpcEndpoints;
+		this.apiEndpointsCache = apiEndpoints;
 	}
 
 	private async getWallet(chainName: string): Promise<DirectSecp256k1HdWallet> {
@@ -53,8 +84,9 @@ export class BlockchainService {
 
 		const wallet = await this.getWallet(chainName);
 
-		const endpoints = await this.infraService.getRpcEndpoints();
-		const endpoint = endpoints[chainName];
+		// ★★★ 修正箇所: 内部キャッシュされたエンドポイントを使用 ★★★
+		if (!this.rpcEndpointsCache) throw new Error("RPC Endpoints must be set before getting signing client.");
+		const endpoint = this.rpcEndpointsCache[chainName];
 		if (!endpoint) {
 			throw new Error(`RPC endpoint for chain "${chainName}" not found.`);
 		}
@@ -141,19 +173,38 @@ export class BlockchainService {
 		return await client.signAndBroadcast(account.address, [msg], fee, 'Upload manifest');
 	}
 
+	// ★★★ 修正箇所: リトライロジックを追加 ★★★
 	private async queryChainAPI<T>(url: string): Promise<T> {
-		log.info(`  🔍 Querying: ${url}`);
-		const response = await fetch(url);
-		if (!response.ok) {
-			const errorBody = await response.text();
-			throw new Error(`Failed to query from ${url}: ${response.statusText} (${response.status}) - ${errorBody}`);
+		const MAX_RETRIES = 10;
+		let retries = 0;
+		let lastError: any;
+
+		while (retries < MAX_RETRIES) {
+			try {
+				log.info(`  🔍 Querying: ${url} (Attempt ${retries + 1}/${MAX_RETRIES})`);
+				const response = await fetch(url);
+				if (!response.ok) {
+					const errorBody = await response.text();
+					throw new Error(`Failed to query from ${url}: ${response.statusText} (${response.status}) - ${errorBody}`);
+				}
+				return await response.json() as T;
+			} catch (error) {
+				lastError = error;
+				if (retries < MAX_RETRIES - 1) {
+					log.info(`Query failed. Retrying in 2 seconds...`);
+					await new Promise(resolve => setTimeout(resolve, 2000));
+				}
+				retries++;
+			}
 		}
-		return await response.json() as T;
+		log.error(`Query failed after ${MAX_RETRIES} retries.`);
+		throw lastError;
 	}
 
 	public async queryStoredChunk(chainName: string, index: string): Promise<StoredChunkResponse> {
-		const endpoints = await this.infraService.getApiEndpoints();
-		const restEndpoint = endpoints[chainName];
+		// ★★★ 修正箇所: 内部キャッシュされたエンドポイントを使用 ★★★
+		if (!this.apiEndpointsCache) throw new Error("API Endpoints must be set before querying chunk.");
+		const restEndpoint = this.apiEndpointsCache[chainName];
 		if (!restEndpoint) {
 			throw new Error(`REST endpoint not found for chain: ${chainName}`);
 		}
@@ -162,8 +213,9 @@ export class BlockchainService {
 	}
 
 	public async queryStoredManifest(chainName: string, url: string): Promise<StoredManifestResponse> {
-		const endpoints = await this.infraService.getApiEndpoints();
-		const restEndpoint = endpoints[chainName];
+		// ★★★ 修正箇所: 内部キャッシュされたエンドポイントを使用 ★★★
+		if (!this.apiEndpointsCache) throw new Error("API Endpoints must be set before querying manifest.");
+		const restEndpoint = this.apiEndpointsCache[chainName];
 		if (!restEndpoint) {
 			throw new Error(`REST endpoint not found for chain: ${chainName}`);
 		}
@@ -171,3 +223,5 @@ export class BlockchainService {
 		return this.queryChainAPI<StoredManifestResponse>(queryUrl);
 	}
 }
+
+

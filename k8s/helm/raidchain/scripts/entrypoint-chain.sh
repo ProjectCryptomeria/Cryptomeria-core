@@ -51,8 +51,8 @@ if [ ! -d "$CHAIN_HOME/config" ]; then
     # --- config.toml の設定変更 (上限を150MBに引き上げ) ---
     sed -i 's/laddr = "tcp:\/\/127.0.0.1:26657"/laddr = "tcp:\/\/0.0.0.0:26657"/' "$CONFIG_TOML"
     sed -i 's/cors_allowed_origins = \[\]/cors_allowed_origins = \["\*"\]/' "$CONFIG_TOML"
-    sed -i 's/^max_body_bytes = .*/max_body_bytes = 157286400/' "$CONFIG_TOML" # 150MB
-    sed -i 's/^max_tx_bytes = .*/max_tx_bytes = 157286400/' "$CONFIG_TOML"   # 150MB
+    sed -i 's/^max_body_bytes = .*/max_body_bytes = 10737418240/' "$CONFIG_TOML" # 150MB
+    sed -i 's/^max_tx_bytes = .*/max_tx_bytes = 10737418240/' "$CONFIG_TOML"   # 150MB
     
     # --- app.toml の設定変更 ---
     # sed -i 's/^minimum-gas-prices = ".*"/minimum-gas-prices = "0.000000001uatom"/' "$APP_TOML"
@@ -60,12 +60,11 @@ if [ ! -d "$CHAIN_HOME/config" ]; then
     # API, gRPCの有効化と設定 (上限を150MBに引き上げ)
     sed -i '/\[api\]/,/\[/{s/enable = false/enable = true/}' "$APP_TOML"
     sed -i '/\[api\]/,/\[/{s/address = "tcp:\/\/localhost:1317"/address = "tcp:\/\/0.0.0.0:1317"/}' "$APP_TOML"
-    sed -i '/\[api\]/a max-request-body-size = 157286400' "$APP_TOML" # 150MB
-
+    sed -i '/\[api\]/a max-request-body-size = 10737418240' "$APP_TOML" # 150MB
     sed -i '/\[grpc\]/,/\[/{s/enable = false/enable = true/}' "$APP_TOML"
     
-    sed -i 's/^max-recv-msg-size = .*/max-recv-msg-size = "157286400"/' "$APP_TOML"
-    sed -i 's/^max-send-msg-size = .*/max-send-msg-size = "157286400"/' "$APP_TOML"
+    sed -i 's/^max-recv-msg-size = .*/max-recv-msg-size = "10737418240"/' "$APP_TOML"
+    sed -i 's/^max-send-msg-size = .*/max-send-msg-size = "10737418240"/' "$APP_TOML"@
     
     sed -i '/\[grpc-web\]/,/\[/{s/enable = false/enable = true/}' "$APP_TOML"
 

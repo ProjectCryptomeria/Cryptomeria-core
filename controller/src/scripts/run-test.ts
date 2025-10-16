@@ -68,7 +68,13 @@ async function main() {
 	const child = spawn(
 		'ts-node',
 		[testFilePath, ...args],
-		{ stdio: 'inherit' }
+		{
+			stdio: 'inherit', 
+			env: {
+				...process.env,
+				NODE_OPTIONS: '--no-experimental-fetch'
+			}
+		}
 	);
 
 	child.on('close', (code) => {

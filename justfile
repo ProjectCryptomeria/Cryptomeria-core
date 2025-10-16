@@ -23,10 +23,6 @@ init-runtime:
     DOCKER_GID=$(getent group docker | cut -d: -f3)
     docker build --build-arg DOCKER_GID=${DOCKER_GID} -t {{DEV_IMAGE}} -f develop.Dockerfile .
 
-# コンテナ内でコマンドを実行するためのラッパー
-run *args:
-    @{{RUN_SCRIPT}} {{args}}
-
 # --- Workflow ---
 
 # [一括実行] クリーンアップ、再生成、ビルド、デプロイを全て実行
@@ -173,3 +169,11 @@ ctl-test *args:
 # ランタイム用コンテナに入る
 runtime-shell:
     @{{RUN_SCRIPT}} bash
+
+# コンテナ内でコマンドを実行するためのラッパー
+run *args:
+    @{{RUN_SCRIPT}} {{args}}
+
+# [コントローラー]コマンドを実行するためのラッパー
+run-ctl *args:
+    @{{RUN_SCRIPT}} bash -c "cd controller && {{args}}"

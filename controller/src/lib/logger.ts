@@ -7,6 +7,7 @@ const colors = {
 	cyan: "\x1b[36m",
 	green: "\x1b[32m",
 	red: "\x1b[31m",
+	yellow: "\x1b[33m", // ★★★ 追加 ★★★
 	yellowBold: "\x1b[1;33m",
 };
 
@@ -29,6 +30,12 @@ export const log = {
 	info: (msg: string) => {
 		if (isDebugMode) console.log(`${colors.cyan}[INFO]${colors.reset} ${msg}`);
 	},
+
+	/**
+	 * Logs a warning message. Always shown.
+	 * @param {string} msg - The message to log.
+	 */
+	warn: (msg: string) => console.warn(`${colors.yellow}[WARN]${colors.reset} ${msg}`), // ★★★ 追加 ★★★
 
 	/**
 	 * Logs a success message. Always shown.

@@ -1,9 +1,16 @@
 // src/tests/test-case.ts
+import fetch from 'node-fetch';
 import * as path from 'path';
 import { BLOCK_SIZE_LIMIT_MB, CHUNK_SIZE } from '../config';
 import { log } from '../lib/logger';
 import { PerformanceTracker } from '../lib/performance-tracker';
 import { InitializeOptions, RaidchainClient, UploadOptions } from '../lib/raidchain.client';
+
+// Node.js v18未満や、環境変数 `NODE_OPTIONS=--no-experimental-fetch` が設定されている場合、fetchをグローバルに定義する
+if (!global.fetch) {
+	global.fetch = fetch as any;
+}
+
 
 // --- データ構造の定義 ---
 
