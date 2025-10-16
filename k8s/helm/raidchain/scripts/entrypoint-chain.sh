@@ -54,6 +54,15 @@ if [ ! -d "$CHAIN_HOME/config" ]; then
     sed -i 's/^max_body_bytes = .*/max_body_bytes = 10737418240/' "$CONFIG_TOML" # 150MB
     sed -i 's/^max_tx_bytes = .*/max_tx_bytes = 10737418240/' "$CONFIG_TOML"   # 150MB
     
+    # ★★★ ここから修正 ★★★
+    # Mempoolのサイズを増やす (デフォルト: 5000)
+    sed -i 's/^size = .*/size = 50000/' "$CONFIG_TOML"
+    # Mempoolにキャッシュできる最大バイト数を増やす (デフォルト: 1GB)
+    sed -i 's/^max_txs_bytes = .*/max_txs_bytes = 10737418240/' "$CONFIG_TOML" # 10GB
+    # トランザクションブロードキャストのコミット完了までのタイムアウトを延長 (デフォルト: 10s)
+    sed -i 's/^timeout_broadcast_tx_commit = .*/timeout_broadcast_tx_commit = "60s"/' "$CONFIG_TOML"
+    # ★★★ ここまで修正 ★★★
+
     # --- app.toml の設定変更 ---
     # sed -i 's/^minimum-gas-prices = ".*"/minimum-gas-prices = "0.000000001uatom"/' "$APP_TOML"
 

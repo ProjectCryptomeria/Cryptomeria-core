@@ -1,15 +1,14 @@
 // src/lib/raidchain.client.ts
 import { DeliverTxResponse } from '@cosmjs/stargate';
-import * as fs from 'fs/promises';
+import * as fs from 'fs'; // ★★★ 修正: 'fs/promises' から 'fs' へ ★★★
+import fetch from 'node-fetch';
 import * as path from 'path';
 import { performance } from 'perf_hooks';
 import { BLOCK_SIZE_LIMIT_MB, CHUNK_SIZE, getChainConfig } from '../config';
-// ★★★ 修正箇所: InfrastructureServiceからChainEndpointsをインポート ★★★
 import { BlockchainService } from '../services/blockchain.service';
-import { ChainInfo, InfrastructureService, ChainEndpoints } from '../services/infrastructure.service';
+import { ChainEndpoints, ChainInfo, InfrastructureService } from '../services/infrastructure.service';
 import { log } from './logger';
 import { PerformanceReport, PerformanceTracker } from './performance-tracker';
-import fetch from 'node-fetch'; // fetchのインポートを追加
 
 // --- Type Definitions (No Change) ---
 export type DataChainId = string;
@@ -26,6 +25,7 @@ export interface UploadOptions {
 	chunkSize?: number | 'auto';
 	distributionStrategy?: DistributionStrategy;
 	targetChain?: DataChainId;
+	maxConcurrentUploads?: number; // ★★★ 追加 ★★★
 	onChunkUploaded?: (info: { chunkIndex: string; chain: DataChainId }) => void;
 	onTransactionConfirmed?: (result: { gasUsed: bigint; feeAmount: bigint }) => void;
 }
@@ -45,12 +45,9 @@ export interface ChainStatus {
 	chainId: DataChainId;
 	pendingTxs: number;
 }
-
-// ★★★ 修正箇所: Tendermint RPCの応答型を定義 ★★★
 interface UnconfirmedTxsResponse {
 	result?: {
 		n_txs?: string;
-		// 他のフィールドは無視
 	};
 }
 
@@ -59,16 +56,13 @@ export class RaidchainClient {
 	private dataChains: ChainInfo[] = [];
 	private metaChain: ChainInfo | null = null;
 	private isInitialized = false;
-
-	// ★★★ 修正箇所: RPC/APIエンドポイントの内部キャッシュを追加 ★★★
 	private rpcEndpoints: ChainEndpoints = {};
 	private apiEndpoints: ChainEndpoints = {};
 
-	private verificationTimeoutMs = 180000; // チャンク/マニフェストの確認タイムアウト (180秒)
+	private verificationTimeoutMs = 180000;
 	private verificationPollIntervalMs = 1000;
-	private chainReadinessTimeoutMs = 300000; // 5分
+	private chainReadinessTimeoutMs = 300000;
 
-	// --- Services ---
 	private infraService: InfrastructureService;
 	private blockchainService: BlockchainService;
 
@@ -84,7 +78,6 @@ export class RaidchainClient {
 	private async _waitForChainReadiness(chains: ChainInfo[]): Promise<void> {
 		log.info(`全てのチェーンの起動を待機しています... (最大 ${this.chainReadinessTimeoutMs / 1000} 秒)`);
 		const startTime = Date.now();
-		// ★★★ 修正箇所: 内部キャッシュの rpcEndpoints を使用 ★★★
 		const endpoints = this.rpcEndpoints;
 		const allChainsReady = new Set<string>();
 
@@ -126,7 +119,6 @@ export class RaidchainClient {
 
 		const chainInfos = await this.infraService.getChainInfo();
 
-		// ★★★ 修正箇所: エンドポイントを初期化時に取得してキャッシュし、BlockchainServiceに渡す ★★★
 		this.rpcEndpoints = await this.infraService.getRpcEndpoints();
 		this.apiEndpoints = await this.infraService.getApiEndpoints();
 		this.blockchainService.setEndpoints(this.rpcEndpoints, this.apiEndpoints);
@@ -153,7 +145,6 @@ export class RaidchainClient {
 			log.warn("警告: データチェーンが見つかりません。");
 		}
 
-		// 選択された全チェーンの準備完了を待つ
 		await this._waitForChainReadiness([...this.dataChains, this.metaChain]);
 
 		this.isInitialized = true;
@@ -182,9 +173,6 @@ export class RaidchainClient {
 		}
 
 		const startTime = Date.now();
-		// @cosmjs/stargate のデフォルトの待機時間は60秒。
-		// それを超えても処理が遅延している可能性があるため、
-		// verificationTimeoutMsを長くすることで、クエリでの確認を長く試行する
 		while (Date.now() - startTime < this.verificationTimeoutMs) {
 			try {
 				await this.blockchainService.queryStoredChunk(targetChain, chunkIndex);
@@ -254,13 +242,14 @@ export class RaidchainClient {
 		const { distributionStrategy = 'round-robin', targetChain } = options;
 		log.info(`'${filePath}' をアップロードします。方式: ${distributionStrategy}`);
 
-		const fileBuffer = await fs.readFile(filePath);
+		// ★★★ ここから修正: ストリーミング対応 ★★★
+		const fileStats = await fs.promises.stat(filePath);
+		const fileSize = fileStats.size;
 
-		let chunkSize = CHUNK_SIZE; // デフォルト値
+		let chunkSize = CHUNK_SIZE;
 		if (options.chunkSize) {
 			if (options.chunkSize === 'auto') {
 				if (this.dataChains.length > 0) {
-					const fileSize = fileBuffer.length;
 					const blockSizeLimitBytes = BLOCK_SIZE_LIMIT_MB * 1024 * 1024;
 					const idealChunkSize = Math.ceil(fileSize / this.dataChains.length);
 					chunkSize = Math.min(idealChunkSize, blockSizeLimitBytes);
@@ -268,50 +257,62 @@ export class RaidchainClient {
 				} else {
 					log.error("Cannot use 'auto' chunk size with 0 data chains. Falling back to default.");
 				}
-			} else { // It's a number
+			} else {
 				chunkSize = options.chunkSize;
 			}
 		}
 
-		const chunks = this.splitBufferIntoChunks(fileBuffer, chunkSize);
+		const fileStream = fs.createReadStream(filePath, { highWaterMark: chunkSize });
+		const chunksToUpload: { chunk: Buffer; index: string }[] = [];
+		let chunkCounter = 0;
 		const uniqueSuffix = `file-${Date.now()}`;
+
+		for await (const chunk of fileStream) {
+			const chunkIndex = `${uniqueSuffix}-${chunkCounter}`;
+			chunksToUpload.push({ chunk: chunk as Buffer, index: chunkIndex });
+			chunkCounter++;
+		}
+		// ★★★ ここまで修正 ★★★
+
 		const urlIndex = encodeURIComponent(siteUrl);
 		const uploadedChunks: ChunkInfo[] = [];
 
-		if (distributionStrategy === 'auto') {
-			log.info(`${this.dataChains.length}個の並列ワーカーでアップロードを開始します...`);
-			const chunksToUpload = chunks.map((chunk, i) => ({
-				chunk,
-				index: `${uniqueSuffix}-${i}`
-			}));
-			const worker = async (chain: ChainInfo) => {
-				while (chunksToUpload.length > 0) {
-					const job = chunksToUpload.shift();
-					if (!job) continue;
-					log.info(`  -> [ワーカー: ${chain.name}] チャンク '${job.index}' を処理中...`);
-					await this._uploadAndVerifyChunk(chain.name, job.index, job.chunk, options);
-					uploadedChunks.push({ index: job.index, chain: chain.name });
-				}
-			};
-			const workerPromises = this.dataChains.map(chain => worker(chain));
-			await Promise.all(workerPromises);
-		} else {
-			for (const [i, chunk] of chunks.entries()) {
-				const chunkIndex = `${uniqueSuffix}-${i}`;
+		// ★★★ ここから修正: スロットリング導入 ★★★
+		const maxConcurrentUploads = options.maxConcurrentUploads ?? this.dataChains.length;
+		log.info(`アップロードを開始します... (同時実行数: ${maxConcurrentUploads})`);
+
+		const worker = async () => {
+			while (chunksToUpload.length > 0) {
+				const job = chunksToUpload.shift();
+				if (!job) continue;
+
 				let uploadTarget: ChainInfo;
+
 				if (distributionStrategy === 'manual') {
 					const foundChain = this.dataChains.find(c => c.name === targetChain);
-					if (!foundChain) throw new Error(`'manual'戦略では、有効なデータチェーンを'targetChain'で指定する必要があります。利用可能なチェーン: ${this.dataChains.map(c => c.name).join(', ')}`);
+					if (!foundChain) throw new Error(`'manual'戦略では、有効なデータチェーンを'targetChain'で指定する必要があります。`);
 					uploadTarget = foundChain;
-				} else {
+				} else if (distributionStrategy === 'auto') {
+					const quietestChainId = await this.getQuietestChain();
+					uploadTarget = this.dataChains.find(c => c.name === quietestChainId)!;
+				} else { // round-robin
 					if (this.dataChains.length === 0) throw new Error("アップロード可能なデータチェーンがありません。");
-					uploadTarget = this.dataChains[i % this.dataChains.length]!;
+					const targetIndex = (chunkCounter - chunksToUpload.length - 1) % this.dataChains.length;
+					uploadTarget = this.dataChains[targetIndex]!;
 				}
-				log.info(`  -> チャンク #${i} (${(chunk.length / 1024).toFixed(2)} KB) を ${uploadTarget.name} へアップロード中...`);
-				await this._uploadAndVerifyChunk(uploadTarget.name, chunkIndex, chunk, options);
-				uploadedChunks.push({ index: chunkIndex, chain: uploadTarget.name });
+
+				log.info(`  -> チャンク #${job.index.split('-').pop()} (${(job.chunk.length / 1024).toFixed(2)} KB) を ${uploadTarget.name} へアップロード中...`);
+				await this._uploadAndVerifyChunk(uploadTarget.name, job.index, job.chunk, options);
+				uploadedChunks.push({ index: job.index, chain: uploadTarget.name });
 			}
+		};
+
+		const workerPromises = [];
+		for (let i = 0; i < maxConcurrentUploads; i++) {
+			workerPromises.push(worker());
 		}
+		await Promise.all(workerPromises);
+		// ★★★ ここまで修正 ★★★
 
 		uploadedChunks.sort((a, b) => parseInt(a.index.split('-').pop() ?? '0') - parseInt(b.index.split('-').pop() ?? '0'));
 		const manifest: Manifest = {
@@ -369,9 +370,8 @@ export class RaidchainClient {
 		const buffer = Buffer.alloc(sizeInKb * 1024, 'a');
 		const content = `Test file of ${sizeInKb} KB. Unique ID: ${Date.now()}`;
 		buffer.write(content);
-		await fs.writeFile(filePath, buffer);
+		await fs.promises.writeFile(filePath, buffer);
 		log.info(`${sizeInKb} KB のテストファイルを ${filePath} に作成しました。`);
-		// ★★★ 修正箇所: ファイル全体ではなく、検証用の短い文字列のみを返す ★★★
 		return content;
 	}
 
@@ -386,15 +386,12 @@ export class RaidchainClient {
 
 	public async getChainStatus(chainId: DataChainId): Promise<ChainStatus> {
 		await this.initialize();
-		// ★★★ 修正箇所: 内部キャッシュの rpcEndpoints を使用 ★★★
 		const rpcEndpoint = this.rpcEndpoints[chainId];
 		if (!rpcEndpoint) throw new Error(`${chainId}のRPCエンドポイントが見つかりません。`);
 
 		try {
 			const response = await fetch(`${rpcEndpoint}/num_unconfirmed_txs`);
 			if (!response.ok) return { chainId, pendingTxs: Infinity };
-
-			// ★★★ 修正箇所: 型キャストを追加 ★★★
 			const data = await response.json() as UnconfirmedTxsResponse;
 			const pendingTxs = parseInt(data.result?.n_txs ?? '0', 10);
 			return { chainId, pendingTxs };
