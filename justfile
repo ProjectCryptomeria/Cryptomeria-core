@@ -145,24 +145,16 @@ ctl-install:
 ctl-dev:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn start"
 
-# [コントローラー] テストアップロードスクリプトを実行
-ctl-test-upload:
-    @{{RUN_SCRIPT}} bash -c "cd controller && yarn test:upload"
-
-# [コントローラー] 書き込みと読み込みのE2Eテストを実行
-ctl-test-e2e:
-    @{{RUN_SCRIPT}} bash -c "cd controller && yarn test:e2e"
-
-# [コントローラー] データ取得・復元テストを実行
-ctl-test-retrieve:
-    @{{RUN_SCRIPT}} bash -c "cd controller && yarn test:retrieve"
-
 # [コントローラー] コマンドを実行 (汎用)
 ctl-exec *args:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn {{args}}"
 
-# [コントローラー] 指定されたテストケースを実行 (例: just ctl-test --case 1)
+# [コントローラー] testsディレクトリ内のスクリプトを実行
 ctl-test *args:
+    @{{RUN_SCRIPT}} bash -c "cd controller && yarn ts-node src/tests/{{args}}"
+
+# [コントローラー] 指定されたテストケースを実行 (例: just ctl-test --case 1)
+ctl-test-case *args:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn test {{args}}"
 
 # --- Runtime Tasks ---
