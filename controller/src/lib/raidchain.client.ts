@@ -1,6 +1,6 @@
 // src/lib/raidchain.client.ts
 import { DeliverTxResponse } from '@cosmjs/stargate';
-import * as fs from 'fs'; // ★★★ 修正: 'fs/promises' から 'fs' へ ★★★
+import * as fs from 'fs';
 import fetch from 'node-fetch';
 import * as path from 'path';
 import { performance } from 'perf_hooks';
@@ -10,7 +10,7 @@ import { ChainEndpoints, ChainInfo, InfrastructureService } from '../services/in
 import { log } from './logger';
 import { PerformanceReport, PerformanceTracker } from './performance-tracker';
 
-// --- Type Definitions (No Change) ---
+// --- Type Definitions ---
 export type DataChainId = string;
 export type DistributionStrategy = 'round-robin' | 'manual' | 'auto';
 export interface ChunkInfo {
@@ -25,7 +25,7 @@ export interface UploadOptions {
 	chunkSize?: number | 'auto';
 	distributionStrategy?: DistributionStrategy;
 	targetChain?: DataChainId;
-	maxConcurrentUploads?: number; // ★★★ 追加 ★★★
+	maxConcurrentUploads?: number;
 	onChunkUploaded?: (info: { chunkIndex: string; chain: DataChainId }) => void;
 	onTransactionConfirmed?: (result: { gasUsed: bigint; feeAmount: bigint }) => void;
 }
@@ -62,6 +62,8 @@ export class RaidchainClient {
 	private verificationTimeoutMs = 180000;
 	private verificationPollIntervalMs = 1000;
 	private chainReadinessTimeoutMs = 300000;
+
+	private chainLocks = new Map<DataChainId, Promise<void>>();
 
 	private infraService: InfrastructureService;
 	private blockchainService: BlockchainService;
@@ -145,6 +147,13 @@ export class RaidchainClient {
 			log.warn("警告: データチェーンが見つかりません。");
 		}
 
+		for (const chain of this.dataChains) {
+			this.chainLocks.set(chain.name, Promise.resolve());
+		}
+		if (this.metaChain) {
+			this.chainLocks.set(this.metaChain.name, Promise.resolve());
+		}
+
 		await this._waitForChainReadiness([...this.dataChains, this.metaChain]);
 
 		this.isInitialized = true;
@@ -154,6 +163,9 @@ export class RaidchainClient {
 	private async _uploadAndVerifyChunk(targetChain: DataChainId, chunkIndex: string, chunk: Buffer, options: UploadOptions): Promise<DeliverTxResponse> {
 		const txResult = await this.blockchainService.uploadChunkToDataChain(targetChain, chunkIndex, chunk);
 		if (txResult.code !== 0) {
+			if (txResult.rawLog?.includes('incorrect account sequence')) {
+				throw new Error(`Account sequence mismatch on chain ${targetChain}. This indicates a concurrency issue.`);
+			}
 			throw new Error(`チャンク ${chunkIndex} の ${targetChain} へのアップロードトランザクションが失敗しました (Code: ${txResult.code}): ${txResult.rawLog}`);
 		}
 		log.info(`  ... tx (${txResult.transactionHash.slice(0, 10)}...) 成功。検証中...`);
@@ -242,7 +254,6 @@ export class RaidchainClient {
 		const { distributionStrategy = 'round-robin', targetChain } = options;
 		log.info(`'${filePath}' をアップロードします。方式: ${distributionStrategy}`);
 
-		// ★★★ ここから修正: ストリーミング対応 ★★★
 		const fileStats = await fs.promises.stat(filePath);
 		const fileSize = fileStats.size;
 
@@ -272,12 +283,10 @@ export class RaidchainClient {
 			chunksToUpload.push({ chunk: chunk as Buffer, index: chunkIndex });
 			chunkCounter++;
 		}
-		// ★★★ ここまで修正 ★★★
 
 		const urlIndex = encodeURIComponent(siteUrl);
 		const uploadedChunks: ChunkInfo[] = [];
 
-		// ★★★ ここから修正: スロットリング導入 ★★★
 		const maxConcurrentUploads = options.maxConcurrentUploads ?? this.dataChains.length;
 		log.info(`アップロードを開始します... (同時実行数: ${maxConcurrentUploads})`);
 
@@ -295,15 +304,31 @@ export class RaidchainClient {
 				} else if (distributionStrategy === 'auto') {
 					const quietestChainId = await this.getQuietestChain();
 					uploadTarget = this.dataChains.find(c => c.name === quietestChainId)!;
-				} else { // round-robin
+				} else {
 					if (this.dataChains.length === 0) throw new Error("アップロード可能なデータチェーンがありません。");
 					const targetIndex = (chunkCounter - chunksToUpload.length - 1) % this.dataChains.length;
 					uploadTarget = this.dataChains[targetIndex]!;
 				}
 
-				log.info(`  -> チャンク #${job.index.split('-').pop()} (${(job.chunk.length / 1024).toFixed(2)} KB) を ${uploadTarget.name} へアップロード中...`);
-				await this._uploadAndVerifyChunk(uploadTarget.name, job.index, job.chunk, options);
-				uploadedChunks.push({ index: job.index, chain: uploadTarget.name });
+				const targetChainName = uploadTarget.name;
+				const currentLock = this.chainLocks.get(targetChainName) || Promise.resolve();
+
+				let releaseNewLock: () => void;
+				const newLock = new Promise<void>(resolve => {
+					releaseNewLock = resolve;
+				});
+
+				this.chainLocks.set(targetChainName, currentLock.then(() => newLock));
+
+				await currentLock;
+
+				try {
+					log.info(`  -> チャンク #${job.index.split('-').pop()} (${(job.chunk.length / 1024).toFixed(2)} KB) を ${targetChainName} へアップロード中...`);
+					await this._uploadAndVerifyChunk(targetChainName, job.index, job.chunk, options);
+					uploadedChunks.push({ index: job.index, chain: targetChainName });
+				} finally {
+					releaseNewLock!();
+				}
 			}
 		};
 
@@ -312,7 +337,6 @@ export class RaidchainClient {
 			workerPromises.push(worker());
 		}
 		await Promise.all(workerPromises);
-		// ★★★ ここまで修正 ★★★
 
 		uploadedChunks.sort((a, b) => parseInt(a.index.split('-').pop() ?? '0') - parseInt(b.index.split('-').pop() ?? '0'));
 		const manifest: Manifest = {
@@ -376,16 +400,34 @@ export class RaidchainClient {
 	}
 
 	public async getQuietestChain(): Promise<DataChainId> {
-		await this.initialize();
+		if (!this.isInitialized) throw new Error("Client is not initialized. Call initialize() first.");
 		if (this.dataChains.length === 0) throw new Error("最も空いているチェーンを判断するためのデータチェーンがありません。");
+
 		const statuses = await Promise.all(this.dataChains.map(c => this.getChainStatus(c.name)));
-		const quietest = statuses.reduce((prev, curr) => (prev.pendingTxs < curr.pendingTxs ? prev : curr));
-		log.info(`自動選択されたチェーン: ${quietest.chainId} (保留中のTX: ${quietest.pendingTxs})`);
-		return quietest.chainId;
+
+		const minTxs = Math.min(...statuses.map(s => s.pendingTxs));
+		const quietestChains = statuses.filter(s => s.pendingTxs === minTxs);
+
+		// ★★★ 修正: 配列が空の場合のガード節を追加 ★★★
+		if (quietestChains.length === 0) {
+			// このケースは通常発生しないはずだが、安全のためにフォールバック
+			const randomChain = this.dataChains[Math.floor(Math.random() * this.dataChains.length)];
+			if (!randomChain) throw new Error("No data chains available to select from.");
+			return randomChain.name;
+		}
+
+		const selected = quietestChains[Math.floor(Math.random() * quietestChains.length)];
+		if (!selected) {
+			// quietestChains.length > 0 なので、ここも通常は到達しない
+			throw new Error("Failed to select a chain from the quietest chains list.");
+		}
+
+		log.info(`自動選択されたチェーン: ${selected.chainId} (保留中のTX: ${selected.pendingTxs})`);
+		return selected.chainId;
 	}
 
 	public async getChainStatus(chainId: DataChainId): Promise<ChainStatus> {
-		await this.initialize();
+		if (!this.isInitialized) throw new Error("Client is not initialized. Call initialize() first.");
 		const rpcEndpoint = this.rpcEndpoints[chainId];
 		if (!rpcEndpoint) throw new Error(`${chainId}のRPCエンドポイントが見つかりません。`);
 

@@ -19,6 +19,7 @@ export class InfrastructureService {
 	private mnemonicCache = new Map<string, string>();
 	private chainInfoCache: ChainInfo[] | null = null;
 	private chainInfoPromise: Promise<ChainInfo[]> | null = null;
+
 	private apiEndpointsCache: ChainEndpoints | null = null;
 	private rpcEndpointsCache: ChainEndpoints | null = null;
 
@@ -28,22 +29,29 @@ export class InfrastructureService {
 		this.k8sApi = kc.makeApiClient(k8s.CoreV1Api);
 	}
 
-	// ★★★ 修正箇所 ★★★
 	public async getChainInfo(): Promise<ChainInfo[]> {
+		// 1. キャッシュがあれば即座に返す
 		if (this.chainInfoCache) {
 			return this.chainInfoCache;
 		}
 
+		// 2. 既に進行中の取得処理があれば、その完了を待って結果を返す
 		if (this.chainInfoPromise) {
 			return this.chainInfoPromise;
 		}
 
+		// 3. 誰も取得処理を開始していなければ、自分が開始する
+		log.info('Starting to fetch chain info from Kubernetes API...');
 		this.chainInfoPromise = this._fetchChainInfo();
+
 		try {
+			// 4. 取得処理の完了を待ち、結果をキャッシュに保存
 			const info = await this.chainInfoPromise;
 			this.chainInfoCache = info;
+			log.info('Chain info fetched and cached successfully.');
 			return info;
 		} finally {
+			// 5. 完了後（成功・失敗問わず）、進行中のPromiseをクリアする
 			this.chainInfoPromise = null;
 		}
 	}
