@@ -29,6 +29,8 @@ export class BlockchainService {
 	private infraService: InfrastructureService;
 	private rpcEndpointsCache: ChainEndpoints | null = null;
 	private apiEndpointsCache: ChainEndpoints | null = null;
+	private chunkGasEstimatedCache: number | null = null;
+	private manifestGasEstimatedCache: number | null = null;
 
 	constructor(infraService: InfrastructureService) {
 		this.infraService = infraService;
@@ -95,13 +97,12 @@ export class BlockchainService {
 				value: { creator: account.address, index: chunkIndex, data: chunkData },
 			};
 
-			// ★★★ 修正: 環境変数からガス代/byteを取得し、デフォルト値を設定 ★★★
-			const GAS_PER_BYTE = parseInt(process.env.GAS_PER_BYTE || '10', 10);
-			const BASE_GAS = 100000;
-			const gasEstimated = BigInt(BASE_GAS + (chunkData.length * GAS_PER_BYTE));
 			const gasPrice = GasPrice.fromString(`${config.gasPrice}${config.denom}`);
-			const fee = calculateFee(Number(gasEstimated), gasPrice);
-
+			if (!this.chunkGasEstimatedCache) {
+				const gasEstimated = await client.simulate(account.address, [msg], 'Upload chunk');
+				this.chunkGasEstimatedCache = gasEstimated;
+			}
+			const fee = calculateFee(Math.round(this.chunkGasEstimatedCache * 1.5), gasPrice);
 			return await client.signAndBroadcast(account.address, [msg], fee, 'Upload chunk');
 		};
 
@@ -126,13 +127,12 @@ export class BlockchainService {
 				typeUrl: '/metachain.metastore.v1.MsgCreateStoredManifest',
 				value: { creator: account.address, url: url, manifest: manifest },
 			};
-
-			// ★★★ 修正: simulateを廃止し、手動計算に統一 ★★★
-			const GAS_PER_BYTE = parseInt(process.env.GAS_PER_BYTE || '10', 10);
-			const BASE_GAS = 100000;
-			const gasEstimated = BigInt(BASE_GAS + (manifest.length * GAS_PER_BYTE));
 			const gasPrice = GasPrice.fromString(`${config.gasPrice}${config.denom}`);
-			const fee = calculateFee(Number(gasEstimated), gasPrice);
+			if (!this.manifestGasEstimatedCache) {
+				const gasEstimated = await client.simulate(account.address, [msg], 'Upload chunk');
+				this.manifestGasEstimatedCache = gasEstimated;
+			}
+			const fee = calculateFee(Math.round(this.manifestGasEstimatedCache * 1.5), gasPrice);
 
 			return await client.signAndBroadcast(account.address, [msg], fee, 'Upload manifest');
 		};
