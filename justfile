@@ -141,6 +141,10 @@ clean-k8s: undeploy
 ctl-install:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn install"
 
+# [コントローラー] パッケージを追加
+ctl-add *args:
+    @{{RUN_SCRIPT}} bash -c "cd controller && yarn add {{args}}"
+
 # [コントローラー] 開発サーバーを起動
 ctl-dev:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn start"
