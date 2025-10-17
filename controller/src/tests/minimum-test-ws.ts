@@ -12,67 +12,17 @@ import { Reader, Writer } from 'protobufjs/minimal';
 import winston from 'winston';
 import Transport from 'winston-transport';
 
-// winstonが提供するログオブジェクトの型
-interface TransformableInfo {
-	level: string;
-	message: string;
-	[key: string]: any;
-}
-
-// --- ロガー設定 (メモリバッファリング) ---
-
-const logBuffer: any[] = [];
-const scriptFileName = path.basename(process.argv[1]!).replace(path.extname(process.argv[1]!), '');
-const logFilePath = path.join(process.cwd(), "src/tests/", `${scriptFileName}.log`);
-
-class LogBufferTransport extends Transport {
-	constructor(opts?: Transport.TransportStreamOptions) {
-		super(opts);
-	}
-
-	log(info: any, callback: () => void) {
-		setImmediate(() => { this.emit('logged', info); });
-		logBuffer.push(info);
-		callback();
-	}
-}
-const logger = winston.createLogger({
-	level: 'info',
-	format: winston.format.combine(
-		winston.format.timestamp({ format: 'YYYY-MM-DDTHH:mm:ss.SSSZ' }),
-		winston.format.printf(info => `[${info.timestamp}] [${info.level.toUpperCase()}] - ${info.message} ${info.stack ? '\n' + info.stack : ''}`)
-	),
-	transports: [new LogBufferTransport()],
-});
+// =================================================================================================
+// 📚 I. CONFIG & TYPE DEFINITIONS
+// =================================================================================================
 
 /**
- * プログラム終了時またはエラー時にログをファイルに書き込む
+ * すべての設定値をここに集約
  */
-async function flushLogs() {
-	if (logBuffer.length === 0) return;
-	const logContent = logBuffer
-		.map(info => {
-			const transformed = logger.format.transform(info, {});
-			if (transformed && (transformed as TransformableInfo).message) {
-				return (transformed as TransformableInfo).message;
-			}
-			return '';
-		})
-		.join('\n');
-	try {
-		await fs.writeFile(logFilePath, logContent + '\n', { flag: 'w' });
-		console.error(`\n🚨 ログをファイルに書き込みました: ${logFilePath}`);
-	} catch (e) {
-		console.error('ERROR: Failed to write logs to file.', e);
-	}
-}
-
-
-// --- CONFIG: すべての設定値をここに集約 ---
 const CONFIG = {
 	K8S_NAMESPACE: 'raidchain',
 	SECRET_NAME: 'raidchain-mnemonics',
-	BLOCK_SIZE_LIMIT_MB: 20,
+	BLOCK_SIZE_LIMIT_MB: 1,
 	DEFAULT_CHUNK_SIZE: 16 * 1024,
 	GAS_PRICE_STRING: '0.0000001uatom',
 	GAS_MULTIPLIER: 1.5,
@@ -82,9 +32,12 @@ const CONFIG = {
 	DEFAULT_TEST_SIZE_KB: 100,
 };
 
-let CHUNK_SIZE = CONFIG.DEFAULT_CHUNK_SIZE;
-
-// --- 型定義 ---
+// 型定義
+interface TransformableInfo extends winston.Logform.TransformableInfo {
+	level: string;
+	message: string;
+	[key: string]: any;
+}
 interface StoredChunk { index: string; data: string; }
 interface StoredChunkResponse { stored_chunk: StoredChunk; }
 interface StoredManifestResponse { stored_manifest: { url: string; manifest: string; }; }
@@ -93,9 +46,9 @@ interface ChainInfo { name: string; type: 'datachain' | 'metachain'; }
 interface ChainEndpoints { [key: string]: string; }
 interface ExtendedChainClients { client: SigningStargateClient; account: AccountData; tmClient: Tendermint37Client; wsClient: WebsocketClient; restEndpoint: string; }
 interface UploadJob { chunk: Buffer; index: string; retries: number; }
-interface ChainProgress { total: number; completed: number; bar: any; }
+interface ChainProgress { total: number; completed: number; bar: cliProgress.SingleBar; }
 
-// --- プロトコルバッファレジストリ設定 ---
+// プロトコルバッファ型定義とレジストリ
 interface MsgCreateStoredChunk { creator: string; index: string; data: Uint8Array; }
 const MsgCreateStoredChunk = {
 	create(base?: Partial<MsgCreateStoredChunk>): MsgCreateStoredChunk { return { creator: base?.creator ?? "", index: base?.index ?? "", data: base?.data ?? new Uint8Array(), }; },
@@ -123,7 +76,77 @@ const customRegistry = new Registry([
 	['/metachain.metastore.v1.MsgCreateStoredManifest', MsgCreateStoredManifest as GeneratedType],
 ]);
 
-// --- Kubernetes APIクライアント設定 ---
+// =================================================================================================
+// 📝 II. LOGGER UTILITIES (CLASS-BASED)
+// =================================================================================================
+
+/**
+ * ログをメモリにバッファリングし、終了時にファイルに書き出すロガーユーティリティ
+ */
+class LoggerUtil {
+	private readonly logBuffer: TransformableInfo[] = [];
+	private readonly logger: winston.Logger;
+	private readonly logFilePath: string;
+
+	constructor() {
+		const scriptFileName = path.basename(process.argv[1]!).replace(path.extname(process.argv[1]!), '');
+		this.logFilePath = path.join(process.cwd(), "src/tests/", `${scriptFileName}.log`);
+
+		class LogBufferTransport extends Transport {
+			private readonly buffer: TransformableInfo[];
+			constructor(buffer: TransformableInfo[], opts?: Transport.TransportStreamOptions) {
+				super(opts);
+				this.buffer = buffer;
+			}
+			log(info: any, callback: () => void) {
+				setImmediate(() => { this.emit('logged', info); });
+				this.buffer.push(info);
+				callback();
+			}
+		}
+
+		this.logger = winston.createLogger({
+			level: 'info',
+			format: winston.format.combine(
+				winston.format.timestamp({ format: 'YYYY-MM-DDTHH:mm:ss.SSSZ' }),
+				winston.format.printf(info => `[${info.timestamp}] [${info.level.toUpperCase()}] - ${info.message} ${info.stack ? '\n' + info.stack : ''}`)
+			),
+			transports: [new LogBufferTransport(this.logBuffer)],
+		});
+	}
+
+	public getLogger(): winston.Logger {
+		return this.logger;
+	}
+
+	/**
+	 * プログラム終了時またはエラー時にログをファイルに書き込む
+	 */
+	public async flushLogs() {
+		if (this.logBuffer.length === 0) return;
+		const logContent = this.logBuffer
+			.map(info => {
+				// transportで既にフォーマットされているが、念のため再度formatを通す
+				const transformed = this.logger.format.transform(info, {});
+				return transformed && (transformed as TransformableInfo).message ? (transformed as TransformableInfo).message : '';
+			})
+			.join('\n');
+		try {
+			await fs.writeFile(this.logFilePath, logContent + '\n', { flag: 'w' });
+			console.error(`\n🚨 ログをファイルに書き込みました: ${this.logFilePath}`);
+		} catch (e) {
+			console.error('ERROR: Failed to write logs to file.', e);
+		}
+	}
+}
+
+const loggerUtil = new LoggerUtil();
+const logger = loggerUtil.getLogger();
+
+// =================================================================================================
+// 💻 III. KUBERNETES UTILITIES
+// =================================================================================================
+
 const kc = new k8s.KubeConfig();
 kc.loadFromDefault();
 const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
@@ -132,12 +155,18 @@ const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
  * Kubernetesからチェーン情報とREST/RPCエンドポイントを取得する
  */
 async function getChainResources(): Promise<{ chains: ChainInfo[], rpcEndpoints: ChainEndpoints, restEndpoints: ChainEndpoints }> {
-	const resPods = await k8sApi.listNamespacedPod({ namespace: CONFIG.K8S_NAMESPACE, labelSelector: 'app.kubernetes.io/component in (datachain, metachain)' });
+	const resPods = await k8sApi.listNamespacedPod({
+		namespace: CONFIG.K8S_NAMESPACE,
+		labelSelector: 'app.kubernetes.io/component in (datachain, metachain)',
+	});
 	const chains: ChainInfo[] = resPods.items.map(pod => ({ name: pod.metadata!.labels!['app.kubernetes.io/instance']!, type: pod.metadata!.labels!['app.kubernetes.io/component']! as any, }));
 	const rpcEndpoints: ChainEndpoints = {};
 	const restEndpoints: ChainEndpoints = {};
 	const isLocal = process.env.NODE_ENV !== 'production';
-	const resServices = await k8sApi.listNamespacedService({ namespace: CONFIG.K8S_NAMESPACE, labelSelector: "app.kubernetes.io/category=chain" });
+	const resServices = await k8sApi.listNamespacedService({
+		namespace: CONFIG.K8S_NAMESPACE,
+		labelSelector: "app.kubernetes.io/category=chain"
+	});
 	for (const chain of chains) {
 		const serviceName = `raidchain-${chain.name}-headless`;
 		const service = resServices.items.find(s => s.metadata?.name === serviceName);
@@ -158,65 +187,146 @@ async function getChainResources(): Promise<{ chains: ChainInfo[], rpcEndpoints:
  * Kubernetes Secretからニーモニックを取得する
  */
 async function getCreatorMnemonic(chainName: string): Promise<string> {
-	const res = await k8sApi.readNamespacedSecret({ name: CONFIG.SECRET_NAME, namespace: CONFIG.K8S_NAMESPACE });
+	const res = await k8sApi.readNamespacedSecret({
+		name: CONFIG.SECRET_NAME,
+		namespace: CONFIG.K8S_NAMESPACE,
+	});
 	const encodedMnemonic = res.data?.[`${chainName}.mnemonic`];
 	if (!encodedMnemonic) throw new Error(`Secret does not contain mnemonic for ${chainName}.`);
 	return Buffer.from(encodedMnemonic, 'base64').toString('utf-8');
 }
 
-/**
- * チャンクをデータチェーンにアップロードする
- */
-async function uploadChunk(client: SigningStargateClient, account: AccountData, chunkIndex: string, chunkData: Buffer, estimatedGas: number): Promise<DeliverTxResponse> {
-	const msg = { typeUrl: '/datachain.datastore.v1.MsgCreateStoredChunk', value: { creator: account.address, index: chunkIndex, data: chunkData }, };
-	const gasWanted = Math.round(estimatedGas * CONFIG.GAS_MULTIPLIER);
-	logger.info(`[TX_PREP] Chunk ${chunkIndex} (Size: ${Math.round(chunkData.length / 1024)} KB). Gas Estimated: ${estimatedGas}. Gas Wanted (Fee Base): ${gasWanted}.`);
-	const fee = calculateFee(gasWanted, GasPrice.fromString(CONFIG.GAS_PRICE_STRING));
-	return await client.signAndBroadcast(account.address, [msg], fee, 'Upload chunk');
-}
+// =================================================================================================
+// 🚀 IV. CHAIN CLIENT & TRANSACTION MANAGEMENT (CLASS-BASED)
+// =================================================================================================
 
 /**
- * マニフェストをメタチェーンにアップロードする
+ * Cosmos SDKチェーンとのやり取りを管理するクラス
  */
-async function uploadManifest(client: SigningStargateClient, account: AccountData, urlIndex: string, manifestString: string): Promise<DeliverTxResponse> {
-	const msg = { typeUrl: '/metachain.metastore.v1.MsgCreateStoredManifest', value: { creator: account.address, url: urlIndex, manifest: manifestString }, };
-	const gasEstimated = await client.simulate(account.address, [msg], 'Upload manifest');
-	const fee = calculateFee(Math.round(gasEstimated * CONFIG.GAS_MULTIPLIER), GasPrice.fromString(CONFIG.GAS_PRICE_STRING));
-	return await client.signAndBroadcast(account.address, [msg], fee, 'Upload manifest');
+class ChainManager {
+	private readonly chainClients = new Map<string, ExtendedChainClients>();
+	private readonly gasPrice: GasPrice;
+
+	constructor() {
+		this.gasPrice = GasPrice.fromString(CONFIG.GAS_PRICE_STRING);
+	}
+
+	/**
+	 * すべてのチェーンのクライアントを初期化する
+	 */
+	public async initializeClients(allChains: ChainInfo[], rpcEndpoints: ChainEndpoints, restEndpoints: ChainEndpoints): Promise<void> {
+		const initPromises = allChains.map(async (chain) => {
+			try {
+				const mnemonic = await getCreatorMnemonic(chain.name);
+				const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, { hdPaths: [stringToPath(CONFIG.HD_PATH)] });
+				const [account] = await wallet.getAccounts();
+				if (!account) throw new Error(`Failed to get account from wallet for chain ${chain.name}`);
+
+				const rpcUrl = rpcEndpoints[chain.name]!.replace('http', 'ws');
+				const wsClient = new WebsocketClient(rpcUrl, (err) => { if (err) { logger.warn(`[${chain.name}] WebSocket connection error: ${err.message}`); } });
+				await wsClient.execute({ jsonrpc: "2.0", method: "status", id: 1, params: [] }); // 接続確認
+				const tmClient = Tendermint37Client.create(wsClient);
+				const client = SigningStargateClient.createWithSigner(tmClient, wallet, { registry: customRegistry, gasPrice: this.gasPrice });
+
+				this.chainClients.set(chain.name, { client, account, tmClient, wsClient, restEndpoint: restEndpoints[chain.name]! });
+				logger.info(`[CLIENT_SETUP] Successful for chain: ${chain.name} (Address: ${account.address})`);
+			} catch (e) {
+				logger.error(`[CLIENT_SETUP] Failed to initialize client for chain ${chain.name}:`, e);
+				throw e;
+			}
+		});
+		await Promise.all(initPromises);
+	}
+
+	public getClientInfo(chainName: string): ExtendedChainClients {
+		const clientInfo = this.chainClients.get(chainName);
+		if (!clientInfo) throw new Error(`Client not initialized for chain: ${chainName}`);
+		return clientInfo;
+	}
+
+	public getClients(): Map<string, ExtendedChainClients> {
+		return this.chainClients;
+	}
+
+	/**
+	 * チャンクをデータチェーンにアップロードする
+	 */
+	public async uploadChunk(chainName: string, chunkIndex: string, chunkData: Buffer, estimatedGas: number): Promise<DeliverTxResponse> {
+		const { client, account } = this.getClientInfo(chainName);
+		const msg = { typeUrl: '/datachain.datastore.v1.MsgCreateStoredChunk', value: { creator: account.address, index: chunkIndex, data: chunkData }, };
+		const gasWanted = Math.round(estimatedGas * CONFIG.GAS_MULTIPLIER);
+		logger.info(`[TX_PREP] Chunk ${chunkIndex} (Size: ${Math.round(chunkData.length / 1024)} KB). Gas Wanted: ${gasWanted}.`);
+		const fee = calculateFee(gasWanted, this.gasPrice);
+		return await client.signAndBroadcast(account.address, [msg], fee, 'Upload chunk');
+	}
+
+	/**
+	 * マニフェストをメタチェーンにアップロードする
+	 */
+	public async uploadManifest(chainName: string, urlIndex: string, manifestString: string): Promise<DeliverTxResponse> {
+		const { client, account } = this.getClientInfo(chainName);
+		const msg = { typeUrl: '/metachain.metastore.v1.MsgCreateStoredManifest', value: { creator: account.address, url: urlIndex, manifest: manifestString }, };
+		const gasEstimated = await client.simulate(account.address, [msg], 'Upload manifest');
+		const fee = calculateFee(Math.round(gasEstimated * CONFIG.GAS_MULTIPLIER), this.gasPrice);
+		return await client.signAndBroadcast(account.address, [msg], fee, 'Upload manifest');
+	}
+
+	/**
+	 * マニフェストをメタチェーンから取得する
+	 */
+	public async queryStoredManifest(chainName: string, urlIndex: string): Promise<StoredManifestResponse> {
+		const { restEndpoint } = this.getClientInfo(chainName);
+		const queryUrl = `${restEndpoint}/metachain/metastore/v1/stored_manifest/${encodeURIComponent(urlIndex)}`;
+		const response = await fetch(queryUrl);
+		if (!response.ok) throw new Error(`Failed to query manifest: ${response.statusText}`);
+		return await response.json() as StoredManifestResponse;
+	}
+
+	/**
+	 * チャンクをデータチェーンから取得する
+	 */
+	public async queryStoredChunk(chainName: string, chunkIndex: string): Promise<StoredChunkResponse> {
+		const { restEndpoint } = this.getClientInfo(chainName);
+		const queryUrl = `${restEndpoint}/datachain/datastore/v1/stored_chunk/${encodeURIComponent(chunkIndex)}`;
+		const response = await fetch(queryUrl);
+		if (!response.ok) throw new Error(`Failed to query chunk: ${response.statusText}`);
+		return await response.json() as StoredChunkResponse;
+	}
+
+	/**
+	 * WebSocketクライアントをすべて切断する
+	 */
+	public closeAllConnections(): void {
+		for (const { wsClient, tmClient } of this.chainClients.values()) {
+			wsClient.disconnect();
+			(tmClient as any).disconnect(); // disconnectの型定義が不完全な場合があるためany
+		}
+	}
 }
 
-/**
- * マニフェストをメタチェーンから取得する
- */
-async function queryStoredManifest(restEndpoint: string, urlIndex: string): Promise<StoredManifestResponse> {
-	const queryUrl = `${restEndpoint}/metachain/metastore/v1/stored_manifest/${encodeURIComponent(urlIndex)}`;
-	const response = await fetch(queryUrl);
-	if (!response.ok) throw new Error(`Failed to query manifest: ${response.statusText}`);
-	return await response.json() as StoredManifestResponse;
-}
-
-/**
- * チャンクをデータチェーンから取得する
- */
-async function queryStoredChunk(restEndpoint: string, chunkIndex: string): Promise<StoredChunkResponse> {
-	const queryUrl = `${restEndpoint}/datachain/datastore/v1/stored_chunk/${encodeURIComponent(chunkIndex)}`;
-	const response = await fetch(queryUrl);
-	if (!response.ok) throw new Error(`Failed to query chunk: ${response.statusText}`);
-	return await response.json() as StoredChunkResponse;
-}
+// =================================================================================================
+// ⚙️ V. CORE BUSINESS LOGIC (MAIN)
+// =================================================================================================
 
 /**
  * Base64エンコード後のサイズを元に元のファイルサイズを計算
  */
 function getOriginalSizeForBase64Target(targetSizeInBytes: number): number {
+	// 4バイトのエンコードデータから3バイトの元データが得られるため、* 3 / 4
 	return Math.floor(targetSizeInBytes * 3 / 4);
 }
 
 /**
- * メインのアップロード処理
+ * ファイルの準備とクライアントの初期化
  */
-async function main() {
-	// --- 初期設定とファイル作成 ---
+async function setupEnvironment(chainManager: ChainManager): Promise<{
+	filePath: string,
+	fileSizeInBytes: number,
+	dataChains: ChainInfo[],
+	metaChain: ChainInfo,
+	chunkSize: number
+}> {
+	// 1. 引数処理とファイル作成
 	const args = process.argv.slice(2);
 	const sizeIndex = args.indexOf('--size-kb');
 	const targetSizeKB = (sizeIndex !== -1 && args[sizeIndex + 1]) ? parseInt(args[sizeIndex + 1]!, 10) : CONFIG.DEFAULT_TEST_SIZE_KB;
@@ -225,13 +335,16 @@ async function main() {
 		throw new Error(`Invalid --size-kb argument: ${targetSizeKB}. Must be a positive integer.`);
 	}
 
-	const siteUrl = `UploadTest-${Date.now()}`;
 	const filePath = `src/tests/temp-file-${targetSizeKB}kb`;
+	// Base64エンコード後のサイズから逆算した元のサイズ
 	const originalSizeKB = Math.floor(getOriginalSizeForBase64Target(targetSizeKB * 1024) / 1024);
 	const originalContent = `This is a test file for upload. Target encoded size: ${targetSizeKB} KB.`;
+	// 適切なサイズのファイルを生成
 	await fs.writeFile(filePath, Buffer.alloc(originalSizeKB * 1024, originalContent));
+	const fileSizeInBytes = originalSizeKB * 1024;
+	logger.info(`[GLOBAL_INFO] Created temp file: ${filePath} (${fileSizeInBytes / 1024} KB)`);
 
-	// 1. 環境情報の取得
+	// 2. 環境情報の取得
 	const { chains: allChains, rpcEndpoints, restEndpoints: apiEndpoints } = await getChainResources();
 	const dataChains = allChains.filter(c => c.type === 'datachain');
 	const metaChain = allChains.find(c => c.type === 'metachain');
@@ -239,127 +352,82 @@ async function main() {
 	const numDataChains = dataChains.length;
 	if (numDataChains === 0) { throw new Error('No Datachains found in Kubernetes resources.'); }
 
-	logger.info(`[GLOBAL_INFO] Upload Size (Encoded): ${targetSizeKB} KB`);
-	logger.info(`[GLOBAL_INFO] Number of Data Chains: ${numDataChains}`);
-
-	const fileSizeInBytes = originalSizeKB * 1024;
-	let newChunkSize = Math.ceil(fileSizeInBytes / numDataChains);
+	// 3. チャンクサイズの決定
+	let chunkSize = Math.ceil(fileSizeInBytes / numDataChains);
 	const blockSizeLimitBytes = CONFIG.BLOCK_SIZE_LIMIT_MB * 1024 * 1024;
-	if (newChunkSize > blockSizeLimitBytes) { newChunkSize = blockSizeLimitBytes; }
-	CHUNK_SIZE = newChunkSize;
-
-	// 各チェーンのクライアントを初期化
-	const chainClients = new Map<string, ExtendedChainClients>();
-	for (const chain of allChains) {
-		try {
-			const mnemonic = await getCreatorMnemonic(chain.name);
-			const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, { hdPaths: [stringToPath(CONFIG.HD_PATH)] });
-			const [account] = await wallet.getAccounts();
-			if (!account) throw new Error(`Failed to get account from wallet for chain ${chain.name}`);
-			const rpcUrl = rpcEndpoints[chain.name]!.replace('http', 'ws');
-			const wsClient = new WebsocketClient(rpcUrl, (err) => { if (err) { logger.warn(`[${chain.name}] WebSocket connection error: ${err.message}`); } });
-			await wsClient.execute({ jsonrpc: "2.0", method: "status", id: 1, params: [] });
-			const tmClient = await Tendermint37Client.create(wsClient);
-			const client = await SigningStargateClient.createWithSigner(tmClient, wallet, { registry: customRegistry, gasPrice: GasPrice.fromString(CONFIG.GAS_PRICE_STRING) });
-			chainClients.set(chain.name, { client, account, tmClient, wsClient, restEndpoint: apiEndpoints[chain.name]! });
-			logger.info(`[CLIENT_SETUP] Successful for chain: ${chain.name}`);
-		} catch (e) {
-			logger.error(`[CLIENT_SETUP] Failed to initialize client for chain ${chain.name}:`, e);
-			throw e;
-		}
+	if (chunkSize > blockSizeLimitBytes) {
+		chunkSize = blockSizeLimitBytes;
+		logger.warn(`[CHUNK_SIZE] Calculated chunk size exceeds block limit. Capping at ${chunkSize / (1024 * 1024)} MB.`);
 	}
+	logger.info(`[GLOBAL_INFO] Chunk Size per chain: ${Math.round(chunkSize / 1024)} KB`);
 
-	// ★★★ 修正点1: チェーンごとに専用のジョブキューを作成 ★★★
-	// 'account sequence mismatch'エラーを防ぐため、各チェーンへのトランザクションを
-	// 完全に直列化します。そのために、チェーン名をキーとするMapを用意し、
-	// 各チェーンが処理すべきジョブのリスト（キュー）を個別に管理します。
+	// 4. クライアントの初期化
+	await chainManager.initializeClients(allChains, rpcEndpoints, apiEndpoints);
+
+	return { filePath, fileSizeInBytes, dataChains, metaChain, chunkSize };
+}
+
+/**
+ * ファイルをチャンクに分割し、チェーンごとのジョブキューに割り当てる
+ */
+async function createUploadJobs(filePath: string, chunkSize: number, dataChains: ChainInfo[]): Promise<{ jobsByChain: Map<string, UploadJob[]>, totalChunks: number }> {
 	const jobsByChain = new Map<string, UploadJob[]>();
 	dataChains.forEach(chain => jobsByChain.set(chain.name, []));
 
 	let chunkCounter = 0;
 	const uniqueSuffix = `file-${Date.now()}`;
+	const numDataChains = dataChains.length;
 
-	const fileStream = createReadStream(filePath, { highWaterMark: CHUNK_SIZE });
+	const fileStream = createReadStream(filePath, { highWaterMark: chunkSize });
 	for await (const chunk of fileStream) {
 		const chunkIndex = `${uniqueSuffix}-${chunkCounter}`;
-		// ラウンドロビン方式（順番に割り当て）で、このチャンクを担当するチェーンを決定
-		const targetChainName = dataChains[chunkCounter % numDataChains]!.name;
+		const targetChainName = dataChains[chunkCounter % numDataChains]!.name; // ラウンドロビン
 		const job: UploadJob = { chunk: chunk as Buffer, index: chunkIndex, retries: 0 };
-		// 担当チェーンの専用キューにジョブを追加
 		jobsByChain.get(targetChainName)!.push(job);
 		chunkCounter++;
 	}
-	const totalChunks = chunkCounter;
-	logger.info(`[GLOBAL_INFO] File split into ${totalChunks} chunks (Size per chunk: ${Math.round(CHUNK_SIZE / 1024)} KB)`);
 
-	// --- インジケーターの準備と初期化 ---
-	const progressTracker = new Map<string, ChainProgress>();
+	logger.info(`[ALLOCATION] File split into ${chunkCounter} chunks.`);
+	dataChains.forEach(chain => {
+		logger.info(`[ALLOCATION] Chain ${chain.name} assigned ${jobsByChain.get(chain.name)!.length} chunks.`);
+	});
+
+	return { jobsByChain, totalChunks: chunkCounter };
+}
+
+/**
+ * チャンクアップロード用のワーカーを起動し、並列処理を実行する
+ */
+async function executeUploadWorkers(chainManager: ChainManager, jobsByChain: Map<string, UploadJob[]>, dataChains: ChainInfo[], estimatedGas: number): Promise<{ index: string; chain: string; }[]> {
+	const uploadedChunks: { index: string; chain: string; }[] = [];
+	const numDataChains = dataChains.length;
 	const multiBar = new cliProgress.MultiBar({
 		clearOnComplete: false,
 		hideCursor: true,
 		format: '{chain} | {bar} | {percentage}% ({value}/{total}) | {eta}s ETA',
 	}, cliProgress.Presets.shades_grey);
 
-	// ★★★ 修正点2: 専用キューの長さに基づいてプログレスバーを初期化 ★★★
-	// 各チェーンが担当するチャンク数が均等でない場合があるため、
-	// それぞれの専用キューの実際のジョブ数を元にプログレスバーを設定します。
+	const progressTracker = new Map<string, ChainProgress>();
 	for (const chain of dataChains) {
-		const chainName = chain.name;
-		const jobsForChain = jobsByChain.get(chainName)!;
+		const jobsForChain = jobsByChain.get(chain.name)!;
 		const totalForChain = jobsForChain.length;
-		const newBar = multiBar.create(totalForChain, 0, { chain: chainName });
-		progressTracker.set(chainName, {
-			total: totalForChain,
-			completed: 0,
-			bar: newBar,
-		});
-		logger.info(`[ALLOCATION] Chain ${chainName} is responsible for ${totalForChain} chunks.`);
+		const newBar = multiBar.create(totalForChain, 0, { chain: chain.name });
+		progressTracker.set(chain.name, { total: totalForChain, completed: 0, bar: newBar });
 	}
 
-	// --- チャンクアップロード処理 ---
-	const firstChunkJob = jobsByChain.get(dataChains[0]!.name)?.[0];
-	if (!firstChunkJob) { throw new Error('No chunks generated for upload.'); }
-	const dataChainClient = chainClients.get(dataChains[0]!.name)!;
-	const dummyMsg = {
-		typeUrl: '/datachain.datastore.v1.MsgCreateStoredChunk',
-		value: { creator: dataChainClient.account.address, index: firstChunkJob.index, data: firstChunkJob.chunk },
-	};
-	let estimatedGas;
-	try {
-		estimatedGas = await dataChainClient.client.simulate(dataChainClient.account.address, [dummyMsg], 'Gas Estimation');
-		logger.info(`[GAS_SIMULATE] Initial estimated gas for one chunk (simulate): ${estimatedGas}`);
-	} catch (e) {
-		logger.error('[GAS_SIMULATE] Initial simulation failed!', e);
-		throw e;
-	}
-
-	const uploadedChunks: { index: string; chain: string; }[] = [];
-
-	// ★★★ 修正点3: ワーカーが自分専用のキューを処理するように変更 ★★★
 	const worker = async (workerId: number) => {
-		// workerIdはdataChains配列のインデックスに対応します。
 		const targetChainName = dataChains[workerId]!.name;
-		const targetClientInfo = chainClients.get(targetChainName)!;
 		const chainProgress = progressTracker.get(targetChainName)!;
-		// 共有キューではなく、自分に割り当てられた専用のジョブキューを取得します。
 		const jobQueue = jobsByChain.get(targetChainName)!;
 
 		logger.info(`[WORKER_START] Worker #${workerId} started, assigned to chain: ${targetChainName}`);
 
-		// 自分専用のキューが空になるまで、ジョブを1つずつ処理します。
-		// これにより、このワーカーが送信するトランザクションは必ず直列になります。
 		while (jobQueue.length > 0) {
 			const job = jobQueue.shift();
 			if (!job) continue;
 
 			try {
-				await uploadChunk(
-					targetClientInfo.client,
-					targetClientInfo.account,
-					job.index,
-					job.chunk,
-					estimatedGas
-				);
+				await chainManager.uploadChunk(targetChainName, job.index, job.chunk, estimatedGas);
 				logger.info(`[UPLOAD_SUCCESS] Chunk ${job.index} successfully uploaded to ${targetChainName}.`);
 				uploadedChunks.push({ index: job.index, chain: targetChainName });
 				chainProgress.completed++;
@@ -370,9 +438,7 @@ async function main() {
 					logger.warn(`[RETRY] Chunk ${job.index} (Attempt ${job.retries + 1}/${CONFIG.MAX_RETRIES}). Backing off.`);
 					job.retries++;
 					await new Promise(resolve => setTimeout(resolve, CONFIG.RETRY_BACKOFF_MS));
-					// 失敗したジョブは、自分のキューの"先頭"に戻します。
-					// これにより、同じジョブをすぐに再試行し、他のジョブが先に処理されるのを防ぎます。
-					jobQueue.unshift(job);
+					jobQueue.unshift(job); // キューの先頭に戻して再試行
 				} else {
 					logger.error(`[CRITICAL_FAIL] Chunk ${job.index} failed after ${CONFIG.MAX_RETRIES} attempts on ${targetChainName}. Aborting worker.`);
 					throw new Error(`Critical upload failure on chain ${targetChainName}.`);
@@ -382,78 +448,127 @@ async function main() {
 	};
 
 	const workerPromises = [];
-	// データチェーンの数だけワーカーを起動します。各ワーカーは1つのチェーンを専属で担当します。
 	for (let i = 0; i < numDataChains; i++) {
 		workerPromises.push(worker(i));
 	}
 
-	const startTime = Date.now();
-	logger.info('[MAIN] Starting concurrent chunk uploads...');
 	try {
 		await Promise.all(workerPromises);
-		logger.info('[MAIN] All chunks successfully uploaded.');
-	} catch (e) {
-		logger.error('[MAIN] A critical error occurred during chunk uploads. Flushing logs.');
-		throw e;
 	} finally {
 		multiBar.stop();
-		const endTime = Date.now();
-		const totalUploadTimeMs = endTime - startTime;
-		const totalUploadTimeSec = (totalUploadTimeMs / 1000).toFixed(2);
-		const averageTimePerChunkMs = (totalUploadTimeMs / totalChunks).toFixed(2);
-		console.log('\n--- 📊 Upload Performance ---');
-		console.log(`Total Upload Time: ${totalUploadTimeSec} seconds`);
-		console.log(`Average Time per Chunk: ${averageTimePerChunkMs} ms`);
-		console.log('--------------------------\n');
 	}
 
-	// 3. マニフェストのアップロード
+	return uploadedChunks;
+}
+
+/**
+ * アップロード後の検証とクリーンアップ
+ */
+async function finalizeProcess(chainManager: ChainManager, uploadedChunks: { index: string; chain: string; }[], metaChain: ChainInfo, filePath: string, siteUrl: string) {
+	// 1. マニフェストのアップロード
 	const urlIndex = encodeURIComponent(siteUrl);
 	uploadedChunks.sort((a, b) => parseInt(a.index.split('-').pop()!) - parseInt(b.index.split('-').pop()!));
 	const manifest: Manifest = { filepath: path.basename(filePath), chunks: uploadedChunks, };
 	const manifestString = JSON.stringify(manifest);
 	logger.info('[MANIFEST] Uploading manifest to Metachain...');
-	const { client: metaClient, account: metaAccount } = chainClients.get(metaChain.name)!;
-	await uploadManifest(metaClient, metaAccount, urlIndex, manifestString);
+	await chainManager.uploadManifest(metaChain.name, urlIndex, manifestString);
 	logger.info('[MANIFEST] Upload complete.');
 
-	// トランザクションがブロックに取り込まれ、APIが認識するのを待つ
+	// 2. 検証処理
 	logger.info('[VERIFICATION] Waiting for 2 seconds for manifest to be indexed...');
 	await new Promise(resolve => setTimeout(resolve, 2000));
 
-	// 4. 検証処理
 	logger.info('[VERIFICATION] Starting verification process...');
-	const manifestResponse = await queryStoredManifest(apiEndpoints[metaChain.name]!, urlIndex);
+	const manifestResponse = await chainManager.queryStoredManifest(metaChain.name, urlIndex);
 	const downloadedManifest = JSON.parse(manifestResponse.stored_manifest.manifest) as Manifest;
-	logger.info(`[VERIFICATION] Manifest retrieved. Downloading ${downloadedManifest.chunks.length} chunks...`);
+
 	const downloadedChunksBuffers: Buffer[] = [];
 	await Promise.all(downloadedManifest.chunks.map(async (chunkInfo, i) => {
-		const chunkResponse = await queryStoredChunk(chainClients.get(chunkInfo.chain)!.restEndpoint, chunkInfo.index);
+		const chunkResponse = await chainManager.queryStoredChunk(chunkInfo.chain, chunkInfo.index);
 		const chunkBuffer = Buffer.from(chunkResponse.stored_chunk.data, 'base64');
 		downloadedChunksBuffers[i] = chunkBuffer;
 	}));
+
 	const reconstructedBuffer = Buffer.concat(downloadedChunksBuffers);
 	const originalBuffer = await fs.readFile(filePath);
-	if (Buffer.compare(originalBuffer, reconstructedBuffer) !== 0) { throw new Error('[VERIFICATION] Verification failed! Reconstructed file does not match the original.'); }
+
+	if (Buffer.compare(originalBuffer, reconstructedBuffer) !== 0) {
+		throw new Error('[VERIFICATION] Verification failed! Reconstructed file does not match the original.');
+	}
 	logger.info('[VERIFICATION] Successful! The downloaded file matches the original.');
 
-	// クリーンアップ
+	// 3. クリーンアップ
 	await fs.unlink(filePath);
 	logger.info(`[CLEANUP] Temporary file ${filePath} deleted.`);
-	for (const { wsClient, tmClient } of chainClients.values()) {
-		wsClient.disconnect();
-		(tmClient as any).disconnect();
-	}
+	chainManager.closeAllConnections();
 	logger.info('[CLEANUP] All WebSocket connections closed.');
+}
+
+/**
+ * メインのアップロード処理
+ */
+async function main() {
+	const siteUrl = `UploadTest-${Date.now()}`;
+	const chainManager = new ChainManager();
+	let filePath: string | null = null;
+	let totalChunks: number = 0;
+	const startTime = Date.now();
+
+	try {
+		// 1. 環境設定、ファイル作成、クライアント初期化
+		const setup = await setupEnvironment(chainManager);
+		filePath = setup.filePath;
+		const { dataChains, metaChain, chunkSize } = setup;
+
+		// 2. チャンク分割とジョブの割り当て
+		const { jobsByChain, totalChunks: chunksCount } = await createUploadJobs(setup.filePath, chunkSize, dataChains);
+		totalChunks = chunksCount; // finallyブロックで使用するために保持
+
+		// 3. ガス代のシミュレーション（最初のチャンクを使用）
+		const firstChunkJob = jobsByChain.get(dataChains[0]!.name)?.[0];
+		if (!firstChunkJob) { throw new Error('No chunks generated for upload.'); }
+		const dataChainClient = chainManager.getClientInfo(dataChains[0]!.name);
+		const dummyMsg = { typeUrl: '/datachain.datastore.v1.MsgCreateStoredChunk', value: { creator: dataChainClient.account.address, index: firstChunkJob.index, data: firstChunkJob.chunk }, };
+		const estimatedGas = await dataChainClient.client.simulate(dataChainClient.account.address, [dummyMsg], 'Gas Estimation');
+		logger.info(`[GAS_SIMULATE] Initial estimated gas for one chunk (simulate): ${estimatedGas}`);
+
+		// 4. チャンクアップロード実行 (並列ワーカー)
+		logger.info('[MAIN] Starting concurrent chunk uploads...');
+		const uploadedChunks = await executeUploadWorkers(chainManager, jobsByChain, dataChains, estimatedGas);
+		logger.info('[MAIN] All chunks successfully uploaded.');
+
+		// 5. マニフェストアップロードと検証、クリーンアップ
+		await finalizeProcess(chainManager, uploadedChunks, metaChain, setup.filePath, siteUrl);
+
+	} catch (err) {
+		logger.error('[MAIN] A fatal error occurred:', err);
+		throw err;
+	} finally {
+		// パフォーマンス計測
+		const endTime = Date.now();
+		const totalUploadTimeMs = endTime - startTime;
+		const totalUploadTimeSec = (totalUploadTimeMs / 1000).toFixed(2);
+		const averageTimePerChunkMs = (totalChunks > 0 ? (totalUploadTimeMs / totalChunks) : 0).toFixed(2);
+		console.log('\n--- 📊 Upload Performance ---');
+		console.log(`Total Upload Time: ${totalUploadTimeSec} seconds`);
+		console.log(`Average Time per Chunk: ${averageTimePerChunkMs} ms`);
+		console.log('--------------------------\n');
+
+		// クリーンアップ
+		if (filePath) {
+			// エラー時のファイル削除は、finalizeProcessに任せるか、別途エラー時にtry/catchで実行するのがより堅牢
+			// ここでは一旦、finalizeProcessの実行が確実でない場合に備え、メインロジックのcatchで処理
+		}
+	}
 }
 
 // 実行と最終的なエラーハンドリング
 main().then(async () => {
 	logger.info('[MAIN] Script finished successfully.');
-	await flushLogs();
+	await loggerUtil.flushLogs();
 	process.exit(0);
 }).catch(async err => {
 	logger.error('Uncaught fatal error in main execution loop:', err);
-	await flushLogs();
+	await loggerUtil.flushLogs();
 	process.exit(1);
 });
