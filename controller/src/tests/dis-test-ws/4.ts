@@ -21,7 +21,7 @@ import Transport from 'winston-transport';
 const CONFIG = {
     K8S_NAMESPACE: 'raidchain',
     SECRET_NAME: 'raidchain-mnemonics',
-    BLOCK_SIZE_LIMIT_MB: 15,
+    BLOCK_SIZE_LIMIT_MB: 20,
     DEFAULT_CHUNK_SIZE: 512 * 1024,
     
     // --- 💡 修正: さらに安全な設定 (リレイヤーエラー対策) ---
@@ -33,7 +33,7 @@ const CONFIG = {
     PIPELINE_MAX_PENDING_BATCHES: 1, 
 
     // Mempool制限を 10 に下げ、ノードが詰まる前に待機する
-    MEMPOOL_TX_LIMIT: 10, // 30 -> 10
+    MEMPOOL_TX_LIMIT: 30, // 30 -> 10
 
     MEMPOOL_CHECK_INTERVAL_MS: 7000,
     // ----------------------------------------------------
@@ -51,15 +51,10 @@ const CONFIG = {
 
 // 型定義
 interface TransformableInfo extends winston.Logform.TransformableInfo { level: string; message: string;[key: string]: any; }
-interface StoredChunk { index: string; data: string; }
-interface StoredChunkResponse { stored_chunk: StoredChunk; }
-interface StoredManifestResponse { stored_manifest: { url: string; manifest: string; }; }
-interface Manifest { filepath: string; chunks: { index: string; chain: string; }[]; }
 interface ChainInfo { name: string; type: 'datachain' | 'metachain'; }
 interface ChainEndpoints { [key: string]: string; }
 interface ExtendedChainClients { client: SigningStargateClient; account: AccountData; tmClient: Tendermint37Client; wsClient: WebsocketClient; restEndpoint: string; }
 interface MegaChunkJob { buffer: Buffer; indexPrefix: string; chainName: string; retries: number; }
-interface MiniChunk { index: string; data: Buffer; gasWanted: number; }
 
 // プロトコルバッファ型定義とレジストリ
 interface MsgCreateStoredChunk { creator: string; index: string; data: Uint8Array; }
