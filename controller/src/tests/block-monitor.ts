@@ -1,6 +1,6 @@
 import { stringToPath } from '@cosmjs/crypto';
 import { AccountData, DirectSecp256k1HdWallet, GeneratedType, Registry } from '@cosmjs/proto-signing';
-import { Coin, DeliverTxResponse, GasPrice, SigningStargateClient } from '@cosmjs/stargate';
+import { Coin, GasPrice, SigningStargateClient } from '@cosmjs/stargate';
 import { Tendermint37Client, WebsocketClient } from '@cosmjs/tendermint-rpc';
 import * as k8s from '@kubernetes/client-node';
 import cliProgress from 'cli-progress';
@@ -247,7 +247,7 @@ class ChainManager {
 		}
 
 		try {
-			// ニーモニックはClient作成に必要だが、ここでは監視が主目的なので使わない
+			// ニーモニックはClient作成に必要
 			const mnemonic = await getCreatorMnemonic(chain.name);
 			const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, { hdPaths: [stringToPath(CONFIG.HD_PATH)], prefix: CONFIG.BECH32_PREFIX });
 			const [account] = await wallet.getAccounts();
@@ -265,10 +265,10 @@ class ChainManager {
 			});
 
 			await wsClient.execute({ jsonrpc: "2.0", method: "status", id: 1, params: [] }); // 接続確認
-			const tmClient = await Tendermint37Client.create(wsClient);
+			const tmClient = Tendermint37Client.create(wsClient);
 
-			// 署名機能は不要だが、既存の型定義に合わせるためStargateClientも作成
-			const client = await SigningStargateClient.createWithSigner(tmClient, wallet, { registry: customRegistry, gasPrice: this.gasPrice });
+			// StargateClientを作成
+			const client = SigningStargateClient.createWithSigner(tmClient, wallet, { registry: customRegistry, gasPrice: this.gasPrice });
 
 			this.chainClients.set(chain.name, { client, account, tmClient, wsClient, restEndpoint: restEndpoints[chain.name]! });
 			logger.info(`[CLIENT_SETUP] Successful for chain: ${chain.name} (Address: ${account.address}). RPC URL: ${rpcUrl}`);
@@ -287,15 +287,6 @@ class ChainManager {
 	public getClients(): Map<string, ExtendedChainClients> {
 		return this.chainClients;
 	}
-
-	// ----------------------------------------------
-	// 監視スクリプトでは以下のメソッドは不要なので削除または簡略化
-	// ----------------------------------------------
-	public async uploadChunk(...args: any[]): Promise<DeliverTxResponse> { throw new Error("Method not implemented for monitoring script."); }
-	public async uploadManifest(...args: any[]): Promise<DeliverTxResponse> { throw new Error("Method not implemented for monitoring script."); }
-	public async queryStoredManifest(...args: any[]): Promise<StoredManifestResponse> { throw new Error("Method not implemented for monitoring script."); }
-	public async queryStoredChunk(...args: any[]): Promise<StoredChunkResponse> { throw new Error("Method not implemented for monitoring script."); }
-
 
 	/**
 	 * WebSocketクライアントをすべて切断する
@@ -388,11 +379,19 @@ async function startBlockMonitoring(chainManager: ChainManager): Promise<void> {
 			const proposerTendermintAddress = blockHeader.proposerAddress; // Uint8Array
 			const proposerCosmosAddress = await getCosmosAccountAddressFromProposer(proposerTendermintAddress);
 
-			// 💡 修正点 4: ブロック作成者の残高を取得
-			let balances: readonly Coin[] = [];
-			// 変換に失敗していない場合のみ残高を取得
-			if (!proposerCosmosAddress.startsWith('TENDERMINT_HEX')) {
-				balances = await getAccountBalances(client, proposerCosmosAddress);
+			// 💡 修正点 4: ブロック作成者の残高ではなく、
+			// initializeClientsで設定されたアカウント（creator）の残高を取得する
+			const { account } = chainManager.getClientInfo(chainName);
+			const clientAddress = account.address;
+			let clientBalances: readonly Coin[] = [];
+
+			try {
+				// client (SigningStargateClient) を使って残高を取得
+				clientBalances = await getAccountBalances(client, clientAddress);
+			} catch (e) {
+				// getAccountBalances内で既にエラーロギングされているが、念のため
+				logger.error(`[CLIENT_BALANCE_ERROR] Failed to get client balance for ${clientAddress}:`, e);
+				clientBalances = [{ amount: 'ERROR', denom: 'QUERY_FAILED' }];
 			}
 
 			// 抽出した情報を整形して出力
@@ -409,7 +408,10 @@ async function startBlockMonitoring(chainManager: ChainManager): Promise<void> {
 			// ブロック作成者の情報を追加
 			logger.info(`- PROPOSER (Consensus Key): ${Buffer.from(proposerTendermintAddress).toString('hex').toUpperCase()}`);
 			logger.info(`- PROPOSER (Cosmos Address): ${proposerCosmosAddress}`);
-			logger.info(`- PROPOSER (Balance): ${balances.map(b => `${b.amount}${b.denom}`).join(', ')}`);
+
+			// クライアント（creator）の残高を表示
+			logger.info(`- CLIENT (Address): ${clientAddress}`);
+			logger.info(`- CLIENT (Balance): ${clientBalances.map(b => `${b.amount}${b.denom}`).join(', ')}`);
 
 			// トランザクションハッシュをすべて取得して表示
 			logger.info(`- TRANSACTIONS[${blockTxs.length}]:`);
@@ -418,7 +420,7 @@ async function startBlockMonitoring(chainManager: ChainManager): Promise<void> {
 					const txBase64 = tx ? Buffer.from(tx)
 						.toString('base64').substring(0, 40) + '...'
 						: 'N/A';
-					logger.info(`  ${txBase64}`);
+					logger.info(`  ${txBase64}`);
 				});
 			}
 			logger.info(`--------------------------------------------------------------------------------`);
