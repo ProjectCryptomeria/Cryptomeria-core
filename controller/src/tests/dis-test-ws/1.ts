@@ -270,8 +270,6 @@ class ChainManager {
 		return clientInfo;
 	}
 
-	// uploadChunk (ノンス自動管理) はノンスねじ込み版に置き換えるため削除/プライベート化
-	// public async uploadChunk(...) {} 
 
 	// 💡 新規追加: ノンスねじ込み方式で複数の独立したTxをブロードキャストし、完了を待つ
 	/**
