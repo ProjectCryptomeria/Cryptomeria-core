@@ -1,6 +1,6 @@
 import { stringToPath } from '@cosmjs/crypto';
 import { AccountData, DirectSecp256k1HdWallet, GeneratedType, Registry } from '@cosmjs/proto-signing';
-import { DeliverTxResponse, GasPrice, SigningStargateClient } from '@cosmjs/stargate';
+import { Coin, DeliverTxResponse, GasPrice, SigningStargateClient } from '@cosmjs/stargate';
 import { Tendermint37Client, WebsocketClient } from '@cosmjs/tendermint-rpc';
 import * as k8s from '@kubernetes/client-node';
 import cliProgress from 'cli-progress';
@@ -9,6 +9,8 @@ import * as path from 'path';
 import { Reader, Writer } from 'protobufjs/minimal';
 import winston from 'winston';
 import Transport from 'winston-transport';
+// 💡 修正点 1: Bech32 の代わりに toBech32 をインポート
+import { toBech32 } from '@cosmjs/encoding';
 
 // =================================================================================================
 // 📚 I. CONFIG & TYPE DEFINITIONS
@@ -30,6 +32,8 @@ const CONFIG = {
 	DEFAULT_TEST_SIZE_KB: 100,
 	// 監視対象のチェーン名
 	TARGET_CHAIN_NAME: 'data-0',
+	// Cosmos SDK のデフォルトのプレフィックス
+	BECH32_PREFIX: 'cosmos',
 };
 
 // 型定義
@@ -245,7 +249,7 @@ class ChainManager {
 		try {
 			// ニーモニックはClient作成に必要だが、ここでは監視が主目的なので使わない
 			const mnemonic = await getCreatorMnemonic(chain.name);
-			const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, { hdPaths: [stringToPath(CONFIG.HD_PATH)] });
+			const wallet = await DirectSecp256k1HdWallet.fromMnemonic(mnemonic, { hdPaths: [stringToPath(CONFIG.HD_PATH)], prefix: CONFIG.BECH32_PREFIX });
 			const [account] = await wallet.getAccounts();
 			if (!account) throw new Error(`Failed to get account from wallet for chain ${chain.name}`);
 
@@ -310,22 +314,57 @@ class ChainManager {
 // =================================================================================================
 
 /**
+ * TendermintのValidatorコンセンサスアドレス(Proposer Address)から、
+ * 対応するCosmos SDKのアカウントアドレスを取得する。
+ * @param proposerAddress Tendermintのコンセンサスアドレス (Uint8Array)
+ * @returns Cosmosアカウントアドレス (例: cosmos1...)
+ */
+// 💡 修正点 2: toBech32 関数を使用するように変更
+async function getCosmosAccountAddressFromProposer(proposerAddress: Uint8Array): Promise<string> {
+	const proposerHex = Buffer.from(proposerAddress).toString('hex').toUpperCase();
+
+	try {
+		// Tendermintのコンセンサスアドレスのバイト列を、
+		// toBech32 関数を使って Cosmos アカウントアドレスのプレフィックスでエンコードします。
+		const cosmosAddress = toBech32(CONFIG.BECH32_PREFIX, proposerAddress);
+		return cosmosAddress;
+	} catch (e) {
+		logger.warn(`[ADDR_CONV_ERROR] Failed to convert proposer address ${proposerHex} to Cosmos address:`, e);
+		return `TENDERMINT_HEX:${proposerHex}`;
+	}
+}
+
+/**
+ * 特定のCosmosアドレスの残高を取得する
+ * @param client StargateClient (残高クエリ用)
+ * @param address アカウントアドレス
+ * @returns 資金情報 (Coinオブジェクトの配列)
+ */
+async function getAccountBalances(client: SigningStargateClient, address: string): Promise<readonly Coin[]> {
+	try {
+		// addressが有効なCosmosアドレス形式でない場合はエラーになるため、try-catchでラップ
+		const balances = await client.getAllBalances(address);
+		return balances;
+	} catch (e) {
+		logger.error(`[BALANCE_QUERY_ERROR] Failed to fetch balances for ${address}:`, e);
+		return [{ amount: 'ERROR', denom: 'ERROR' }];
+	}
+}
+
+/**
  * ブロック生成イベントの監視を開始する
  */
 async function startBlockMonitoring(chainManager: ChainManager): Promise<void> {
 	const chainName = CONFIG.TARGET_CHAIN_NAME;
-	const { tmClient } = chainManager.getClientInfo(chainName);
+	const { tmClient, client } = chainManager.getClientInfo(chainName);
 
 	logger.info(`✅ ${chainName} のブロック生成イベントの購読を開始しました。`);
 
 	const subscription = tmClient.subscribeNewBlock();
 
 	subscription.addListener({
-		// 💡 修正点 1: event の型を any にして、実行時の柔軟性を確保しつつ、
-		// 💡 修正点 2: 内部で提供された Block インターフェースの構造 (event.header, event.txs) を直接使用します。
 		next: async (event: any) => {
 
-			// eventがBlock構造を直接持つと仮定 (NewBlockEvent extends Block)
 			const blockHeader = event.header;
 			const height = blockHeader.height;
 			const blockTxs = event.txs;
@@ -335,16 +374,25 @@ async function startBlockMonitoring(chainManager: ChainManager): Promise<void> {
 				return;
 			}
 
-			// 💡 修正点 3: tmClient.block(height) を使用して正確なブロックハッシュを取得
+			// tmClient.block(height) を使用して正確なブロックハッシュを取得
 			let blockHash: Uint8Array;
 			try {
-				// blockResponseの型を明示的に指定できないため any を使用
 				const blockResponse: any = await tmClient.block(height);
 				blockHash = blockResponse.blockId.hash;
 			} catch (e) {
 				logger.error(`[RPC_ERROR] Failed to fetch block details for height ${height}. Falling back to lastCommitHash:`, e);
-				// RPCエラー時のフォールバックとしてヘッダーの lastCommitHash を使用
 				blockHash = blockHeader.lastCommitHash;
+			}
+
+			// 💡 修正点 3: 変更後のアドレス変換関数を使用
+			const proposerTendermintAddress = blockHeader.proposerAddress; // Uint8Array
+			const proposerCosmosAddress = await getCosmosAccountAddressFromProposer(proposerTendermintAddress);
+
+			// 💡 修正点 4: ブロック作成者の残高を取得
+			let balances: readonly Coin[] = [];
+			// 変換に失敗していない場合のみ残高を取得
+			if (!proposerCosmosAddress.startsWith('TENDERMINT_HEX')) {
+				balances = await getAccountBalances(client, proposerCosmosAddress);
 			}
 
 			// 抽出した情報を整形して出力
@@ -357,14 +405,20 @@ async function startBlockMonitoring(chainManager: ChainManager): Promise<void> {
 
 			logger.info(`- TIME: ${new Date(blockHeader.time).toISOString()}`);
 			logger.info(`- TX COUNT: ${blockTxs.length}`);
-			logger.info(`- PROPOSER: ${Buffer.from(blockHeader.proposerAddress).toString('hex').toUpperCase()}`);
+
+			// ブロック作成者の情報を追加
+			logger.info(`- PROPOSER (Consensus Key): ${Buffer.from(proposerTendermintAddress).toString('hex').toUpperCase()}`);
+			logger.info(`- PROPOSER (Cosmos Address): ${proposerCosmosAddress}`);
+			logger.info(`- PROPOSER (Balance): ${balances.map(b => `${b.amount}${b.denom}`).join(', ')}`);
 
 			// トランザクションハッシュをすべて取得して表示
+			logger.info(`- TRANSACTIONS[${blockTxs.length}]:`);
 			if (blockTxs.length > 0) {
-				logger.info(`- TRANSACTIONS:`);
 				blockTxs.forEach((tx: Uint8Array, index: number) => {
-					const txBase64 = tx ? Buffer.from(tx).toString('utf-8'): 'N/A';
-					logger.info(`  [${index}] ${txBase64}`);
+					const txBase64 = tx ? Buffer.from(tx)
+						.toString('base64').substring(0, 40) + '...'
+						: 'N/A';
+					logger.info(`  ${txBase64}`);
 				});
 			}
 			logger.info(`--------------------------------------------------------------------------------`);

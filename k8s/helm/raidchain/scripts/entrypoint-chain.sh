@@ -31,8 +31,6 @@ if [ ! -d "$CHAIN_HOME/config" ]; then
 
     # ジェネシスアカウントの追加
     $CHAIN_BINARY genesis add-genesis-account "$VALIDATOR_ADDR" 1000000000000"$DENOM" --home "$CHAIN_HOME"
-    $CHAIN_BINARY genesis add-genesis-account "$RELAYER_ADDR" 100000000000"$DENOM" --home "$CHAIN_HOME"
-    $CHAIN_BINARY genesis add-genesis-account "$CREATOR_ADDR" 100000000000"$DENOM" --home "$CHAIN_HOME"
 
     # Gentxの生成と収集
     $CHAIN_BINARY genesis gentx validator 1000000000"$DENOM" \
@@ -41,6 +39,9 @@ if [ ! -d "$CHAIN_HOME/config" ]; then
         --home "$CHAIN_HOME"
 
     $CHAIN_BINARY genesis collect-gentxs --home "$CHAIN_HOME"
+
+    $CHAIN_BINARY genesis add-genesis-account "$RELAYER_ADDR" 100000000000"$DENOM" --home "$CHAIN_HOME"
+    $CHAIN_BINARY genesis add-genesis-account "$CREATOR_ADDR" 100000000000"$DENOM" --home "$CHAIN_HOME"
 
     echo "--- Validating genesis file ---"
     $CHAIN_BINARY genesis validate --home "$CHAIN_HOME"
@@ -54,17 +55,15 @@ if [ ! -d "$CHAIN_HOME/config" ]; then
     sed -i 's/^max_body_bytes = .*/max_body_bytes = 10737418240/' "$CONFIG_TOML" # 150MB
     sed -i 's/^max_tx_bytes = .*/max_tx_bytes = 10737418240/' "$CONFIG_TOML"   # 150MB
     
-    # ★★★ ここから修正 ★★★
     # Mempoolのサイズを増やす (デフォルト: 5000)
     sed -i 's/^size = .*/size = 50000/' "$CONFIG_TOML"
     # Mempoolにキャッシュできる最大バイト数を増やす (デフォルト: 1GB)
     sed -i 's/^max_txs_bytes = .*/max_txs_bytes = 10737418240/' "$CONFIG_TOML" # 10GB
     # トランザクションブロードキャストのコミット完了までのタイムアウトを延長 (デフォルト: 10s)
     sed -i 's/^timeout_broadcast_tx_commit = .*/timeout_broadcast_tx_commit = "60s"/' "$CONFIG_TOML"
-    # ★★★ ここまで修正 ★★★
 
     # --- app.toml の設定変更 ---
-    # sed -i 's/^minimum-gas-prices = ".*"/minimum-gas-prices = "0.000000001uatom"/' "$APP_TOML"
+
 
     # API, gRPCの有効化と設定 (上限を150MBに引き上げ)
     sed -i '/\[api\]/,/\[/{s/enable = false/enable = true/}' "$APP_TOML"
@@ -73,7 +72,7 @@ if [ ! -d "$CHAIN_HOME/config" ]; then
     sed -i '/\[grpc\]/,/\[/{s/enable = false/enable = true/}' "$APP_TOML"
     
     sed -i 's/^max-recv-msg-size = .*/max-recv-msg-size = "10737418240"/' "$APP_TOML"
-    sed -i 's/^max-send-msg-size = .*/max-send-msg-size = "10737418240"/' "$APP_TOML"@
+    sed -i 's/^max-send-msg-size = .*/max-send-msg-size = "10737418240"/' "$APP_TOML"
     
     sed -i '/\[grpc-web\]/,/\[/{s/enable = false/enable = true/}' "$APP_TOML"
 
