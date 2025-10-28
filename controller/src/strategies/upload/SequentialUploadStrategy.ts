@@ -1,7 +1,6 @@
 // controller/src/strategies/upload/SequentialUploadStrategy.ts
 import { sha256 } from '@cosmjs/crypto';
 import { toHex } from '@cosmjs/encoding';
-import { DeliverTxResponse, SignerData } from '@cosmjs/stargate';
 import { TxRaw } from 'cosmjs-types/cosmos/tx/v1beta1/tx';
 import {
 	Manifest,
@@ -10,18 +9,25 @@ import {
 	RunnerContext,
 	TransactionInfo,
 	UploadResult
-} from '../../types';
+} from '../../types/index'; // index を明示
 import { log } from '../../utils/logger';
 import { IUploadStrategy } from './IUploadStrategy';
+// GasPrice と calculateFee をインポート
+import { EncodeObject } from '@cosmjs/proto-signing';
+import { calculateFee, DeliverTxResponse, GasPrice, SignerData, StdFee } from '@cosmjs/stargate';
 
 // デフォルトのチャンクサイズ (1MB)
 const DEFAULT_CHUNK_SIZE = 1024 * 1024;
 // 一度に送信するバッチサイズ (Tx数)
 const DEFAULT_BATCH_SIZE = 100;
+// デフォルトのガス価格 (ChainManager から取得するのが望ましい)
+const DEFAULT_GAS_PRICE_STRING = '0.0025stake';
+// シミュレーション失敗時のフォールバックガスリミット
+const FALLBACK_GAS_LIMIT = '60000000';
 
 /**
  * データを分割し、指定された単一の datachain に対して逐次的にアップロードする戦略。
- * (seq-test-ws.ts のロジックをベース)
+ * ガスシミュレーションを利用してガスリミットを決定します。
  */
 export class SequentialUploadStrategy implements IUploadStrategy {
 	constructor() {
@@ -30,7 +36,9 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 
 	/**
 	 * 逐次アップロード処理を実行します。
-	 * (execute メソッドは前回の修正から変更なし)
+	 * @param context 実行コンテキスト
+	 * @param data アップロード対象のデータ
+	 * @param targetUrl このデータに関連付けるURL (マニフェストのキー)
 	 */
 	public async execute(
 		context: RunnerContext,
@@ -38,7 +46,7 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 		targetUrl: string
 	): Promise<UploadResult> {
 
-		const { config, chainManager, tracker, confirmationStrategy } = context;
+		const { config, chainManager, tracker, confirmationStrategy, gasEstimationStrategy } = context;
 		tracker.markUploadStart();
 		log.info(`[SequentialUpload] 開始... URL: ${targetUrl}, データサイズ: ${data.length} bytes`);
 
@@ -75,7 +83,27 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 		}
 		log.info(`[SequentialUpload] データは ${chunks.length} 個のチャンクに分割されました。`);
 
-		// 3. チャンクをバッチ処理でアップロード
+		// 3. ガスシミュレーション
+		let estimatedGasLimit = FALLBACK_GAS_LIMIT;
+		if (chunks.length > 0 && chunks[0]) {
+			const sampleMsg: EncodeObject = {
+				typeUrl: '/datachain.datastore.v1.MsgCreateStoredChunk',
+				value: {
+					creator: targetChain.address,
+					index: chunkIndexes[0]!,
+					data: chunks[0],
+				} as MsgCreateStoredChunk
+			};
+			estimatedGasLimit = await gasEstimationStrategy.estimateGasLimit(
+				context,
+				targetChainName,
+				sampleMsg
+			);
+		} else {
+			log.warn('[SequentialUpload] チャンクデータが存在しないため、ガスシミュレーションをスキップします。');
+		}
+
+		// 4. チャンクをバッチ処理でアップロード
 		const totalBatches = Math.ceil(chunks.length / batchSize);
 		let allTxHashes: string[] = [];
 
@@ -85,14 +113,16 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 			const batchChunks = chunks.slice(batchStartIndex, batchEndIndex);
 			const batchIndexes = chunkIndexes.slice(batchStartIndex, batchEndIndex);
 
-			log.step(`[SequentialUpload] バッチ ${i + 1}/${totalBatches} (${batchChunks.length} Tx) を "${targetChainName}" に送信中...`);
+			log.step(`[SequentialUpload] バッチ ${i + 1}/${totalBatches} (${batchChunks.length} Tx) を "${targetChainName}" に送信中... (GasLimit: ${estimatedGasLimit})`);
 
 			try {
+				// sendChunkBatch に estimatedGasLimit を渡す
 				const batchTxHashes = await this.sendChunkBatch(
 					context,
 					targetChainName,
 					batchChunks,
-					batchIndexes
+					batchIndexes,
+					estimatedGasLimit // ガスリミットを渡す
 				);
 				allTxHashes.push(...batchTxHashes);
 
@@ -104,32 +134,34 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 				const txInfos: TransactionInfo[] = batchTxHashes.map(hash => ({
 					hash: hash,
 					chainName: targetChainName,
-					...results.get(hash)!
+					...results.get(hash)! // 結果が Map に存在することを前提とする (!)
 				}));
 				tracker.recordTransactions(txInfos);
 
 				// 1件でも失敗したら中断
 				const failedTxs = txInfos.filter(info => !info.success);
 				if (failedTxs.length > 0) {
-					throw new Error(`バッチ ${i + 1} で ${failedTxs.length} 件のTxが失敗しました (例: ${failedTxs[0]?.error})。アップロードを中断します。`);
+					// エラーメッセージに失敗理由を含める
+					const firstError = failedTxs[0]?.error || '不明なエラー';
+					throw new Error(`バッチ ${i + 1} で ${failedTxs.length} 件のTxが失敗しました (例: ${firstError})。アップロードを中断します。`);
 				}
 
 			} catch (error) {
 				log.error(`[SequentialUpload] バッチ ${i + 1} の処理中にエラーが発生しました。`, error);
-				tracker.markUploadEnd();
-				return tracker.getUploadResult();
+				tracker.markUploadEnd(); // 失敗時点で終了
+				return tracker.getUploadResult(); // エラー発生時も、それまでの結果を返す
 			}
 		}
 
 		log.step(`[SequentialUpload] 全 ${chunks.length} チャンクのアップロード完了。マニフェストを登録中...`);
 
-		// 4. マニフェスト作成
+		// 5. マニフェスト作成
 		const manifest: Manifest = {
 			[targetUrl]: chunkIndexes,
 		};
 		const manifestContent = JSON.stringify(manifest);
 
-		// 5. マニフェストを metachain にアップロード
+		// 6. マニフェストを metachain にアップロード
 		try {
 			const msg: MsgCreateStoredManifest = {
 				creator: metachainAccount.address,
@@ -140,7 +172,7 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 			const { gasUsed, transactionHash, height }: DeliverTxResponse = await metachainAccount.signingClient.signAndBroadcast(
 				metachainAccount.address,
 				[{ typeUrl: '/metachain.metastore.v1.MsgCreateStoredManifest', value: msg }],
-				'auto'
+				'auto' // マニフェスト送信はガス'auto'で
 			);
 
 			log.info(`[SequentialUpload] マニフェスト登録成功。TxHash: ${transactionHash}`);
@@ -151,34 +183,36 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 				success: true,
 				height: height,
 				gasUsed: gasUsed,
-				feeAmount: undefined, // "auto" では fee を直接取得できないため
+				feeAmount: undefined, // 'auto' では fee を直接取得できない
 			});
 			tracker.setManifestUrl(targetUrl);
 
 		} catch (error) {
 			log.error(`[SequentialUpload] マニフェストの登録に失敗しました。`, error);
+			// マニフェスト失敗でも、チャンクアップロードの結果は返す
 		}
 
-		// 6. 最終結果
+		// 7. 最終結果
 		tracker.markUploadEnd();
 		log.info(`[SequentialUpload] 完了。所要時間: ${tracker.getUploadResult().durationMs} ms`);
 		return tracker.getUploadResult();
 	}
 
 	/**
-	 * チャンクのバッチをノンス手動管理で逐次送信します (seq-test-ws.ts のロジック)
-	 * ★ 修正箇所
+	 * チャンクのバッチをノンス手動管理で逐次送信します。
+	 * @param gasLimit このバッチの各Txで使用するガスリミット
 	 */
 	private async sendChunkBatch(
 		context: RunnerContext,
 		chainName: string,
 		chunks: Buffer[],
-		indexes: string[]
+		indexes: string[],
+		gasLimit: string // シミュレーション結果を受け取る
 	): Promise<string[]> {
 
 		const { chainManager } = context;
 		const account = chainManager.getChainAccount(chainName);
-		const client = account.signingClient; // SigningStargateClient
+		const client = account.signingClient;
 
 		let currentSequence = chainManager.getCurrentSequence(chainName);
 		const accountNumber = chainManager.getAccountNumber(chainName);
@@ -199,8 +233,12 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 		const txHashes: string[] = [];
 		const txRawBytesList: Uint8Array[] = [];
 
-		// 2. トランザクションをオフラインで署名
-		log.debug(`[SequentialUpload] ${messages.length} 件のTxをオフライン署名中... (Start Seq: ${currentSequence})`);
+		// ガス価格を取得 (デフォルトを使用)
+		const gasPrice = GasPrice.fromString(DEFAULT_GAS_PRICE_STRING);
+		// 手数料を計算
+		const fee: StdFee = calculateFee(parseInt(gasLimit, 10), gasPrice);
+
+		log.debug(`[sendChunkBatch ${chainName}] ${messages.length} 件のTxをオフライン署名中... (Start Seq: ${currentSequence}, GasLimit: ${gasLimit}, Fee: ${JSON.stringify(fee.amount)})`);
 		for (const msg of messages) {
 			const signerData: SignerData = {
 				accountNumber: accountNumber,
@@ -208,11 +246,12 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 				chainId: chainId,
 			};
 
+			// client.sign に計算済みの fee オブジェクトを渡す
 			const txRaw = await client.sign(
 				account.address,
 				[msg],
-				{ amount: [], gas: '20000000' }, // ガス代は多めに
-				'',
+				fee,
+				'', // memo
 				signerData
 			);
 
@@ -220,35 +259,24 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 			currentSequence++;
 		}
 
-		// 3. ローカルのシーケンス番号を更新
+		// ローカルのシーケンス番号を更新
 		chainManager.incrementSequence(chainName, messages.length);
 
-		// 4. broadcastTxSync で一括送信
-		log.debug(`[SequentialUpload] ${txRawBytesList.length} 件のTxをブロードキャスト中...`);
-
+		// broadcastTxSync で一括送信
+		log.debug(`[sendChunkBatch ${chainName}] ${txRawBytesList.length} 件のTxをブロードキャスト中...`);
 		for (const txBytes of txRawBytesList) {
-			// ハッシュ計算 (ConfirmationStrategy に渡すため、ブロードキャスト前に計算)
 			const hash = toHex(sha256(txBytes)).toUpperCase();
 			txHashes.push(hash);
-
 			try {
-				// ★ 修正 (エラー1): broadcastTxSync は Promise<string> (Txハッシュ) を返す
 				const returnedHash = await client.broadcastTxSync(txBytes);
-
-				// ★ 修正 (エラー1): result.code チェックを削除。
-				// 戻り値のハッシュと計算したハッシュが一致するか確認 (念のため)
+				// 戻り値のハッシュが計算結果と一致するか確認 (デバッグ用)
 				if (returnedHash.toUpperCase() !== hash) {
-					log.warn(`[SequentialUpload] ブロードキャストされたTxハッシュ (${returnedHash}) が、計算したハッシュ (${hash}) と一致しません。`);
-					// txHashes には計算したハッシュ (ローカル署名ベース) を使用し続ける
-				} else {
-					log.debug(`[SequentialUpload] Txブロードキャスト成功 (Sync): ${hash}`);
+					log.warn(`[sendChunkBatch ${chainName}] ブロードキャストされたTxハッシュ (${returnedHash}) が計算結果 (${hash}) と一致しません。`);
 				}
-
+				log.debug(`[sendChunkBatch ${chainName}] Txブロードキャスト成功 (Sync): ${hash}`);
 			} catch (error) {
-				// ブロードキャスト自体が失敗した場合 (Mempool full, ネットワークエラーなど)
-				log.error(`[SequentialUpload] Tx (Hash: ${hash}) のブロードキャスト中に例外発生。`, error);
-				// 例外が発生した場合も、ハッシュは txHashes に含まれているため、
-				// ConfirmationStrategy が後で確認 (そして失敗) することになる。
+				log.error(`[sendChunkBatch ${chainName}] Tx (Hash: ${hash}) のブロードキャスト中に例外発生。`, error);
+				// エラーが発生してもハッシュはリストに追加し、Confirmation戦略に確認を委ねる
 			}
 		}
 

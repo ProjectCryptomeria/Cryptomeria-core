@@ -31,15 +31,15 @@ import {
 	IVerificationStrategy
 } from './strategies/verification';
 
-/**
- * ExperimentRunner に渡す戦略モジュールのインターフェース
- */
+import { IGasEstimationStrategy, SimulationGasEstimationStrategy } from './strategies/gas';
+
 interface ExperimentStrategies {
 	commStrategy: ICommunicationStrategy;
 	uploadStrategy: IUploadStrategy;
 	confirmStrategy: IConfirmationStrategy;
 	downloadStrategy: IDownloadStrategy;
 	verifyStrategy: IVerificationStrategy;
+	gasEstimationStrategy: IGasEstimationStrategy;
 }
 
 /**
@@ -119,8 +119,17 @@ function instantiateStrategies(config: ExperimentConfig): ExperimentStrategies {
 			throw new Error(`不明な検証戦略: ${config.strategies.verification}`);
 	}
 
+	const gasEstimationStrategy = new SimulationGasEstimationStrategy();
+
 	log.info('すべての戦略モジュールのインスタンス化が完了しました。');
-	return { commStrategy, uploadStrategy, confirmStrategy, downloadStrategy, verifyStrategy };
+	return { 
+		commStrategy, 
+		uploadStrategy, 
+		confirmStrategy, 
+		downloadStrategy, 
+		verifyStrategy,
+		gasEstimationStrategy 
+	};
 }
 
 /**

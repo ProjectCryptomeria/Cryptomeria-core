@@ -13,7 +13,7 @@ import {
 } from '@cosmjs/tendermint-rpc';
 import { InfrastructureService } from '../infrastructure/InfrastructureService';
 import { customRegistry } from '../registry';
-import { ICommunicationStrategy } from '../strategies/communication/ICommunicationStrategy'; // ★ 修正: インターフェースのパス
+import { ICommunicationStrategy } from '../strategies/communication/ICommunicationStrategy';
 import { ChainInfo, ChainType } from '../types';
 import { log } from '../utils/logger';
 

@@ -18,11 +18,13 @@ import { PerformanceTracker } from './PerformanceTracker';
 import { ICommunicationStrategy } from '../strategies/communication/ICommunicationStrategy';
 import { IConfirmationStrategy } from '../strategies/confirmation/IConfirmationStrategy';
 import { IDownloadStrategy } from '../strategies/download/IDownloadStrategy';
+import { IGasEstimationStrategy } from '../strategies/gas';
 import { IUploadStrategy } from '../strategies/upload/IUploadStrategy';
 import { IVerificationStrategy } from '../strategies/verification/IVerificationStrategy';
 
 // --- 戦略モジュールの型定義 ---
 interface ExperimentStrategies {
+	gasEstimationStrategy: IGasEstimationStrategy;
 	commStrategy: ICommunicationStrategy;
 	uploadStrategy: IUploadStrategy;
 	confirmStrategy: IConfirmationStrategy;
@@ -83,7 +85,8 @@ export class ExperimentRunner {
 				chainManager: this.chainManager,
 				tracker: this.tracker,
 				communicationStrategy: this.strategies.commStrategy,
-				confirmationStrategy: this.strategies.confirmStrategy, // types/context.ts で定義済み
+				confirmationStrategy: this.strategies.confirmStrategy,
+				gasEstimationStrategy: this.strategies.gasEstimationStrategy,
 			};
 
 			// --- 3. イテレーション実行 ---

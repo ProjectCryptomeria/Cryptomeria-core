@@ -2,23 +2,30 @@
 import { Stream, Subscription } from 'xstream';
 import { ConfirmationResult, RunnerContext } from '../../types';
 import { log } from '../../utils/logger';
-import { ICommunicationStrategy } from '../communication/ICommunicationStrategy';
 import { ConfirmationOptions, IConfirmationStrategy } from './IConfirmationStrategy';
+// toHex をインポート
+import { toHex } from '@cosmjs/encoding';
+// TxEvent 型をインポート
+import { TxEvent } from "@cosmjs/tendermint-rpc/build/comet38/responses";
 
-// Txイベントのタイムアウト
-const DEFAULT_EVENT_TIMEOUT_MS = 60000; // 60秒
+const DEFAULT_EVENT_TIMEOUT_MS = 60000;
+
+// BigInt や Buffer/Uint8Array を文字列に変換する JSON.stringify の replacer 関数 (デバッグログ用)
+function replacer(key: string, value: any): any {
+	if (typeof value === 'bigint') {
+		return value.toString();
+	}
+	if (value instanceof Uint8Array || Buffer.isBuffer(value)) {
+		return Buffer.from(value).toString('base64');
+	}
+	return value;
+}
 
 /**
  * WebSocket の Tx イベント購読によって、トランザクションの完了を確認する戦略。
- * Pollingよりも高速かつ低負荷ですが、WebSocket接続が必須です。
+ * event.hash を利用して効率的に照合します。
  */
 export class TxEventConfirmationStrategy implements IConfirmationStrategy {
-
-	// 購読中のストリームを管理 (チェーン名 -> クエリ -> ストリーム)
-	private activeStreams = new Map<string, Map<string, Stream<any>>>();
-	// 購読インスタンス (解除用)
-	private activeSubscriptions = new Map<string, Subscription>();
-
 	constructor() {
 		log.debug('TxEventConfirmationStrategy がインスタンス化されました。');
 	}
@@ -27,14 +34,14 @@ export class TxEventConfirmationStrategy implements IConfirmationStrategy {
 	 * 指定されたトランザクションハッシュのリストがブロックに取り込まれたかを確認します。
 	 * @param context 実行コンテキスト (WebSocketCommunicationStrategy へのアクセス)
 	 * @param chainName 確認対象のチェーン名
-	 * @param txHashes 確認対象のトランザクションハッシュの配列
+	 * @param txHashes 確認対象のトランザクションハッシュの配列 (Hex文字列, 大文字)
 	 * @param options タイムアウト設定などのオプション
 	 * @returns Txハッシュをキーとし、確認結果 (ConfirmationResult) を値とする Map
 	 */
 	public async confirmTransactions(
 		context: RunnerContext,
 		chainName: string,
-		txHashes: string[],
+		txHashes: string[], // Hex文字列 (大文字) のリスト
 		options: ConfirmationOptions
 	): Promise<Map<string, ConfirmationResult>> {
 
@@ -43,207 +50,147 @@ export class TxEventConfirmationStrategy implements IConfirmationStrategy {
 
 		log.info(`[TxEventConfirm] チェーン "${chainName}" で ${txHashes.length} 件のTxをイベント購読で確認開始 (Timeout: ${timeout}ms)`);
 
-		// 1. 通信戦略が WebSocket か確認 (subscribe メソッドの存在チェック)
+		// 通信戦略が WebSocket (subscribe サポート) か確認
 		if (!communicationStrategy.subscribe || !communicationStrategy.unsubscribe) {
 			throw new Error('[TxEventConfirm] この戦略は WebSocketCommunicationStrategy (subscribe サポート) が必要です。');
 		}
 
-		// 2. 結果を格納する Map と、未確認のハッシュを管理する Set
 		const results = new Map<string, ConfirmationResult>();
-		const pendingHashes = new Set<string>(txHashes);
-
-		// 3. Txイベント購読クエリを作成
-		// (tx_search とは異なり、subscribe は複数のハッシュを OR で指定できないため、
-		//  'tm.event = 'Tx'' ですべてのTxイベントを受け取り、クライアント側でフィルタリングする)
+		// 確認対象ハッシュを大文字 Hex 文字列で Set に格納
+		const pendingHashes = new Set<string>(txHashes.map(h => h.toUpperCase()));
 		const query = "tm.event = 'Tx'";
 
-		// 4. イベントハンドラ (Promise) をセットアップ
+		let stream: Stream<TxEvent> | null = null;
+		let subscription: Subscription | null = null;
+		let timer: NodeJS.Timeout | null = null;
+
+		// イベント待機用の Promise を作成
 		const confirmationPromise = new Promise<void>((resolve, reject) => {
-
-			let stream: Stream<any>;
 			try {
-				// ストリームを購読 (または既存のストリームを取得)
-				stream = this.getStream(communicationStrategy, chainName, query);
-			} catch (error) {
-				return reject(error); // 購読失敗
-			}
+				// イベントストリームを購読 (呼び出しごとに新規購読)
+				stream = communicationStrategy.subscribe(query);
+				log.debug(`[TxEventConfirm] イベントストリーム (Query: ${query}) を購読しました。`);
 
-			const subscription = stream.subscribe({
-				next: (event: any) => {
-					// イベントデータ (event.TxResult または event.txResult) からハッシュと結果を取得
-					// tendermint-rpc v0.30+ (Cosmos SDK v0.46+)
-					const txResult = event?.txResult; // CometBFT 0.38
-					const tendermintTxResult = event?.TxResult; // Tendermint 0.37
-
-					const resultData = txResult ?? tendermintTxResult;
-
-					if (!resultData || !resultData.tx) {
-						log.warn(`[TxEventConfirm] 受信したTxイベントの形式が無効です。`, event);
-						return;
-					}
-
-					// Tx のハッシュを計算 (Base64エンコードされた tx データから)
-					// (注: イベントは Tx のハッシュを直接返さない。
-					//      txResult.hash は CometBFT 0.38 では存在するが、0.37 にはない。
-					//      txResult.tx (Base64) から計算するのが確実)
-
-					// ... と思ったが、v0.30 の TxEvent (WebsocketClient) は tx: Uint8Array を返す
-					//     v0.29 までは tx: string (Base64) だった
-
-					//     Tendermint37Client.subscribeTx は v0.30 イベント (TxEvent) を返す
-					//     TxEvent = { height, index, tx: Uint8Array, result: TxResult }
-
-					const txBytes: Uint8Array = resultData.tx; // v0.30 (Tendermint 0.37)
-					const txResultData = resultData.result;   // v0.30
-
-					if (!txBytes || !txResultData) {
-						log.warn(`[TxEventConfirm] 受信したTxイベントの形式が無効です (tx または result がない)。`, event);
-						return;
-					}
-
-					// Txハッシュの計算 (dis-test-ws/5.ts の TxEventSubscriber.hash() と同じロジック)
-					// (これは非常に高コストだが、イベントにはハッシュが含まれていないため仕方ない)
-					// TODO: 高速な SHA256 実装 (例: @noble/hashes) を使う
-					// const hash = crypto.createHash('sha256').update(txBytes).digest('hex').toUpperCase();
-
-					// --- 代替案 ---
-					// TxEvent (v0.30) には `hash` プロパティ (string) が含まれているはず
-					// (tendermint-rpc/build/tendermint37/responses.d.ts TxEvent)
-					const hash = event?.hash; // Base64エンコードされたハッシュ文字列
-
-					if (!hash) {
-						log.warn(`[TxEventConfirm] 受信したTxイベントに 'hash' プロパティがありません。ハッシュ計算は未実装です。`);
-						return;
-					}
-
-					if (pendingHashes.has(hash)) {
-						// 待機していたTxだった
-						pendingHashes.delete(hash);
-
-						const result: ConfirmationResult = {
-							success: txResultData.code === 0,
-							height: resultData.height,
-							gasUsed: BigInt(txResultData.gasUsed ?? 0),
-							feeAmount: undefined, // TxEvent から手数料を取得するのは困難 (TxRawのデコードが必要)
-							error: txResultData.code !== 0 ? txResultData.log : undefined,
-						};
-						results.set(hash, result);
-
-						log.debug(`[TxEventConfirm] Tx確認完了 (Hash: ${hash.substring(0, 10)}..., Success: ${result.success})`);
-
-						// オプションのプログレスコールバック
-						options.onProgress?.(results.size, txHashes.length);
-
-						if (pendingHashes.size === 0) {
-							resolve(); // すべて確認完了
+				// イベントストリームの処理を設定
+				subscription = stream.subscribe({
+					next: (event: TxEvent) => {
+						// デバッグログ (RangeError 対策済み、必要なら有効化)
+						/*
+						try {
+							const eventString = JSON.stringify(event, replacer, 2);
+							log.debug(`[TxEventConfirm] 受信イベント:\n${eventString}`);
+						} catch (stringifyError) {
+							log.warn('[TxEventConfirm] 受信イベントの文字列化に失敗:', stringifyError);
 						}
-					}
-				},
-				error: (err: any) => {
-					log.error(`[TxEventConfirm] イベントストリームでエラーが発生しました (Query: ${query})。`, err);
-					reject(err); // Promise を reject
-				},
-				complete: () => {
-					log.info(`[TxEventConfirm] イベントストリームが完了しました (Query: ${query})。`);
-					// ストリームが完了したが、まだペンディング中のTxがある場合はタイムアウト扱い
-					if (pendingHashes.size > 0) {
-						reject(new Error('イベントストリームが早期に完了しました。'));
-					} else {
-						resolve();
-					}
-				},
-			});
+						*/
 
-			// この confirmTransactions 呼び出し専用の購読として保存
-			const subscriptionId = `${chainName}-${Date.now()}`;
-			this.activeSubscriptions.set(subscriptionId, subscription);
+						// event.hash (Uint8Array) を Hex 文字列 (大文字) に変換
+						const receivedHash = toHex(event.hash).toUpperCase();
 
-			// タイムアウト処理
-			const timer = setTimeout(() => {
-				log.warn(`[TxEventConfirm] タイムアウト (${timeout}ms) しました。 ${pendingHashes.size} 件のTxが未確認です。`);
-				subscription.unsubscribe(); // タイムアウトしたら購読を解除
-				this.activeSubscriptions.delete(subscriptionId);
-				reject(new Error(`確認タイムアウト (${pendingHashes.size} 件未確認)`));
-			}, timeout);
+						// 必要なプロパティ (result, height) の存在チェック
+						if (!event.result || event.height === undefined) {
+							log.warn(`[TxEventConfirm] 受信したTxイベントに必要なプロパティ (result, height) がありません。Hash: ${receivedHash}`, event);
+							return;
+						}
 
-			// Promise が解決 (resolve or reject) したら、タイマーと購読をクリーンアップ
-			confirmationPromise.finally(() => {
-				clearTimeout(timer);
-				if (this.activeSubscriptions.has(subscriptionId)) {
-					// タイムアウト *以外* で完了した場合
-					subscription.unsubscribe();
-					this.activeSubscriptions.delete(subscriptionId);
+						// 待機中のハッシュリストに含まれているか確認
+						if (pendingHashes.has(receivedHash)) {
+							pendingHashes.delete(receivedHash); // 確認済みとして Set から削除
+
+							// 確認結果を作成
+							const result: ConfirmationResult = {
+								success: event.result.code === 0,
+								height: event.height,
+								gasUsed: typeof event.result.gasUsed === 'string'
+									? BigInt(event.result.gasUsed)
+									: (typeof event.result.gasUsed === 'bigint' ? event.result.gasUsed : undefined),
+								feeAmount: undefined, // イベントからは取得困難
+								error: event.result.code !== 0 ? event.result.log : undefined,
+							};
+							results.set(receivedHash, result); // 結果を Map に保存
+
+							log.debug(`[TxEventConfirm] Tx確認完了 (Hash: ${receivedHash.substring(0, 10)}..., Success: ${result.success}, Height: ${result.height})`);
+
+							// 進捗コールバックを実行 (オプション)
+							options.onProgress?.(results.size, txHashes.length);
+
+							// すべてのTxが確認されたら Promise を resolve
+							if (pendingHashes.size === 0) {
+								log.info(`[TxEventConfirm] 全 ${txHashes.length} 件のTx確認が完了しました。`);
+								resolve();
+							}
+						} else {
+							// 待機対象外のTxイベントは無視
+							log.debug(`[TxEventConfirm] 待機対象外のTxイベント受信: ${receivedHash.substring(0, 10)}...`);
+						}
+					},
+					error: (err: any) => {
+						// ストリームでエラーが発生した場合
+						log.error(`[TxEventConfirm] イベントストリームでエラーが発生しました (Query: ${query})。`, err);
+						reject(err); // Promise を reject
+					},
+					complete: () => {
+						// ストリームが予期せず完了した場合
+						log.info(`[TxEventConfirm] イベントストリームが完了しました (Query: ${query})。`);
+						if (pendingHashes.size > 0) {
+							// まだ未確認のTxがあるのにストリームが完了した場合はエラー
+							reject(new Error(`イベントストリームが早期に完了しました (${pendingHashes.size} 件未確認)。`));
+						} else {
+							// 正常完了
+							resolve();
+						}
+					},
+				});
+
+				// タイムアウトタイマーを設定
+				timer = setTimeout(() => {
+					log.warn(`[TxEventConfirm] タイムアウト (${timeout}ms) しました。 ${pendingHashes.size} 件のTxが未確認です。`);
+					reject(new Error(`確認タイムアウト (${pendingHashes.size} 件未確認)`));
+				}, timeout);
+
+			} catch (error) {
+				// subscribe の呼び出し自体でエラーが発生した場合
+				log.error(`[TxEventConfirm] イベント購読の開始に失敗しました。`, error);
+				reject(error);
+			}
+		}); // --- Promise constructor end ---
+
+		// Promise が完了 (resolve or reject) した際のクリーンアップ処理
+		confirmationPromise.finally(() => {
+			log.debug('[TxEventConfirm] クリーンアップ処理を実行します...');
+			if (timer) clearTimeout(timer); // タイムアウトタイマーをクリア
+			if (subscription) {
+				try {
+					subscription.unsubscribe(); // イベント購読を解除
+					log.debug(`[TxEventConfirm] イベント購読 (Query: ${query}) を解除しました。`);
+				} catch (e) {
+					log.warn(`[TxEventConfirm] 購読解除中にエラー:`, e);
 				}
-				// ストリーム自体 (activeStreams) は共有リソースのため、ここでは解除しない
-			});
+			}
 		});
 
-		// 5. 待機
+		// Promise の完了を待機
 		try {
 			await confirmationPromise;
 		} catch (error: any) {
+			// タイムアウトまたはその他のエラーが発生した場合
 			log.warn(`[TxEventConfirm] 待機中にエラーが発生しました: ${error.message}`);
-			// タイムアウトまたはエラーで未確認のTxを失敗扱いにする
+			// 未確認のTxを失敗として結果に追加
 			for (const hash of pendingHashes) {
 				if (!results.has(hash)) {
 					results.set(hash, {
 						success: false,
 						error: error.message || 'イベント待機エラー',
-						height: undefined,
-						gasUsed: undefined,
-						feeAmount: undefined,
+						height: undefined, gasUsed: undefined, feeAmount: undefined,
 					});
 				}
 			}
 		}
 
+		// 最終的な結果サマリーをログに出力
 		log.info(`[TxEventConfirm] イベント確認終了。 (成功: ${Array.from(results.values()).filter(r => r.success).length}, 失敗: ${Array.from(results.values()).filter(r => !r.success).length})`);
 
+		// 結果の Map を返す
 		return results;
-	}
-
-	/**
-	 * 共有ストリームを取得または新規作成します。
-	 * (注意: xstream の共有は複雑なため、ここでは単純に都度購読します)
-	 */
-	private getStream(
-		commStrategy: ICommunicationStrategy,
-		chainName: string,
-		query: string
-	): Stream<any> {
-
-		// TODO: ストリームの共有と参照カウント (現状は都度購読)
-
-		// if (!this.activeStreams.has(chainName)) {
-		//     this.activeStreams.set(chainName, new Map());
-		// }
-		// const chainStreams = this.activeStreams.get(chainName)!;
-		// if (!chainStreams.has(query)) {
-		//     log.info(`[TxEventConfirm] チェーン "${chainName}" で新しいイベントストリーム (Query: ${query}) を購読します。`);
-		//     const stream = commStrategy.subscribe(query);
-		//     chainStreams.set(query, stream);
-		// }
-		// return chainStreams.get(query)!;
-
-		// シンプルに都度購読
-		log.debug(`[TxEventConfirm] チェーン "${chainName}" でイベント (Query: ${query}) を新規購読します。`);
-		return commStrategy.subscribe(query);
-	}
-
-	/**
-	 * (ExperimentRunner 終了時に呼ばれる想定の) クリーンアップメソッド
-	 */
-	public cleanup(): void {
-		log.info('[TxEventConfirm] すべてのアクティブな購読をクリーンアップします...');
-		for (const [id, sub] of this.activeSubscriptions.entries()) {
-			try {
-				sub.unsubscribe();
-				log.debug(`[TxEventConfirm] 購読 ${id} を解除しました。`);
-			} catch (e) {
-				log.warn(`[TxEventConfirm] 購読 ${id} の解除中にエラー:`, e);
-			}
-		}
-		this.activeSubscriptions.clear();
-		this.activeStreams.clear(); // ストリームのキャッシュもクリア
 	}
 }

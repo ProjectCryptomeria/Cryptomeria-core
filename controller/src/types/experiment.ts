@@ -5,6 +5,7 @@ import { PerformanceTracker } from "../core/PerformanceTracker";
 import { InfrastructureService } from "../infrastructure/InfrastructureService";
 import { ICommunicationStrategy } from "../strategies/communication/ICommunicationStrategy";
 import { IConfirmationStrategy } from "../strategies/confirmation/IConfirmationStrategy";
+import { IGasEstimationStrategy } from "../strategies/gas/IGasEstimationStrategy";
 
 /**
  * 実験設定ファイル (experiments/configs/*.config.ts) の型
@@ -170,5 +171,8 @@ export interface RunnerContext {
 	 * 現在のイテレーションで選択されている完了確認戦略インスタンス。
 	 * (主に UploadStrategy が内部で使用するためにコンテキスト経由で渡される)
 	 */
-	confirmationStrategy: IConfirmationStrategy; // ★ 修正
+	confirmationStrategy: IConfirmationStrategy;
+
+	/** ★ 追加: 現在のイテレーションで使用するガス計算戦略インスタンス */
+	gasEstimationStrategy: IGasEstimationStrategy;
 }
