@@ -8,25 +8,22 @@ import {
 } from '@cosmjs/tendermint-rpc';
 import { Stream, Subscription } from 'xstream';
 import { log } from '../../utils/logger';
-import { sleep, withRetry } from '../../utils/retry';
+import { withRetry } from '../../utils/retry';
 import { ICommunicationStrategy } from './ICommunicationStrategy';
 
 // 接続リトライオプション
 const CONNECT_RETRIES = 5;
 const CONNECT_RETRY_DELAY_MS = 2000;
+// ★ 追加: ヘルスチェックのタイムアウト (接続試行ごとのタイムアウト)
+const HEALTH_CHECK_TIMEOUT_MS = 5000; // 5秒
 
 /**
  * WebSocket を使用する通信戦略。
- * 永続的な接続を維持し、RPCリクエストとイベント購読をサポートします。
  */
 export class WebSocketCommunicationStrategy implements ICommunicationStrategy {
-	// エンドポイントURL -> WebsocketClient インスタンス
 	private wsClients = new Map<string, WebsocketClient>();
-	// エンドポイントURL -> Tendermint37Client インスタンス
 	private rpcClients = new Map<string, Comet38Client>();
-	// 購読クエリ -> Subscription インスタンス
 	private subscriptions = new Map<string, Subscription>();
-
 	private isConnectedFlag = false;
 
 	constructor() {
@@ -35,120 +32,108 @@ export class WebSocketCommunicationStrategy implements ICommunicationStrategy {
 
 	/**
 	 * 指定されたWebSocketエンドポイントに接続します。
-	 * @param endpoint 接続先エンドポイントURL (例: 'ws://localhost:26657/websocket')
 	 */
 	public async connect(endpoint: string): Promise<void> {
 		if (this.rpcClients.has(endpoint)) {
-			log.debug(`[WS] エンドポイント ${endpoint} は既に接続済み（または接続試行済み）です。`);
+			log.debug(`[WS] エンドポイント ${endpoint} は既に接続済みです。`);
 			return;
 		}
 
 		log.debug(`[WS] エンドポイント ${endpoint} への接続を開始します...`);
 
 		try {
-			// リトライ付きで接続を試行
+			// リトライ付きで接続試行 (attemptWsConnect 内でヘルスチェックも行う)
 			const wsClient = await withRetry(
 				() => this.attemptWsConnect(endpoint),
 				{
 					retries: CONNECT_RETRIES,
 					minTimeout: CONNECT_RETRY_DELAY_MS,
 					onRetry: (error, attempt) => {
-						log.warn(`[WS] 接続失敗 (試行 ${attempt}/${CONNECT_RETRIES})。リトライします...: ${error.message}`);
+						log.warn(`[WS] 接続試行 ${attempt}/${CONNECT_RETRIES} 失敗。リトライします...: ${error.message}`);
 					},
 				}
 			);
 
 			// Tendermint クライアントを作成
+			// (attemptWsConnect でヘルスチェック済みなので、ここでは単純に作成)
 			const tmClient = Comet38Client.create(wsClient);
 
 			this.wsClients.set(endpoint, wsClient);
 			this.rpcClients.set(endpoint, tmClient);
 			this.isConnectedFlag = true;
-			log.info(`[WS] エンドポイント ${endpoint} への接続が確立しました。`);
+			log.info(`[WS] エンドポイント ${endpoint} への接続が確立し、ヘルスチェックも成功しました。`);
 
 		} catch (error: any) {
 			log.error(`[WS] エンドポイント ${endpoint} への接続に最終的に失敗しました。`, error);
+			// 念のため wsClient が残っていれば切断
+			const wsClient = this.wsClients.get(endpoint);
+			if (wsClient) {
+				try { wsClient.disconnect(); } catch { }
+				this.wsClients.delete(endpoint);
+			}
+			this.rpcClients.delete(endpoint);
 			throw new Error(`WebSocket 接続失敗 (Endpoint: ${endpoint}): ${error.message}`);
 		}
 	}
 
 	/**
-	 * WebsocketClient の接続試行（1回分）
+	 * WebsocketClient の接続試行とヘルスチェック（1回分）
+	 * ★★★ 修正箇所 ★★★
 	 */
 	private attemptWsConnect(endpoint: string): Promise<WebsocketClient> {
-		return new Promise((resolve, reject) => {
-			const wsClient = new WebsocketClient(endpoint, (error: Error) => {
-				// エラーハンドラ (接続失敗時に呼び出される)
-				log.warn(`[WS] 接続エラー (Endpoint: ${endpoint}): ${error.message}`);
+		return new Promise(async (resolve, reject) => { // ★ async を追加
+			let wsClient: WebsocketClient | null = null;
+			let healthCheckTimer: NodeJS.Timeout | null = null;
+
+			// ヘルスチェックタイムアウトハンドラ
+			const rejectOnTimeout = () => {
+				if (wsClient) {
+					try { wsClient.disconnect(); } catch { } // タイムアウトしたら切断試行
+				}
+				reject(new Error(`WebSocket ヘルスチェックタイムアウト (${HEALTH_CHECK_TIMEOUT_MS}ms)`));
+			};
+
+			try {
+				// 1. WebsocketClient インスタンス作成とエラーハンドラ設定
+				wsClient = new WebsocketClient(endpoint, (error: Error) => {
+					// 接続プロセス中にエラーが発生した場合 (例: DNS解決失敗、接続拒否)
+					log.warn(`[WS] 接続エラーハンドラ (Endpoint: ${endpoint}): ${error.message}`);
+					if (healthCheckTimer) clearTimeout(healthCheckTimer); // タイムアウトをクリア
+					reject(error); // withRetry がキャッチする
+				});
+
+				// 2. ヘルスチェックタイムアウトを設定
+				healthCheckTimer = setTimeout(rejectOnTimeout, HEALTH_CHECK_TIMEOUT_MS);
+
+				// 3. wsClient.connected プロミスを待つ (WebSocketレベルの接続完了)
+				//    (これが reject された場合は上記エラーハンドラが呼ばれるはず)
+				await wsClient.connected;
+				log.debug(`[WS] WebsocketClient 接続完了 (Endpoint: ${endpoint})。ヘルスチェックを実行中...`);
+
+				// 4. ★ ユーザー指摘のヘルスチェックを実行
+				const healthCheckQuery: JsonRpcRequest = {
+					jsonrpc: "2.0",
+					method: "status", // Tendermint/CometBFT の status RPC
+					id: `healthcheck-${Date.now()}`,
+					params: {}
+				};
+				// wsClient.execute を使って RPC リクエストを送信
+				await wsClient.execute(healthCheckQuery);
+
+				// 5. ヘルスチェック成功
+				log.debug(`[WS] ヘルスチェック成功 (Endpoint: ${endpoint})`);
+				if (healthCheckTimer) clearTimeout(healthCheckTimer); // タイムアウトをクリア
+				resolve(wsClient); // 接続成功として WebsocketClient を返す
+
+			} catch (error) {
+				// wsClient.connected の reject や wsClient.execute のエラー
+				log.warn(`[WS] attemptWsConnect 中にエラーが発生しました:`, error);
+				if (healthCheckTimer) clearTimeout(healthCheckTimer);
+				if (wsClient) {
+					try { wsClient.disconnect(); } catch { } // エラー時は切断試行
+				}
 				reject(error); // withRetry がキャッチする
-			});
-
-			// 接続成功時のハンドラがないため、
-			// 接続が確立したか（または失敗したか）をポーリングする必要がある
-			const checkConnection = async () => {
-				// WebsocketClient には 'connected' イベントがないため、
-				// TendermintClient.create が成功するかどうかで判断する
-				// ...が、TendermintClient.create は wsClient を引数に取るだけ
-
-				// 代わりに、WebsocketClient の内部状態 (socket) を確認する (非推奨だが他に手段がない)
-				// @ts-ignore (private プロパティ 'socket' へのアクセス)
-				if (wsClient.socket && wsClient.socket.readyState === WebSocket.OPEN) {
-					resolve(wsClient);
-					// @ts-ignore
-				} else if (wsClient.socket && wsClient.socket.readyState > WebSocket.OPEN) {
-					reject(new Error('WebSocket 接続が確立前に閉じられました。'));
-				} else {
-					// まだ接続中
-					await sleep(100); // 少し待機
-					if (this.rpcClients.has(endpoint)) {
-						// 別の非同期処理で既に接続完了していた場合
-						resolve(this.wsClients.get(endpoint)!);
-					} else {
-						// 再度チェック (ただし、これだとタイムアウトがない)
-						// -> WebsocketClient がコンストラクタでエラーハンドラを呼ぶことを期待する
-					}
-				}
-			};
-
-			// Note: WebsocketClient はコンストラクタ内で即座に接続を開始し、
-			// 失敗した場合はエラーハンドラを呼び出す設計になっている。
-			// 成功した場合に resolve する明確なトリガーがない。
-			// ここでは、エラーハンドラが呼ばれなければ成功したとみなし、
-			// Tendermint37Client.create (次のステップ) に任せる。
-			// withRetry が機能するためには、コンストラクタがエラーを throw するか、
-			// エラーハンドラ経由で reject が呼ばれる必要がある。
-
-			// -> シンプル化: エラーハンドラで reject し、成功時は Tendermint37Client.create に進ませる
-			//    ただし、Tendermint37Client.create が失敗した場合もリトライさせたい
-
-			// -> `WebsocketClient` のコンストラクタはエラーをスローしない。
-			//    `Tendermint37Client.create(wsClient)` が `wsClient.connected` プロミスを待つ。
-			//    `wsClient.connected` が reject された場合、`create` がエラーをスローする。
-
-			// -> `withRetry` の対象を `Tendermint37Client.create` に変更する方が適切
-
-			// -> いや、ICommunicationStrategy の connect は TendermintClient を返さない。
-			//    このメソッド内でクライアントを作成し、保持する必要がある。
-
-			// -> 再考: wsClient.connected プロミスを直接待つ
-			const healthCheckQuery:JsonRpcRequest = { 
-				jsonrpc: "2.0", 
-				method: "status", 
-				id: `connect-${Date.now()}`, 
-				params: {} 
-			};
-			wsClient.execute(healthCheckQuery).then(
-				() => {
-					log.debug(`[WS] WebsocketClient 接続成功 (Endpoint: ${endpoint})`);
-					resolve(wsClient);
-				},
-				(error) => {
-					// エラーハンドラ (上記) が既に reject しているはずだが、念のため
-					log.warn(`[WS] wsClient.connected プロミスが reject されました: ${error.message}`);
-					reject(error);
-				}
-			);
-
+			}
 		});
 	}
 
