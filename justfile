@@ -153,13 +153,9 @@ ctl-dev:
 ctl-exec *args:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn {{args}}"
 
-# [コントローラー] testsディレクトリ内のスクリプトを実行
-ctl-test *args:
-    @{{RUN_SCRIPT}} bash -c "cd controller && yarn ts-node src/tests/{{args}}"
-
-# [コントローラー] 指定されたテストケースを実行 (例: just ctl-test --case 1)
-ctl-test-case *args:
-    @{{RUN_SCRIPT}} bash -c "cd controller && yarn test {{args}}"
+# [コントローラー] 実験を実行
+ctl-exp:
+    @{{RUN_SCRIPT}} bash -c "cd controller && yarn ts-node src/scripts/interactive-runner.ts"
 
 # --- Runtime Tasks ---
 # ランタイム用コンテナに入る

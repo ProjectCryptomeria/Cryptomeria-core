@@ -3,15 +3,12 @@
   "version": "1.0.0",
   "packageManager": "yarn@4.10.3",
   "scripts": {
-    "start": "ts-node src/index.ts",
-    "test:upload": "ts-node src/scripts/upload-test.ts",
-    "test:e2e": "ts-node src/scripts/e2e-test.ts",
-    "test:retrieve": "ts-node src/scripts/retrieve-test.ts",
-    "test": "ts-node src/scripts/run-test.ts"
+    "start": "ts-node src/index.ts"
   },
   "devDependencies": {
     "@types/cli-progress": "^3",
     "@types/node": "^24.6.0",
+    "enquirer": "^2.4.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.2"
   },

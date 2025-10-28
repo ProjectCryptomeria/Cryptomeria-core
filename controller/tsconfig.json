@@ -1,23 +1,22 @@
 {
-    "compilerOptions": {
-      "module": "nodenext",
-      "target": "esnext",
-      "rootDir": "./src",
-      "outDir": "./dist",
-      "types": [
-        "node",
-      ],
-      "sourceMap": true,
-      "declaration": true,
-      "declarationMap": true,
-      "noUncheckedIndexedAccess": true,
-      "exactOptionalPropertyTypes": true,
-      "strict": true,
-      "jsx": "react-jsx",
-      "isolatedModules": true,
-      "noUncheckedSideEffectImports": true,
-      "moduleDetection": "force",
-      "skipLibCheck": true,
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "esnext",
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "types": [
+      "node"
+    ],
+    "sourceMap": true,
+    "declaration": true,
+    "declarationMap": true,
+    "noUncheckedIndexedAccess": true,
+    "strict": true,
+    "jsx": "react-jsx",
+    "esModuleInterop": true, // commonjs を使う場合、これが true だと import/export 構文を require/module.exports にうまく変換してくれる
+    "isolatedModules": true,
+    "noUncheckedSideEffectImports": true,
+    "skipLibCheck": true
   },
   "include": ["src/**/*"]
 }
