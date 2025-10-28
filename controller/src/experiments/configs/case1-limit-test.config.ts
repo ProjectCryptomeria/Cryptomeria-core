@@ -49,7 +49,7 @@ const config: ExperimentConfig = {
 	// 検証戦略のオプション (BufferFull なので不要)
 	// verificationStrategyOptions: {},
 
-	targetUrlBase: `case1-${Date.now()}.com`,
+	targetUrlBase: `case1.test`,
 };
 
 export default config;

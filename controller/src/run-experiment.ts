@@ -281,6 +281,7 @@ async function main() {
 	} finally {
 		// ログバッファをフラッシュ
 		await log.flushErrorLogs();
+		process.exit();
 	}
 }
 
