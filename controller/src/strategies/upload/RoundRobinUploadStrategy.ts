@@ -1,8 +1,9 @@
 // controller/src/strategies/upload/RoundRobinUploadStrategy.ts
 import { sha256 } from '@cosmjs/crypto';
 import { toHex } from '@cosmjs/encoding';
-import { DeliverTxResponse, SignerData } from '@cosmjs/stargate';
+import { calculateFee, DeliverTxResponse, GasPrice, SignerData, StdFee } from '@cosmjs/stargate';
 import { TxRaw } from 'cosmjs-types/cosmos/tx/v1beta1/tx';
+import { DEFAULT_GAS_PRICE } from '../../core/ChainManager'; // ★ 修正: ChainManager から定数をインポート
 import {
 	ChainInfo,
 	Manifest,
@@ -14,6 +15,7 @@ import {
 } from '../../types';
 import { log } from '../../utils/logger';
 import { IUploadStrategy } from './IUploadStrategy';
+import { EncodeObject } from '@cosmjs/proto-signing';
 
 // デフォルトのチャンクサイズ (1MB)
 const DEFAULT_CHUNK_SIZE = 1024 * 1024;
@@ -21,8 +23,11 @@ const DEFAULT_CHUNK_SIZE = 1024 * 1024;
 const DEFAULT_BATCH_SIZE_PER_CHAIN = 100;
 // 同時に処理するチェーン（ワーカー）の最大数
 const MAX_CONCURRENT_WORKERS = 4;
+// ★ 修正: 重複する定数を削除
+// const DEFAULT_GAS_PRICE_STRING = '0.0025stake'; 
+// シミュレーション失敗時のフォールバックガスリミット (SequentialUploadStrategyからコピー)
+const FALLBACK_GAS_LIMIT = '60000000';
 
-// ★ 修正: UploadJob の型定義をクラスの外 (ファイルスコープ) に移動
 /**
  * 1チェーン (ワーカー) が担当するアップロードジョブの型
  */
@@ -53,7 +58,7 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 		targetUrl: string
 	): Promise<UploadResult> {
 
-		const { config, chainManager, tracker, confirmationStrategy } = context;
+		const { config, chainManager, tracker, confirmationStrategy, gasEstimationStrategy } = context; // gasEstimationStrategy を追加
 		tracker.markUploadStart();
 		log.info(`[RoundRobinUpload] 開始... URL: ${targetUrl}, データサイズ: ${data.length} bytes`);
 
@@ -94,6 +99,27 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 		}
 		log.info(`[RoundRobinUpload] データは ${chunks.length} 個のチャンクに分割されました。`);
 
+		// ★ 修正: ガスシミュレーションロジックを追加
+		let estimatedGasLimit = FALLBACK_GAS_LIMIT;
+		if (chunks.length > 0 && chunks[0]) {
+			const targetChainNameForSim = targetDatachains[0]!.name; // 最初のdatachainでシミュレーション
+			const sampleMsg: EncodeObject = {
+				typeUrl: '/datachain.datastore.v1.MsgCreateStoredChunk',
+				value: {
+					creator: chainManager.getAddress(targetChainNameForSim),
+					index: chunkIndexes[0]!,
+					data: chunks[0],
+				} as MsgCreateStoredChunk
+			};
+			estimatedGasLimit = await gasEstimationStrategy.estimateGasLimit(
+				context,
+				targetChainNameForSim,
+				sampleMsg
+			);
+		} else {
+			log.warn('[RoundRobinUpload] チャンクデータが存在しないため、ガスシミュレーションをスキップします。');
+		}
+
 		// 3. チャンクを各 datachain にラウンドロビンで割り当て (ジョブ作成)
 		// ★ 修正: UploadJob の型定義を外部に移動させたため、ここは変更なし
 		const jobs: Map<string, UploadJob> = new Map(targetDatachains.map(chain => [
@@ -110,9 +136,9 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 		}
 
 		// 4. 各チェーン（ワーカー）のアップロード処理を並列実行
-		log.step(`[RoundRobinUpload] ${jobs.size} チェーンで並列アップロード処理を開始...`);
+		log.step(`[RoundRobinUpload] ${jobs.size} チェーンで並列アップロード処理を開始... (GasLimit: ${estimatedGasLimit})`); // ログに GasLimit を追加
 		const workerPromises = Array.from(jobs.values()).map(job =>
-			this.runWorker(context, job, batchSizePerChain)
+			this.runWorker(context, job, batchSizePerChain, estimatedGasLimit) // estimatedGasLimit を渡す
 		);
 
 		let totalSuccess = true;
@@ -185,7 +211,8 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 	private async runWorker(
 		context: RunnerContext,
 		job: UploadJob,
-		batchSize: number
+		batchSize: number,
+		estimatedGasLimit: string // 追加
 	): Promise<boolean> {
 
 		const { chainManager, tracker, confirmationStrategy, config } = context;
@@ -213,7 +240,8 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 					context,
 					chainName,
 					batchChunks,
-					batchIndexes
+					batchIndexes,
+					estimatedGasLimit // 渡す
 				);
 
 				const confirmOptions = { timeoutMs: config.confirmationStrategyOptions?.timeoutMs };
@@ -244,13 +272,14 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 
 	/**
 	 * チャンクのバッチをノンス手動管理で逐次送信します。
-	 * (SequentialUploadStrategy から流用したため変更なし)
+	 * (SequentialUploadStrategy のロジックに修正・統合)
 	 */
 	private async sendChunkBatch(
 		context: RunnerContext,
 		chainName: string,
 		chunks: Buffer[],
-		indexes: string[]
+		indexes: string[],
+		gasLimit: string // 追加
 	): Promise<string[]> {
 
 		const { chainManager } = context;
@@ -276,7 +305,12 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 		const txHashes: string[] = [];
 		const txRawBytesList: Uint8Array[] = [];
 
-		log.debug(`[sendChunkBatch ${chainName}] ${messages.length} 件のTxをオフライン署名中... (Start Seq: ${currentSequence})`);
+		// ★ 修正: GasPrice, calculateFee を使用して Fee を計算
+		const gasPrice = GasPrice.fromString(DEFAULT_GAS_PRICE); // DEFAULT_GAS_PRICE を使用
+		const fee: StdFee = calculateFee(parseInt(gasLimit, 10), gasPrice);
+
+		log.debug(`[sendChunkBatch ${chainName}] ${messages.length} 件のTxをオフライン署名中... (Start Seq: ${currentSequence}, GasLimit: ${gasLimit}, Fee: ${JSON.stringify(fee.amount)})`);
+
 		for (const msg of messages) {
 			const signerData: SignerData = {
 				accountNumber: accountNumber,
@@ -287,8 +321,8 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 			const txRaw = await client.sign(
 				account.address,
 				[msg],
-				{ amount: [], gas: '20000000' },
-				'',
+				fee, // 計算済みの fee を使用
+				'', // memo
 				signerData
 			);
 
@@ -308,8 +342,20 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 				const returnedHash = await client.broadcastTxSync(txBytes);
 				log.debug(`[sendChunkBatch ${chainName}] Txブロードキャスト成功 (Sync): ${hash}`);
 
-			} catch (error) {
-				log.error(`[sendChunkBatch ${chainName}] Tx (Hash: ${hash}) のブロードキャスト中に例外発生。`, error);
+			} catch (error: any) {
+				// ★ 修正: エラーログを詳細化
+				const errorMessage = error?.message || String(error);
+				let errorDetails = '';
+				try {
+					errorDetails = JSON.stringify(error, (key, value) => {
+						if (value instanceof Error) return { message: value.message, stack: value.stack };
+						if (typeof value === 'bigint') return value.toString() + 'n';
+						return value;
+					}, 2);
+				} catch {
+					errorDetails = String(error);
+				}
+				log.error(`[sendChunkBatch ${chainName}] Tx (Hash: ${hash}) のブロードキャスト中に例外発生。メッセージ: ${errorMessage}\n詳細: ${errorDetails}`, error);
 			}
 		}
 

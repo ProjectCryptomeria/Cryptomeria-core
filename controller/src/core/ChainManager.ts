@@ -17,7 +17,8 @@ import { ICommunicationStrategy } from '../strategies/communication/ICommunicati
 import { ChainInfo, ChainType } from '../types';
 import { log } from '../utils/logger';
 
-const DEFAULT_GAS_PRICE = '0.0025stake';
+// ★ 修正: 定数をエクスポートし、他ファイルから参照可能にする
+export const DEFAULT_GAS_PRICE = '0.0025uatom';
 
 interface ChainAccount {
 	chainName: string;
@@ -94,6 +95,7 @@ export class ChainManager {
 
 				const clientOptions: SigningStargateClientOptions = {
 					registry: customRegistry,
+					// ★ 修正: 外部化した定数を使用
 					gasPrice: GasPrice.fromString(DEFAULT_GAS_PRICE),
 				};
 

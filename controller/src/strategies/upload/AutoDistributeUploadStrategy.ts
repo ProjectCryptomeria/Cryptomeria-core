@@ -1,9 +1,11 @@
 // controller/src/strategies/upload/AutoDistributeUploadStrategy.ts
 import { sha256 } from '@cosmjs/crypto';
 import { toHex } from '@cosmjs/encoding';
-import { DeliverTxResponse, SignerData } from '@cosmjs/stargate';
-import { TendermintClient } from '@cosmjs/tendermint-rpc';
+import { EncodeObject } from '@cosmjs/proto-signing';
+import { calculateFee, DeliverTxResponse, GasPrice, SignerData, StdFee } from '@cosmjs/stargate';
+import { CometClient } from '@cosmjs/tendermint-rpc';
 import { TxRaw } from 'cosmjs-types/cosmos/tx/v1beta1/tx';
+import { DEFAULT_GAS_PRICE } from '../../core/ChainManager'; // ★ 修正: ChainManager から定数をインポート
 import {
 	ChainInfo,
 	Manifest,
@@ -17,10 +19,15 @@ import { log } from '../../utils/logger';
 import { sleep } from '../../utils/retry';
 import { IUploadStrategy } from './IUploadStrategy';
 
+
 // デフォルトのチャンクサイズ (1MB)
 const DEFAULT_CHUNK_SIZE = 1024 * 1024;
 // 一度に送信するバッチサイズ (Tx数)
 const DEFAULT_BATCH_SIZE = 100;
+// ★ 修正: 重複する定数を削除
+// const DEFAULT_GAS_PRICE_STRING = '0.0025stake';
+// シミュレーション失敗時のフォールバックガスリミット (SequentialUploadStrategyからコピー)
+const FALLBACK_GAS_LIMIT = '60000000';
 
 // Mempool 監視設定 (dis-test-ws/5.ts を参考)
 // このバイト数以下なら「空いている」と判断
@@ -52,7 +59,7 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 		targetUrl: string
 	): Promise<UploadResult> {
 
-		const { config, chainManager, tracker, confirmationStrategy } = context;
+		const { config, chainManager, tracker, confirmationStrategy, gasEstimationStrategy } = context; // gasEstimationStrategy を追加
 		tracker.markUploadStart();
 		log.info(`[AutoDistribute] 開始... URL: ${targetUrl}, データサイズ: ${data.length} bytes`);
 
@@ -93,6 +100,27 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 		}
 		log.info(`[AutoDistribute] データは ${chunks.length} 個のチャンクに分割されました。`);
 
+		// ★ 修正: ガスシミュレーションロジックを追加
+		let estimatedGasLimit = FALLBACK_GAS_LIMIT;
+		if (chunks.length > 0 && chunks[0]) {
+			const targetChainNameForSim = targetDatachains[0]!.name; // 最初のdatachainでシミュレーション
+			const sampleMsg: EncodeObject = {
+				typeUrl: '/datachain.datastore.v1.MsgCreateStoredChunk',
+				value: {
+					creator: chainManager.getAddress(targetChainNameForSim),
+					index: chunkIndexes[0]!,
+					data: chunks[0],
+				} as MsgCreateStoredChunk
+			};
+			estimatedGasLimit = await gasEstimationStrategy.estimateGasLimit(
+				context,
+				targetChainNameForSim,
+				sampleMsg
+			);
+		} else {
+			log.warn('[AutoDistribute] チャンクデータが存在しないため、ガスシミュレーションをスキップします。');
+		}
+
 		// 3. 全チャンクをバッチに分割 (キューの作成)
 		// ラウンドロビンとは異なり、この時点ではチェーンに割り当てない
 		const totalBatches = Math.ceil(chunks.length / batchSize);
@@ -108,13 +136,13 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 		}
 
 		// 4. ワーカー（チェーン）プールの管理とMempool監視によるバッチ処理
-		log.step(`[AutoDistribute] ${batchQueue.length} バッチを ${targetDatachains.length} チェーン（ワーカー）で処理開始...`);
+		log.step(`[AutoDistribute] ${batchQueue.length} バッチを ${targetDatachains.length} チェーン（ワーカー）で処理開始... (GasLimit: ${estimatedGasLimit})`); // ログに GasLimit を追加
 
 		let totalSuccess = true;
 		const processingPromises = new Set<Promise<any>>();
 
 		// 各チェーンのRPCクライアントを取得 (Mempool監視用)
-		const chainClients = new Map<string, TendermintClient>();
+		const chainClients = new Map<string, CometClient>();
 		for (const chain of targetDatachains) {
 			const client = await this.getTmClient(context, chain.name);
 			chainClients.set(chain.name, client);
@@ -143,7 +171,8 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 				context,
 				availableChain,
 				nextBatch.chunks,
-				nextBatch.indexes
+				nextBatch.indexes,
+				estimatedGasLimit // estimatedGasLimit を渡す
 			)
 				.then(success => {
 					if (!success) {
@@ -215,7 +244,7 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 	 * Mempool に空きがあるチェーンをポーリングして探す
 	 */
 	private async findAvailableChain(
-		chainClients: Map<string, TendermintClient>
+		chainClients: Map<string, CometClient>
 	): Promise<ChainInfo | null> {
 
 		const startTime = Date.now();
@@ -270,7 +299,7 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 	/**
 	 * RPCクライアントを context から取得 (Mempool監視用)
 	 */
-	private async getTmClient(context: RunnerContext, chainName: string): Promise<TendermintClient> {
+	private async getTmClient(context: RunnerContext, chainName: string): Promise<CometClient> {
 		const { communicationStrategy, infraService } = context;
 		const rpcEndpoints = await infraService.getRpcEndpoints();
 		const rpcEndpoint = rpcEndpoints[chainName];
@@ -285,7 +314,7 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 			throw new Error(`[Mempool] ${chainName} のクライアントは numUnconfirmedTxs をサポートしていません (HttpBatchClient?)`);
 		}
 
-		return tmClient as TendermintClient; // 型キャスト
+		return tmClient as CometClient; // 型キャスト
 	}
 
 
@@ -296,7 +325,8 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 		context: RunnerContext,
 		chainInfo: ChainInfo,
 		chunks: Buffer[],
-		chunkIndexes: string[]
+		chunkIndexes: string[],
+		estimatedGasLimit: string // 追加
 	): Promise<boolean> {
 
 		const { tracker, confirmationStrategy, config } = context;
@@ -308,7 +338,8 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 				context,
 				chainName,
 				chunks,
-				chunkIndexes
+				chunkIndexes,
+				estimatedGasLimit // 渡す
 			);
 
 			// 完了確認 (バッチごと)
@@ -339,13 +370,14 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 
 	/**
 	 * チャンクのバッチをノンス手動管理で逐次送信します。
-	 * (SequentialUploadStrategy から流用)
+	 * (SequentialUploadStrategy からロジックを統合)
 	 */
 	private async sendChunkBatch(
 		context: RunnerContext,
 		chainName: string,
 		chunks: Buffer[],
-		indexes: string[]
+		indexes: string[],
+		gasLimit: string // 追加
 	): Promise<string[]> {
 
 		const { chainManager } = context;
@@ -371,7 +403,12 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 		const txHashes: string[] = [];
 		const txRawBytesList: Uint8Array[] = [];
 
-		log.debug(`[sendChunkBatch ${chainName}] ${messages.length} 件のTxをオフライン署名中... (Start Seq: ${currentSequence})`);
+		// ★ 修正: GasPrice, calculateFee を使用して Fee を計算
+		const gasPrice = GasPrice.fromString(DEFAULT_GAS_PRICE); // DEFAULT_GAS_PRICE を使用
+		const fee: StdFee = calculateFee(parseInt(gasLimit, 10), gasPrice);
+
+		log.debug(`[sendChunkBatch ${chainName}] ${messages.length} 件のTxをオフライン署名中... (Start Seq: ${currentSequence}, GasLimit: ${gasLimit}, Fee: ${JSON.stringify(fee.amount)})`);
+
 		for (const msg of messages) {
 			const signerData: SignerData = {
 				accountNumber: accountNumber,
@@ -382,7 +419,7 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 			const txRaw = await client.sign(
 				account.address,
 				[msg],
-				{ amount: [], gas: '20000000' },
+				fee, // 計算済みの fee を使用
 				'',
 				signerData
 			);
@@ -403,8 +440,20 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 				const returnedHash = await client.broadcastTxSync(txBytes);
 				log.debug(`[sendChunkBatch ${chainName}] Txブロードキャスト成功 (Sync): ${hash}`);
 
-			} catch (error) {
-				log.error(`[sendChunkBatch ${chainName}] Tx (Hash: ${hash}) のブロードキャスト中に例外発生。`, error);
+			} catch (error: any) {
+				// ★ 修正: エラーログを詳細化
+				const errorMessage = error?.message || String(error);
+				let errorDetails = '';
+				try {
+					errorDetails = JSON.stringify(error, (key, value) => {
+						if (value instanceof Error) return { message: value.message, stack: value.stack };
+						if (typeof value === 'bigint') return value.toString() + 'n';
+						return value;
+					}, 2);
+				} catch {
+					errorDetails = String(error);
+				}
+				log.error(`[sendChunkBatch ${chainName}] Tx (Hash: ${hash}) のブロードキャスト中に例外発生。メッセージ: ${errorMessage}\n詳細: ${errorDetails}`, error);
 			}
 		}
 

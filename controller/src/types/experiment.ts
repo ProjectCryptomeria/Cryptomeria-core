@@ -50,6 +50,9 @@ export interface ExperimentConfig {
 	verificationStrategyOptions?: {
 		compareBytes?: number; // BufferPartial で比較するバイト数
 	};
+
+	// マニフェストのベースURL (例: 'my-site.com/')
+	targetUrlBase?: string;
 }
 
 /**

@@ -152,7 +152,12 @@ export class ExperimentRunner {
 		log.info(`データ準備完了。サイズ: ${originalData.length} bytes, SHA256: ${dataHash.substring(0, 12)}...`);
 
 		// 2. アップロード実行
-		const targetUrl = `test/${this.config.description.replace(/\s/g, '_')}/${iteration}/${Date.now()}/data.bin`;
+		// 設定の targetUrlBase をベースに、イテレーションとタイムスタンプを追加
+		const base = this.config.targetUrlBase
+			? this.config.targetUrlBase.replace(/\/+$/, '') // 末尾のスラッシュを削除
+			: `test.raidchain.${Date.now()}.com`; // 設定がない場合は旧ロジックを使用
+
+		const targetUrl = `${base}/data.bin`;
 		log.info(`アップロード開始... Target URL: ${targetUrl}`);
 
 		// TODO: chainCount を UploadStrategy に渡す

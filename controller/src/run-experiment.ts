@@ -122,13 +122,13 @@ function instantiateStrategies(config: ExperimentConfig): ExperimentStrategies {
 	const gasEstimationStrategy = new SimulationGasEstimationStrategy();
 
 	log.info('すべての戦略モジュールのインスタンス化が完了しました。');
-	return { 
-		commStrategy, 
-		uploadStrategy, 
-		confirmStrategy, 
-		downloadStrategy, 
+	return {
+		commStrategy,
+		uploadStrategy,
+		confirmStrategy,
+		downloadStrategy,
 		verifyStrategy,
-		gasEstimationStrategy 
+		gasEstimationStrategy
 	};
 }
 
@@ -262,7 +262,14 @@ async function main() {
 		// 6. CSVファイルへの保存
 		const csvData = await formatResultsAsCSV(result);
 		const resultsDir = path.join(__dirname, 'experiments', 'results');
-		const csvFilePath = path.join(resultsDir, `results_${Date.now()}.csv`);
+
+		// ★ 修正: config.description からファイル名を作成
+		const safeDescription = config.description
+			.replace(/\s+/g, '_')           // スペースをアンダースコアに
+			.replace(/[^a-zA-Z0-9_-]/g, '') // 英数字、アンダースコア、ハイフン以外を削除
+			.toLowerCase();
+		const csvFileName = `${safeDescription}_${Date.now()}.csv`;
+		const csvFilePath = path.join(resultsDir, csvFileName);
 
 		await fs.mkdir(resultsDir, { recursive: true });
 		await fs.writeFile(csvFilePath, csvData);

@@ -1,9 +1,10 @@
 // controller/src/strategies/download/HttpDownloadStrategy.ts
-import { RunnerContext, Manifest, StoredManifestResponse, StoredChunkResponse } from '../../types';
-import { log } from '../../utils/logger';
-import { IDownloadStrategy } from './IDownloadStrategy';
+import { Manifest, RunnerContext, StoredChunkResponse, StoredManifestResponse } from '../../types';
 import { DownloadResult } from '../../types/experiment';
+import { log } from '../../utils/logger';
+import { HttpCommunicationStrategy } from '../communication/HttpCommunicationStrategy'; // ★ 追加: Http通信戦略をインポート
 import { ICommunicationStrategy } from '../communication/ICommunicationStrategy';
+import { IDownloadStrategy } from './IDownloadStrategy';
 
 // チャンクを並列でダウンロードする際の最大同時接続数
 const MAX_CONCURRENT_DOWNLOADS = 10;
@@ -13,8 +14,13 @@ const MAX_CONCURRENT_DOWNLOADS = 10;
  */
 export class HttpDownloadStrategy implements IDownloadStrategy {
 
+	// ★ 追加: ダウンロード専用のHTTP通信戦略インスタンスを保持
+	private httpCommStrategy: HttpCommunicationStrategy;
+
 	constructor() {
 		log.debug('HttpDownloadStrategy がインスタンス化されました。');
+		// ★ 修正: インスタンス化時に専用のHTTP通信戦略を生成
+		this.httpCommStrategy = new HttpCommunicationStrategy();
 	}
 
 	/**
@@ -30,7 +36,9 @@ export class HttpDownloadStrategy implements IDownloadStrategy {
 		const startTime = process.hrtime.bigint() / 1_000_000n;
 		log.info(`[Download] 開始... URL: ${targetUrl}`);
 
-		const { chainManager, infraService, communicationStrategy } = context;
+		// ★ 修正: communicationStrategy を使わず、内部の httpCommStrategy を使用
+		const { chainManager, infraService } = context;
+		const commStrategy = this.httpCommStrategy; // 内部のHTTP戦略を使用
 
 		try {
 			// 1. metachain の API エンドポイントを取得
@@ -41,17 +49,19 @@ export class HttpDownloadStrategy implements IDownloadStrategy {
 			if (!metachainApiUrl) {
 				throw new Error(`metachain (${metachain.name}) の API エンドポイントが見つかりません。`);
 			}
-			// 通信戦略に API エンドポイントを登録
-			await communicationStrategy.connect(metachainApiUrl);
+
+			// ★ 修正: 内部のHTTP戦略にAPIエンドポイントを登録/接続（接続処理はHttpCommunicationStrategy内では軽量）
+			await commStrategy.connect(metachainApiUrl);
 
 			// 2. metachain からマニフェストを取得
 			log.debug(`[Download] metachain (${metachainApiUrl}) からマニフェストを取得中...`);
 			// /metachain/metastore/v1/manifest/{url}
 			// targetUrl が 'my-site/index.html' の場合、エンコードが必要
 			const encodedUrl = encodeURIComponent(targetUrl);
-			const manifestPath = `/metachain/metastore/v1/manifest/${encodedUrl}`;
+			const manifestPath = `/metachain/metastore/v1/stored_manifest/${encodedUrl}`;
 
-			const manifestResponse: StoredManifestResponse = await communicationStrategy.sendRestRequest(
+			// sendRestRequest にフルURLを渡す (HttpCommunicationStrategy が fetch を使う)
+			const manifestResponse: StoredManifestResponse = await commStrategy.sendRestRequest(
 				`${metachainApiUrl}${manifestPath}` // sendRestRequest がベースURLを扱える前提
 			);
 
@@ -68,7 +78,9 @@ export class HttpDownloadStrategy implements IDownloadStrategy {
 			for (const info of datachainInfos) {
 				const url = apiEndpoints[info.name];
 				if (!url) throw new Error(`datachain (${info.name}) の API エンドポイントが見つかりません。`);
-				await communicationStrategy.connect(url); // 通信戦略に登録
+
+				// ★ 修正: 内部のHTTP戦略に datachain の API エンドポイントを登録
+				await commStrategy.connect(url);
 				datachainApiUrls.set(info.name, url);
 			}
 
@@ -85,12 +97,13 @@ export class HttpDownloadStrategy implements IDownloadStrategy {
 			const chunkBuffers: (Buffer | null)[] = await this.downloadChunksConcurrently(
 				chunkIndexes,
 				datachainApiUrls,
-				communicationStrategy
+				commStrategy // 内部のHTTP戦略を渡す
 			);
 
 			// 6. データを復元 (Buffer.concat)
 			const validBuffers = chunkBuffers.filter((b): b is Buffer => b !== null);
 			if (validBuffers.length !== chunkIndexes.length) {
+				// ★ 修正点3: パリティ断片による復元ロジックは PoC 外なので、今回は単純にエラーとする
 				throw new Error(`チャンクのダウンロードに失敗しました (期待: ${chunkIndexes.length}, 取得: ${validBuffers.length})`);
 			}
 
@@ -101,6 +114,9 @@ export class HttpDownloadStrategy implements IDownloadStrategy {
 
 			log.info(`[Download] 完了。所要時間: ${durationMs} ms, サイズ: ${downloadedData.length} bytes`);
 
+			// ★ 修正: ダウンロードが成功した場合も、内部の通信戦略を切断
+			await commStrategy.disconnect();
+
 			return {
 				startTime,
 				endTime,
@@ -110,6 +126,13 @@ export class HttpDownloadStrategy implements IDownloadStrategy {
 			};
 
 		} catch (error: any) {
+			// ★ 修正: エラーが発生した場合も、内部の通信戦略を切断
+			try {
+				await commStrategy.disconnect();
+			} catch (e) {
+				log.warn('[Download] エラー発生時のHttpCommStrategy切断中にエラー:', e);
+			}
+
 			log.error(`[Download] ダウンロード処理中にエラーが発生しました。`, error);
 			throw error;
 		}
@@ -121,7 +144,7 @@ export class HttpDownloadStrategy implements IDownloadStrategy {
 	private async downloadChunksConcurrently(
 		chunkIndexes: string[],
 		datachainApiUrls: Map<string, string>, // chainName -> apiUrl
-		commStrategy: ICommunicationStrategy
+		commStrategy: ICommunicationStrategy // ★ 修正: 内部のHTTP戦略を受け取る
 	): Promise<(Buffer | null)[]> {
 
 		// どのチャンクがどのチェーンにあるかのマッピングが必要
@@ -147,7 +170,7 @@ export class HttpDownloadStrategy implements IDownloadStrategy {
 
 			// /datachain/datastore/v1/chunk/{index}
 			const encodedIndex = encodeURIComponent(index);
-			const path = `${apiUrl}/datachain/datastore/v1/chunk/${encodedIndex}`;
+			const path = `${apiUrl}/datachain/datastore/v1/stored_chunk/${encodedIndex}`;
 
 			return { index, path, chainName };
 		});
@@ -171,6 +194,7 @@ export class HttpDownloadStrategy implements IDownloadStrategy {
 
 					log.debug(`[Download] チャンク取得開始: ${task.index} (from ${task.chainName})`);
 
+					// ★ 修正: 渡された commStrategy（HttpCommunicationStrategy）の sendRestRequest を使用
 					commStrategy.sendRestRequest(task.path)
 						.then((response: StoredChunkResponse) => {
 							if (!response.stored_chunk || !response.stored_chunk.data) {

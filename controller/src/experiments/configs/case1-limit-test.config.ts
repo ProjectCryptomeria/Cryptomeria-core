@@ -48,6 +48,8 @@ const config: ExperimentConfig = {
 
 	// 検証戦略のオプション (BufferFull なので不要)
 	// verificationStrategyOptions: {},
+
+	targetUrlBase: `case1-single-chain-limit-test.raidchain.${Date.now()}.com`,
 };
 
 export default config;

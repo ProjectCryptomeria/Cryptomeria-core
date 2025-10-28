@@ -15,13 +15,14 @@ import { IUploadStrategy } from './IUploadStrategy';
 // GasPrice と calculateFee をインポート
 import { EncodeObject } from '@cosmjs/proto-signing';
 import { calculateFee, DeliverTxResponse, GasPrice, SignerData, StdFee } from '@cosmjs/stargate';
+import { DEFAULT_GAS_PRICE } from '../../core/ChainManager'; // ★ 修正: ChainManager から定数をインポート
 
 // デフォルトのチャンクサイズ (1MB)
 const DEFAULT_CHUNK_SIZE = 1024 * 1024;
 // 一度に送信するバッチサイズ (Tx数)
 const DEFAULT_BATCH_SIZE = 100;
-// デフォルトのガス価格 (ChainManager から取得するのが望ましい)
-const DEFAULT_GAS_PRICE_STRING = '0.0025stake';
+// ★ 修正: 重複する定数を削除
+// const DEFAULT_GAS_PRICE_STRING = '0.0025stake';
 // シミュレーション失敗時のフォールバックガスリミット
 const FALLBACK_GAS_LIMIT = '60000000';
 
@@ -234,7 +235,8 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 		const txRawBytesList: Uint8Array[] = [];
 
 		// ガス価格を取得 (デフォルトを使用)
-		const gasPrice = GasPrice.fromString(DEFAULT_GAS_PRICE_STRING);
+		// ★ 修正: インポートした DEFAULT_GAS_PRICE を使用
+		const gasPrice = GasPrice.fromString(DEFAULT_GAS_PRICE);
 		// 手数料を計算
 		const fee: StdFee = calculateFee(parseInt(gasLimit, 10), gasPrice);
 
@@ -274,8 +276,22 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 					log.warn(`[sendChunkBatch ${chainName}] ブロードキャストされたTxハッシュ (${returnedHash}) が計算結果 (${hash}) と一致しません。`);
 				}
 				log.debug(`[sendChunkBatch ${chainName}] Txブロードキャスト成功 (Sync): ${hash}`);
-			} catch (error) {
-				log.error(`[sendChunkBatch ${chainName}] Tx (Hash: ${hash}) のブロードキャスト中に例外発生。`, error);
+			} catch (error: any) {
+				// ★ 修正: エラーログを詳細化
+				const errorMessage = error?.message || String(error);
+				let errorDetails = '';
+				try {
+					errorDetails = JSON.stringify(error, (key, value) => {
+						// ErrorやBigIntのJSON化に対応
+						if (value instanceof Error) return { message: value.message, stack: value.stack };
+						if (typeof value === 'bigint') return value.toString() + 'n';
+						return value;
+					}, 2);
+				} catch {
+					errorDetails = String(error);
+				}
+
+				log.error(`[sendChunkBatch ${chainName}] Tx (Hash: ${hash}) のブロードキャスト中に例外発生。メッセージ: ${errorMessage}\n詳細: ${errorDetails}`, error);
 				// エラーが発生してもハッシュはリストに追加し、Confirmation戦略に確認を委ねる
 			}
 		}
