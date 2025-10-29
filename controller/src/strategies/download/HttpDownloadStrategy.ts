@@ -2,7 +2,7 @@
 import { Manifest, RunnerContext, StoredChunkResponse, StoredManifestResponse } from '../../types';
 import { DownloadResult } from '../../types/experiment';
 import { log } from '../../utils/logger';
-import { HttpCommunicationStrategy } from '../communication/HttpCommunicationStrategy'; // ★ 追加: Http通信戦略をインポート
+import { HttpCommunicationStrategy } from '../communication/HttpCommunicationStrategy';
 import { ICommunicationStrategy } from '../communication/ICommunicationStrategy';
 import { IDownloadStrategy } from './IDownloadStrategy';
 
@@ -58,6 +58,7 @@ export class HttpDownloadStrategy implements IDownloadStrategy {
 			// /metachain/metastore/v1/manifest/{url}
 			// targetUrl が 'my-site/index.html' の場合、エンコードが必要
 			const encodedUrl = encodeURIComponent(targetUrl);
+			// ★ 修正: REST API のパスを 'get_stored_manifest' から 'stored_manifest' に修正
 			const manifestPath = `/metachain/metastore/v1/stored_manifest/${encodedUrl}`;
 
 			// sendRestRequest にフルURLを渡す (HttpCommunicationStrategy が fetch を使う)
@@ -170,6 +171,7 @@ export class HttpDownloadStrategy implements IDownloadStrategy {
 
 			// /datachain/datastore/v1/chunk/{index}
 			const encodedIndex = encodeURIComponent(index);
+			// ★ 修正: REST API のパスを 'get_stored_chunk' から 'stored_chunk' に修正
 			const path = `${apiUrl}/datachain/datastore/v1/stored_chunk/${encodedIndex}`;
 
 			return { index, path, chainName };
