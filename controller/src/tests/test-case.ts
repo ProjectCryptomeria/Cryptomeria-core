@@ -270,7 +270,7 @@ async function runCase3(sizeKB: number, chunkSize: number | 'auto' | undefined):
 
 // --- Test Case 4: Auto (負荷分散) テスト ---
 async function runCase4(sizeKB: number, chunkSize: number | 'auto' | undefined): Promise<TestResult> {
-	log.step(`4. 【実験】${sizeKB}KBのファイルをチャンク化し、空いているチェーンへ自動でアップロードします`);
+	log.step(`4. 【実験】${sizeKB}KBのファイルをチャンク化し、空いているチェーンへ自動でアップロードします (ChunkSize: ${chunkSize === undefined ? 'Default' : (typeof chunkSize === 'string' ? chunkSize : `${chunkSize / 1024}KB`)})`); // ログにチャンクサイズを表示
 
 	return runSingleTest({
 		caseName: 'Case4-Auto',
@@ -279,7 +279,7 @@ async function runCase4(sizeKB: number, chunkSize: number | 'auto' | undefined):
 		targetSizeKB: sizeKB,
 		siteUrl: `auto-dist-test/${Date.now()}`,
 		distributionStrategy: 'auto',
-		chunkSizeKB: "auto",
+		chunkSizeKB: chunkSize, // <--- 引数 chunkSize を渡すように修正
 	});
 }
 
