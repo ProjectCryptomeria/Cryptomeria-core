@@ -21,8 +21,6 @@ import { DEFAULT_GAS_PRICE } from '../../core/ChainManager'; // ★ 修正: Chai
 const DEFAULT_CHUNK_SIZE = 1024 * 1024;
 // 一度に送信するバッチサイズ (Tx数)
 const DEFAULT_BATCH_SIZE = 100;
-// ★ 修正: 重複する定数を削除
-// const DEFAULT_GAS_PRICE_STRING = '0.0025stake';
 // シミュレーション失敗時のフォールバックガスリミット
 const FALLBACK_GAS_LIMIT = '60000000';
 
@@ -156,9 +154,26 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 
 		log.step(`[SequentialUpload] 全 ${chunks.length} チャンクのアップロード完了。マニフェストを登録中...`);
 
-		// 5. マニフェスト作成
+		// --- ★ 修正されたマニフェスト作成ロジック ---
+		const lastSlashIndex = targetUrl.lastIndexOf('/');
+		if (lastSlashIndex === -1 || lastSlashIndex === targetUrl.length - 1) {
+			log.error(`[SequentialUpload] targetUrl "${targetUrl}" の形式が無効です (ベースURLとファイルパスに分割できません)。`);
+			tracker.markUploadEnd();
+			return tracker.getUploadResult();
+		}
+
+		// Metachainに登録するベースURL (URIエンコードする)
+		const metachainUrl = targetUrl.substring(0, lastSlashIndex);
+		// Manifestのキーとなる相対ファイルパス (例: '/data.bin')
+		const relativeFilePath = targetUrl.substring(lastSlashIndex);
+
+		// ManifestのキーはURIエンコードされたファイルパスを使用
+		const encodedUrl = encodeURIComponent(metachainUrl);
+		const encodedFilePath = encodeURIComponent(relativeFilePath);
+
+		// 5. マニフェスト作成 (キーをURIエンコードされたファイルパスにする)
 		const manifest: Manifest = {
-			[targetUrl]: chunkIndexes,
+			[encodedFilePath]: chunkIndexes,
 		};
 		const manifestContent = JSON.stringify(manifest);
 
@@ -166,14 +181,14 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 		try {
 			const msg: MsgCreateStoredManifest = {
 				creator: metachainAccount.address,
-				url: targetUrl,
+				url: encodedUrl,
 				manifest: manifestContent,
 			};
 
 			const { gasUsed, transactionHash, height }: DeliverTxResponse = await metachainAccount.signingClient.signAndBroadcast(
 				metachainAccount.address,
 				[{ typeUrl: '/metachain.metastore.v1.MsgCreateStoredManifest', value: msg }],
-				'auto' // マニフェスト送信はガス'auto'で
+				'auto'
 			);
 
 			log.info(`[SequentialUpload] マニフェスト登録成功。TxHash: ${transactionHash}`);
@@ -184,13 +199,12 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 				success: true,
 				height: height,
 				gasUsed: gasUsed,
-				feeAmount: undefined, // 'auto' では fee を直接取得できない
+				feeAmount: undefined,
 			});
-			tracker.setManifestUrl(targetUrl);
+			tracker.setManifestUrl(targetUrl); // ダウンロード時に再解析させるため、フルURLを保持
 
 		} catch (error) {
 			log.error(`[SequentialUpload] マニフェストの登録に失敗しました。`, error);
-			// マニフェスト失敗でも、チャンクアップロードの結果は返す
 		}
 
 		// 7. 最終結果
@@ -198,6 +212,8 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 		log.info(`[SequentialUpload] 完了。所要時間: ${tracker.getUploadResult().durationMs} ms`);
 		return tracker.getUploadResult();
 	}
+
+	// ... (sendChunkBatch は省略) ...
 
 	/**
 	 * チャンクのバッチをノンス手動管理で逐次送信します。
@@ -235,7 +251,6 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 		const txRawBytesList: Uint8Array[] = [];
 
 		// ガス価格を取得 (デフォルトを使用)
-		// ★ 修正: インポートした DEFAULT_GAS_PRICE を使用
 		const gasPrice = GasPrice.fromString(DEFAULT_GAS_PRICE);
 		// 手数料を計算
 		const fee: StdFee = calculateFee(parseInt(gasLimit, 10), gasPrice);
@@ -277,7 +292,6 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 				}
 				log.debug(`[sendChunkBatch ${chainName}] Txブロードキャスト成功 (Sync): ${hash}`);
 			} catch (error: any) {
-				// ★ 修正: エラーログを詳細化
 				const errorMessage = error?.message || String(error);
 				let errorDetails = '';
 				try {
@@ -292,7 +306,6 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 				}
 
 				log.error(`[sendChunkBatch ${chainName}] Tx (Hash: ${hash}) のブロードキャスト中に例外発生。メッセージ: ${errorMessage}\n詳細: ${errorDetails}`, error);
-				// エラーが発生してもハッシュはリストに追加し、Confirmation戦略に確認を委ねる
 			}
 		}
 
