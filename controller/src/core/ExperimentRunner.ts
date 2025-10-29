@@ -9,12 +9,11 @@ import {
 	RunnerContext
 } from '../types';
 import { log } from '../utils/logger';
+import { UrlPathCodec } from '../utils/UrlPathCodec'; // ★ 追加
 import { ChainManager } from './ChainManager';
 import { PerformanceTracker } from './PerformanceTracker';
 
 // --- 戦略インターフェースのインポート (インターフェースのみ) ---
-// ★ 修正: 具象クラスのインポートを削除し、インターフェースのみをインポート
-// (index.ts ファイルが各ディレクトリに必要)
 import { ICommunicationStrategy } from '../strategies/communication/ICommunicationStrategy';
 import { IConfirmationStrategy } from '../strategies/confirmation/IConfirmationStrategy';
 import { IDownloadStrategy } from '../strategies/download/IDownloadStrategy';
@@ -38,6 +37,7 @@ interface ExperimentStrategies {
 export class ExperimentRunner {
 	private config: ExperimentConfig;
 	private strategies: ExperimentStrategies;
+	private urlPathCodec: UrlPathCodec; // ★ 追加
 
 	private infraService: InfrastructureService;
 	private chainManager: ChainManager;
@@ -47,16 +47,18 @@ export class ExperimentRunner {
 
 	constructor(
 		config: ExperimentConfig,
-		strategies: ExperimentStrategies
+		strategies: ExperimentStrategies,
+		urlPathCodec: UrlPathCodec // ★ 追加
 	) {
 		this.config = config;
 		this.strategies = strategies;
+		this.urlPathCodec = urlPathCodec; // ★ 追加
 
 		this.infraService = new InfrastructureService();
 		this.chainManager = new ChainManager();
 		this.tracker = new PerformanceTracker();
 
-		log.info('ExperimentRunner が設定と戦略モジュールで初期化されました。');
+		log.info('ExperimentRunner が設定、戦略モジュール、UrlPathCodec で初期化されました。');
 	}
 
 	/**
@@ -67,7 +69,6 @@ export class ExperimentRunner {
 
 		const iterationResults: IterationResult[] = [];
 
-		// ★ 修正: infraService の初期化がまだなので、先にインスタンス化だけして、getChainInfoは await する
 		const allDatachains = (await this.infraService.getChainInfo()).filter(c => c.type === 'datachain');
 
 		const chainCounts = Array.isArray(this.config.chainCount)
@@ -87,11 +88,11 @@ export class ExperimentRunner {
 				communicationStrategy: this.strategies.commStrategy,
 				confirmationStrategy: this.strategies.confirmStrategy,
 				gasEstimationStrategy: this.strategies.gasEstimationStrategy,
+				urlPathCodec: this.urlPathCodec, // ★ 追加: Context にコーデックを設定
 			};
 
 			// --- 3. イテレーション実行 ---
 			for (const chainCount of chainCounts) {
-				// TODO: chainCount に基づいて chainManager が使用する datachain を制限する機能
 				log.info(`--- チェーン数 ${chainCount} でイテレーションを開始 ---`);
 
 				for (let i = 0; i < this.config.iterations; i++) {
@@ -100,12 +101,11 @@ export class ExperimentRunner {
 					this.tracker.reset();
 
 					try {
-						const result = await this.runIteration(chainCount, iteration); // ★ 修正: iteration を渡す
+						const result = await this.runIteration(chainCount, iteration);
 						iterationResults.push(result);
 						log.info(`イテレーション ${iteration} 完了。検証: ${result.verificationResult.verified ? '成功' : '失敗'}`);
 
-					} catch (iterError: unknown) { // ★ 修正: iterError: unknown
-						// ★ 修正 (Error 9): unknown 型のチェック
+					} catch (iterError: unknown) {
 						const errorMessage = (iterError instanceof Error) ? iterError.message : String(iterError);
 						log.error(`イテレーション ${iteration} がエラーで失敗しました。`, iterError);
 
@@ -113,7 +113,7 @@ export class ExperimentRunner {
 							iteration: iteration,
 							chainCount: chainCount,
 							uploadResult: this.tracker.getUploadResult(),
-							downloadResult: { startTime: 0n, endTime: 0n, durationMs: 0n, downloadedData: Buffer.alloc(0) }, // ★ 修正: bigint
+							downloadResult: { startTime: 0n, endTime: 0n, durationMs: 0n, downloadedData: Buffer.alloc(0) },
 							verificationResult: { verified: false, message: `イテレーション失敗: ${errorMessage}` },
 						});
 					}
@@ -121,7 +121,7 @@ export class ExperimentRunner {
 				}
 			}
 
-		} catch (globalError: unknown) { // ★ 修正: unknown
+		} catch (globalError: unknown) {
 			const errorMessage = (globalError instanceof Error) ? globalError.message : String(globalError);
 			log.error('実験のグローバル初期化（ChainManager 初期化など）に失敗しました。', errorMessage, globalError);
 		} finally {
@@ -152,34 +152,31 @@ export class ExperimentRunner {
 		log.info(`データ準備完了。サイズ: ${originalData.length} bytes, SHA256: ${dataHash.substring(0, 12)}...`);
 
 		// 2. アップロード実行
-		// 設定の targetUrlBase をベースに、イテレーションとタイムスタンプを追加
+		// targetUrl を生成
 		let base = this.config.targetUrlBase
 			? this.config.targetUrlBase.replace(/\/+$/, '') // 末尾のスラッシュを削除
-			: `raidchain.test`; // 設定がない場合は旧ロジックを使用
-		base += `/${Date.now().toString()}`;
+			: `raidchain.test`;
+		base += `/${Date.now().toString()}`; // タイムスタンプを追加
 
-		const targetUrl = `${base}/data.bin`;
-		log.info(`アップロード開始... Target URL: ${targetUrl}`);
+		// ★ 修正: ファイル名を固定 (data.bin) ではなく、より一般的に (例: /file)
+		//   ファイル名は UrlPathCodec で分離されるため、ここでは単純なファイル名を付加
+		const targetUrl = `${base}/data`;
+		log.info(`アップロード開始... Target URL (Raw): ${targetUrl}`);
 
-		// TODO: chainCount を UploadStrategy に渡す
-
-		this.tracker.markUploadStart();
+		// UploadStrategy に context (urlPathCodec を含む) を渡す
 		const uploadResult = await this.strategies.uploadStrategy.execute(this.context, originalData, targetUrl);
-		// this.tracker.markUploadEnd(); // ★ 修正: uploadStrategy が内部で tracker.markUploadEnd() を呼ぶか、ここで呼ぶか
-		// (UploadResult に startTime/endTime があるため、UploadStrategy が内部で tracker を呼ぶか、
-		// UploadResult の値で tracker を更新する必要がある。ここでは tracker が Result を生成すると仮定)
-		// -> PerformanceTracker の実装に基づき、Strategy が Start/End を呼ぶと仮定
+
 		log.info(`アップロード完了。所要時間: ${uploadResult.durationMs} ms, 成功Tx: ${uploadResult.successTx}/${uploadResult.totalTx}`);
 
 		// 3. ダウンロード実行
-		const manifestUrl = uploadResult.manifestUrl;
-		if (!manifestUrl) {
+		const manifestUrlRaw = uploadResult.manifestUrl; // tracker に記録された元の URL
+		if (!manifestUrlRaw) {
 			throw new Error('アップロード結果に manifestUrl が含まれていません。ダウンロードをスキップします。');
 		}
-		log.info(`ダウンロード開始... Manifest URL: ${manifestUrl}`);
-		// this.tracker.markDownloadStart(); // ★ 修正: DownloadStrategy が呼ぶと仮定
-		const downloadResult = await this.strategies.downloadStrategy.execute(this.context, manifestUrl);
-		// this.tracker.markDownloadEnd(); // ★ 修正: DownloadStrategy が呼ぶと仮定
+		log.info(`ダウンロード開始... Target URL (Raw): ${manifestUrlRaw}`);
+		// DownloadStrategy に context (urlPathCodec を含む) と元の URL を渡す
+		const downloadResult = await this.strategies.downloadStrategy.execute(this.context, manifestUrlRaw);
+
 		log.info(`ダウンロード完了。所要時間: ${downloadResult.durationMs} ms, サイズ: ${downloadResult.downloadedData.length} bytes`);
 
 		// 4. 検証実行
@@ -193,12 +190,12 @@ export class ExperimentRunner {
 			downloadResult.downloadedData,
 			verificationOptions
 		);
-		this.tracker.setVerificationResult(verificationResult); // ★ 修正: Tracker に結果をセット
+		this.tracker.setVerificationResult(verificationResult);
 		log.info(`検証完了: ${verificationResult.verified ? '✅ 成功' : '❌ 失敗'}`);
 
 		// 5. イテレーション結果を返す
 		return {
-			iteration: iteration, // ★ 修正
+			iteration: iteration,
 			chainCount: chainCount,
 			uploadResult: uploadResult,
 			downloadResult: downloadResult,
@@ -208,7 +205,6 @@ export class ExperimentRunner {
 
 	/**
 	 * 設定に基づいてアップロード対象のデータを準備します。
-	 * (変更なし)
 	 */
 	private async prepareData(): Promise<Buffer> {
 		if (this.config.target.type === 'filePath') {
@@ -228,8 +224,8 @@ export class ExperimentRunner {
 		const totalIterations = results.length;
 		if (totalIterations === 0) return { message: "データなし" };
 
-		const avgUploadMs = results.reduce((sum, r) => sum + Number(r.uploadResult.durationMs), 0) / totalIterations; // ★ 修正: bigint -> number
-		const avgDownloadMs = results.reduce((sum, r) => sum + Number(r.downloadResult.durationMs), 0) / totalIterations; // ★ 修正: bigint -> number
+		const avgUploadMs = results.reduce((sum, r) => sum + Number(r.uploadResult.durationMs), 0) / totalIterations;
+		const avgDownloadMs = results.reduce((sum, r) => sum + Number(r.downloadResult.durationMs), 0) / totalIterations;
 		const verificationSuccesses = results.filter(r => r.verificationResult.verified).length;
 
 		return {
@@ -240,14 +236,3 @@ export class ExperimentRunner {
 		};
 	}
 }
-
-/**
- * ★ 修正:
- * 戦略クラスのインスタンス化はステップ10 (run-experiment.ts) で行うため、
- * このファイルからは削除（またはコメントアウト）します。
- */
-/*
-export function instantiateStrategies(config: ExperimentConfig): ExperimentStrategies {
-	// ... (ステップ7以降で実装されるため、ここではコメントアウト)
-}
-*/

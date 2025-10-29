@@ -4,6 +4,7 @@ import * as path from 'path';
 import { ExperimentRunner } from './core/ExperimentRunner';
 import { ExperimentConfig, ExperimentResult } from './types';
 import { log } from './utils/logger';
+import { UrlPathCodec } from './utils/UrlPathCodec'; // ★ 追加
 
 // --- すべての具象戦略クラスをインポート ---
 import {
@@ -239,8 +240,12 @@ async function main() {
 		// 3. 戦略のインスタンス化
 		const strategies = instantiateStrategies(config);
 
+		// ★ 追加: UrlPathCodec のインスタンス化
+		const urlPathCodec = new UrlPathCodec();
+
 		// 4. ExperimentRunner の初期化と実行
-		runner = new ExperimentRunner(config, strategies);
+		// ★ 修正: urlPathCodec をコンストラクタに渡す
+		runner = new ExperimentRunner(config, strategies, urlPathCodec);
 		const result = await runner.run();
 
 		// 5. 結果の表示

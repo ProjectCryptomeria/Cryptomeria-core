@@ -1,9 +1,10 @@
 // controller/src/strategies/upload/RoundRobinUploadStrategy.ts
 import { sha256 } from '@cosmjs/crypto';
 import { toHex } from '@cosmjs/encoding';
+import { EncodeObject } from '@cosmjs/proto-signing';
 import { calculateFee, DeliverTxResponse, GasPrice, SignerData, StdFee } from '@cosmjs/stargate';
 import { TxRaw } from 'cosmjs-types/cosmos/tx/v1beta1/tx';
-import { DEFAULT_GAS_PRICE } from '../../core/ChainManager'; // ★ 修正: ChainManager から定数をインポート
+import { DEFAULT_GAS_PRICE } from '../../core/ChainManager';
 import {
 	ChainInfo,
 	Manifest,
@@ -15,17 +16,14 @@ import {
 } from '../../types';
 import { log } from '../../utils/logger';
 import { IUploadStrategy } from './IUploadStrategy';
-import { EncodeObject } from '@cosmjs/proto-signing';
 
 // デフォルトのチャンクサイズ (1MB)
 const DEFAULT_CHUNK_SIZE = 1024 * 1024;
 // 各チェーンが一度に送信するバッチサイズ (Tx数)
 const DEFAULT_BATCH_SIZE_PER_CHAIN = 100;
 // 同時に処理するチェーン（ワーカー）の最大数
-const MAX_CONCURRENT_WORKERS = 4;
-// ★ 修正: 重複する定数を削除
-// const DEFAULT_GAS_PRICE_STRING = '0.0025stake'; 
-// シミュレーション失敗時のフォールバックガスリミット (SequentialUploadStrategyからコピー)
+const MAX_CONCURRENT_WORKERS = 4; // この戦略では実際には targetDatachains.length が上限になる
+// シミュレーション失敗時のフォールバックガスリミット
 const FALLBACK_GAS_LIMIT = '60000000';
 
 /**
@@ -39,7 +37,6 @@ type UploadJob = {
 
 /**
  * チャンクを複数の datachain にラウンドロビン方式で割り当て、並列アップロードする戦略。
- * (dis-test-ws/1.ts のロジックをベース)
  */
 export class RoundRobinUploadStrategy implements IUploadStrategy {
 	constructor() {
@@ -50,17 +47,22 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 	 * ラウンドロビン分散アップロード処理を実行します。
 	 * @param context 実行コンテキスト
 	 * @param data アップロード対象のデータ
-	 * @param targetUrl このデータに関連付けるURL
+	 * @param targetUrl このデータに関連付けるURL - エンコード前
 	 */
 	public async execute(
 		context: RunnerContext,
 		data: Buffer,
-		targetUrl: string
+		targetUrl: string // ★ エンコード前のURLを受け取る
 	): Promise<UploadResult> {
 
-		const { config, chainManager, tracker, confirmationStrategy, gasEstimationStrategy } = context; // gasEstimationStrategy を追加
+		// ★ 追加: UrlPathCodec をコンテキストから取得
+		const { config, chainManager, tracker, confirmationStrategy, gasEstimationStrategy, urlPathCodec } = context;
 		tracker.markUploadStart();
-		log.info(`[RoundRobinUpload] 開始... URL: ${targetUrl}, データサイズ: ${data.length} bytes`);
+		// ★ 修正: ログにRaw URL を使用
+		log.info(`[RoundRobinUpload] 開始... URL (Raw): ${targetUrl}, データサイズ: ${data.length} bytes`);
+
+		// ★ 追加: URLを解析
+		const urlParts = urlPathCodec.parseTargetUrl(targetUrl);
 
 		// 1. 設定と対象チェーンの決定
 		const options = config.uploadStrategyOptions ?? {};
@@ -99,10 +101,10 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 		}
 		log.info(`[RoundRobinUpload] データは ${chunks.length} 個のチャンクに分割されました。`);
 
-		// ★ 修正: ガスシミュレーションロジックを追加
+		// 3. ガスシミュレーション
 		let estimatedGasLimit = FALLBACK_GAS_LIMIT;
 		if (chunks.length > 0 && chunks[0]) {
-			const targetChainNameForSim = targetDatachains[0]!.name; // 最初のdatachainでシミュレーション
+			const targetChainNameForSim = targetDatachains[0]!.name;
 			const sampleMsg: EncodeObject = {
 				typeUrl: '/datachain.datastore.v1.MsgCreateStoredChunk',
 				value: {
@@ -120,8 +122,7 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 			log.warn('[RoundRobinUpload] チャンクデータが存在しないため、ガスシミュレーションをスキップします。');
 		}
 
-		// 3. チャンクを各 datachain にラウンドロビンで割り当て (ジョブ作成)
-		// ★ 修正: UploadJob の型定義を外部に移動させたため、ここは変更なし
+		// 4. チャンクを各 datachain にラウンドロビンで割り当て (ジョブ作成)
 		const jobs: Map<string, UploadJob> = new Map(targetDatachains.map(chain => [
 			chain.name,
 			{ chainInfo: chain, chunkIndexes: [], chunks: [] }
@@ -135,20 +136,18 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 			job.chunkIndexes.push(chunkIndexes[i]!);
 		}
 
-		// 4. 各チェーン（ワーカー）のアップロード処理を並列実行
-		log.step(`[RoundRobinUpload] ${jobs.size} チェーンで並列アップロード処理を開始... (GasLimit: ${estimatedGasLimit})`); // ログに GasLimit を追加
+		// 5. 各チェーン（ワーカー）のアップロード処理を並列実行
+		log.step(`[RoundRobinUpload] ${jobs.size} チェーンで並列アップロード処理を開始... (GasLimit: ${estimatedGasLimit})`);
 		const workerPromises = Array.from(jobs.values()).map(job =>
-			this.runWorker(context, job, batchSizePerChain, estimatedGasLimit) // estimatedGasLimit を渡す
+			this.runWorker(context, job, batchSizePerChain, estimatedGasLimit)
 		);
 
 		let totalSuccess = true;
 		try {
 			const workerResults = await Promise.all(workerPromises);
-
 			if (workerResults.some(success => !success)) {
 				totalSuccess = false;
 			}
-
 		} catch (error) {
 			log.error('[RoundRobinUpload] ワーカー処理中に予期せぬエラーが発生しました。', error);
 			totalSuccess = false;
@@ -162,17 +161,19 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 
 		log.step(`[RoundRobinUpload] 全 ${chunks.length} チャンクのアップロード完了。マニフェストを登録中...`);
 
-		// 5. マニフェスト作成
+		// --- ★ 修正: UrlParts を使用 ---
+		// 6. マニフェスト作成 (キーはエンコード済みファイルパス)
 		const manifest: Manifest = {
-			[targetUrl]: chunkIndexes,
+			[urlParts.filePathEncoded]: chunkIndexes, // ★ エンコード済みのパスをキーにする
 		};
 		const manifestContent = JSON.stringify(manifest);
 
-		// 6. マニフェストを metachain にアップロード
+		// 7. マニフェストを metachain にアップロード
 		try {
+			// ★ 修正: メッセージの url フィールドにエンコード済みのベース URL を使用
 			const msg: MsgCreateStoredManifest = {
 				creator: metachainAccount.address,
-				url: targetUrl,
+				url: urlParts.baseUrlEncoded, // ★ エンコード済みのベース URL
 				manifest: manifestContent,
 			};
 
@@ -182,7 +183,8 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 				'auto'
 			);
 
-			log.info(`[RoundRobinUpload] マニフェスト登録成功。TxHash: ${transactionHash}`);
+			// ★ 修正: ログには Raw 値を表示
+			log.info(`[RoundRobinUpload] マニフェスト登録成功 (BaseURL: ${urlParts.baseUrlRaw}, FilePath: ${urlParts.filePathRaw})。TxHash: ${transactionHash}`);
 
 			tracker.recordTransaction({
 				hash: transactionHash,
@@ -192,13 +194,14 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 				gasUsed: gasUsed,
 				feeAmount: undefined,
 			});
-			tracker.setManifestUrl(targetUrl);
+			// ★ 修正: Tracker には元の完全な URL を記録
+			tracker.setManifestUrl(urlParts.original);
 
 		} catch (error) {
-			log.error(`[RoundRobinUpload] マニフェストの登録に失敗しました。`, error);
+			log.error(`[RoundRobinUpload] マニフェストの登録に失敗しました (BaseURL: ${urlParts.baseUrlRaw})。`, error);
 		}
 
-		// 7. 最終結果
+		// 8. 最終結果
 		tracker.markUploadEnd();
 		log.info(`[RoundRobinUpload] 完了。所要時間: ${tracker.getUploadResult().durationMs} ms`);
 		return tracker.getUploadResult();
@@ -206,13 +209,12 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 
 	/**
 	 * 1チェーン担当のワーカー処理。
-	 * ★ 修正: `job: UploadJob` がファイルスコープの型を参照するためエラー解消
 	 */
 	private async runWorker(
 		context: RunnerContext,
 		job: UploadJob,
 		batchSize: number,
-		estimatedGasLimit: string // 追加
+		estimatedGasLimit: string
 	): Promise<boolean> {
 
 		const { chainManager, tracker, confirmationStrategy, config } = context;
@@ -241,7 +243,7 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 					chainName,
 					batchChunks,
 					batchIndexes,
-					estimatedGasLimit // 渡す
+					estimatedGasLimit
 				);
 
 				const confirmOptions = { timeoutMs: config.confirmationStrategyOptions?.timeoutMs };
@@ -272,14 +274,13 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 
 	/**
 	 * チャンクのバッチをノンス手動管理で逐次送信します。
-	 * (SequentialUploadStrategy のロジックに修正・統合)
 	 */
 	private async sendChunkBatch(
 		context: RunnerContext,
 		chainName: string,
 		chunks: Buffer[],
 		indexes: string[],
-		gasLimit: string // 追加
+		gasLimit: string
 	): Promise<string[]> {
 
 		const { chainManager } = context;
@@ -305,8 +306,7 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 		const txHashes: string[] = [];
 		const txRawBytesList: Uint8Array[] = [];
 
-		// ★ 修正: GasPrice, calculateFee を使用して Fee を計算
-		const gasPrice = GasPrice.fromString(DEFAULT_GAS_PRICE); // DEFAULT_GAS_PRICE を使用
+		const gasPrice = GasPrice.fromString(DEFAULT_GAS_PRICE);
 		const fee: StdFee = calculateFee(parseInt(gasLimit, 10), gasPrice);
 
 		log.debug(`[sendChunkBatch ${chainName}] ${messages.length} 件のTxをオフライン署名中... (Start Seq: ${currentSequence}, GasLimit: ${gasLimit}, Fee: ${JSON.stringify(fee.amount)})`);
@@ -321,8 +321,8 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 			const txRaw = await client.sign(
 				account.address,
 				[msg],
-				fee, // 計算済みの fee を使用
-				'', // memo
+				fee,
+				'',
 				signerData
 			);
 
@@ -343,7 +343,6 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 				log.debug(`[sendChunkBatch ${chainName}] Txブロードキャスト成功 (Sync): ${hash}`);
 
 			} catch (error: any) {
-				// ★ 修正: エラーログを詳細化
 				const errorMessage = error?.message || String(error);
 				let errorDetails = '';
 				try {

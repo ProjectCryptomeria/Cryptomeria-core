@@ -5,7 +5,7 @@ import { EncodeObject } from '@cosmjs/proto-signing';
 import { calculateFee, DeliverTxResponse, GasPrice, SignerData, StdFee } from '@cosmjs/stargate';
 import { CometClient } from '@cosmjs/tendermint-rpc';
 import { TxRaw } from 'cosmjs-types/cosmos/tx/v1beta1/tx';
-import { DEFAULT_GAS_PRICE } from '../../core/ChainManager'; // ★ 修正: ChainManager から定数をインポート
+import { DEFAULT_GAS_PRICE } from '../../core/ChainManager';
 import {
 	ChainInfo,
 	Manifest,
@@ -19,28 +19,21 @@ import { log } from '../../utils/logger';
 import { sleep } from '../../utils/retry';
 import { IUploadStrategy } from './IUploadStrategy';
 
-
 // デフォルトのチャンクサイズ (1MB)
 const DEFAULT_CHUNK_SIZE = 1024 * 1024;
 // 一度に送信するバッチサイズ (Tx数)
 const DEFAULT_BATCH_SIZE = 100;
-// ★ 修正: 重複する定数を削除
-// const DEFAULT_GAS_PRICE_STRING = '0.0025stake';
-// シミュレーション失敗時のフォールバックガスリミット (SequentialUploadStrategyからコピー)
+// シミュレーション失敗時のフォールバックガスリミット
 const FALLBACK_GAS_LIMIT = '60000000';
 
-// Mempool 監視設定 (dis-test-ws/5.ts を参考)
-// このバイト数以下なら「空いている」と判断
+// Mempool 監視設定
 const MEMPOOL_BYTES_LIMIT = 50 * 1024 * 1024; // 50MB
-// Mempool 監視のポーリング間隔
 const MEMPOOL_POLL_INTERVAL_MS = 250;
-// Mempool 監視のタイムアウト (この時間待っても空かなければエラー)
 const MEMPOOL_WAIT_TIMEOUT_MS = 30000; // 30秒
 
 /**
  * 各 datachain の Mempool 状況を監視し、
  * 動的に（最も空いているチェーンに）チャンクバッチを割り当てる戦略。
- * (dis-test-ws/2.ts ～ 5.ts のロジックをベース)
  */
 export class AutoDistributeUploadStrategy implements IUploadStrategy {
 	constructor() {
@@ -51,17 +44,22 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 	 * 動的分散アップロード処理を実行します。
 	 * @param context 実行コンテキスト
 	 * @param data アップロード対象のデータ
-	 * @param targetUrl このデータに関連付けるURL
+	 * @param targetUrl このデータに関連付けるURL - エンコード前
 	 */
 	public async execute(
 		context: RunnerContext,
 		data: Buffer,
-		targetUrl: string
+		targetUrl: string // ★ エンコード前のURLを受け取る
 	): Promise<UploadResult> {
 
-		const { config, chainManager, tracker, confirmationStrategy, gasEstimationStrategy } = context; // gasEstimationStrategy を追加
+		// ★ 追加: UrlPathCodec をコンテキストから取得
+		const { config, chainManager, tracker, confirmationStrategy, gasEstimationStrategy, urlPathCodec } = context;
 		tracker.markUploadStart();
-		log.info(`[AutoDistribute] 開始... URL: ${targetUrl}, データサイズ: ${data.length} bytes`);
+		// ★ 修正: ログにRaw URL を使用
+		log.info(`[AutoDistribute] 開始... URL (Raw): ${targetUrl}, データサイズ: ${data.length} bytes`);
+
+		// ★ 追加: URLを解析
+		const urlParts = urlPathCodec.parseTargetUrl(targetUrl);
 
 		// 1. 設定と対象チェーンの決定
 		const options = config.uploadStrategyOptions ?? {};
@@ -100,10 +98,10 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 		}
 		log.info(`[AutoDistribute] データは ${chunks.length} 個のチャンクに分割されました。`);
 
-		// ★ 修正: ガスシミュレーションロジックを追加
+		// 3. ガスシミュレーション
 		let estimatedGasLimit = FALLBACK_GAS_LIMIT;
 		if (chunks.length > 0 && chunks[0]) {
-			const targetChainNameForSim = targetDatachains[0]!.name; // 最初のdatachainでシミュレーション
+			const targetChainNameForSim = targetDatachains[0]!.name;
 			const sampleMsg: EncodeObject = {
 				typeUrl: '/datachain.datastore.v1.MsgCreateStoredChunk',
 				value: {
@@ -121,8 +119,7 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 			log.warn('[AutoDistribute] チャンクデータが存在しないため、ガスシミュレーションをスキップします。');
 		}
 
-		// 3. 全チャンクをバッチに分割 (キューの作成)
-		// ラウンドロビンとは異なり、この時点ではチェーンに割り当てない
+		// 4. 全チャンクをバッチに分割 (キューの作成)
 		const totalBatches = Math.ceil(chunks.length / batchSize);
 		const batchQueue: { chunks: Buffer[]; indexes: string[] }[] = [];
 
@@ -135,13 +132,12 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 			});
 		}
 
-		// 4. ワーカー（チェーン）プールの管理とMempool監視によるバッチ処理
-		log.step(`[AutoDistribute] ${batchQueue.length} バッチを ${targetDatachains.length} チェーン（ワーカー）で処理開始... (GasLimit: ${estimatedGasLimit})`); // ログに GasLimit を追加
+		// 5. ワーカー（チェーン）プールの管理とMempool監視によるバッチ処理
+		log.step(`[AutoDistribute] ${batchQueue.length} バッチを ${targetDatachains.length} チェーン（ワーカー）で処理開始... (GasLimit: ${estimatedGasLimit})`);
 
 		let totalSuccess = true;
 		const processingPromises = new Set<Promise<any>>();
 
-		// 各チェーンのRPCクライアントを取得 (Mempool監視用)
 		const chainClients = new Map<string, CometClient>();
 		for (const chain of targetDatachains) {
 			const client = await this.getTmClient(context, chain.name);
@@ -149,46 +145,41 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 		}
 
 		while (batchQueue.length > 0) {
-			// 4a. 空いているチェーンを探す
 			const availableChain = await this.findAvailableChain(chainClients);
 
 			if (!availableChain) {
 				log.error('[AutoDistribute] 空いているチェーンが見つかりませんでした (タイムアウト)。アップロードを中断します。');
 				totalSuccess = false;
-				break; // while ループを抜ける
+				break;
 			}
 
-			// 4b. キューから次のバッチを取り出す
 			const nextBatch = batchQueue.shift();
 			if (!nextBatch) {
-				break; // キューが空になった (findAvailableChain との競合)
+				break;
 			}
 
 			log.info(`[AutoDistribute] バッチ ${totalBatches - batchQueue.length}/${totalBatches} を ${availableChain.name} に割り当て`);
 
-			// 4c. ワーカー処理（バッチ送信と確認）を非同期で実行
 			const promise = this.runBatchWorker(
 				context,
 				availableChain,
 				nextBatch.chunks,
 				nextBatch.indexes,
-				estimatedGasLimit // estimatedGasLimit を渡す
+				estimatedGasLimit
 			)
 				.then(success => {
 					if (!success) {
-						totalSuccess = false; // 1件でも失敗したら全体を失敗
+						totalSuccess = false;
 					}
 				})
 				.finally(() => {
-					processingPromises.delete(promise); // 完了したらSetから削除
+					processingPromises.delete(promise);
 				});
 
-			processingPromises.add(promise); // 実行中のPromiseをSetに追加
+			processingPromises.add(promise);
 		}
 
-		// 4d. すべての処理が完了するのを待つ
 		await Promise.all(Array.from(processingPromises));
-
 
 		if (!totalSuccess) {
 			log.error('[AutoDistribute] 一部またはすべてのチェーンでアップロードに失敗しました。マニフェスト登録をスキップします。');
@@ -198,17 +189,19 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 
 		log.step(`[AutoDistribute] 全 ${chunks.length} チャンクのアップロード完了。マニフェストを登録中...`);
 
-		// 5. マニフェスト作成
+		// --- ★ 修正: UrlParts を使用 ---
+		// 6. マニフェスト作成 (キーはエンコード済みファイルパス)
 		const manifest: Manifest = {
-			[targetUrl]: chunkIndexes,
+			[urlParts.filePathEncoded]: chunkIndexes, // ★ エンコード済みのパスをキーにする
 		};
 		const manifestContent = JSON.stringify(manifest);
 
-		// 6. マニフェストを metachain にアップロード
+		// 7. マニフェストを metachain にアップロード
 		try {
+			// ★ 修正: メッセージの url フィールドにエンコード済みのベース URL を使用
 			const msg: MsgCreateStoredManifest = {
 				creator: metachainAccount.address,
-				url: targetUrl,
+				url: urlParts.baseUrlEncoded, // ★ エンコード済みのベース URL
 				manifest: manifestContent,
 			};
 
@@ -218,7 +211,8 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 				'auto'
 			);
 
-			log.info(`[AutoDistribute] マニフェスト登録成功。TxHash: ${transactionHash}`);
+			// ★ 修正: ログには Raw 値を表示
+			log.info(`[AutoDistribute] マニフェスト登録成功 (BaseURL: ${urlParts.baseUrlRaw}, FilePath: ${urlParts.filePathRaw})。TxHash: ${transactionHash}`);
 
 			tracker.recordTransaction({
 				hash: transactionHash,
@@ -228,13 +222,14 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 				gasUsed: gasUsed,
 				feeAmount: undefined,
 			});
-			tracker.setManifestUrl(targetUrl);
+			// ★ 修正: Tracker には元の完全な URL を記録
+			tracker.setManifestUrl(urlParts.original);
 
 		} catch (error) {
-			log.error(`[AutoDistribute] マニフェストの登録に失敗しました。`, error);
+			log.error(`[AutoDistribute] マニフェストの登録に失敗しました (BaseURL: ${urlParts.baseUrlRaw})。`, error);
 		}
 
-		// 7. 最終結果
+		// 8. 最終結果
 		tracker.markUploadEnd();
 		log.info(`[AutoDistribute] 完了。所要時間: ${tracker.getUploadResult().durationMs} ms`);
 		return tracker.getUploadResult();
@@ -251,44 +246,31 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 		const chainNames = Array.from(chainClients.keys());
 
 		while (Date.now() - startTime < MEMPOOL_WAIT_TIMEOUT_MS) {
-			// 全チェーンの Mempool 状況を並列で確認
 			const checks = chainNames.map(async (name) => {
 				const client = chainClients.get(name)!;
 				try {
-					// 'unconfirmed_txs' RPC (Tendermint 0.37+) または 'num_unconfirmed_txs' (0.34)
-					// Comet38Client (0.38) には numUnconfirmedTxs() がある
 					if ('numUnconfirmedTxs' in client) {
 						const status = await client.numUnconfirmedTxs();
 						const bytes = parseInt(status.totalBytes.toString(), 10);
-						// const count = parseInt(status.totalTxs, 10);
 						return { name, bytes };
 					} else {
 						log.warn(`[Mempool] クライアント ${name} に numUnconfirmedTxs メソッドがありません。`);
-						return { name, bytes: Infinity }; // 監視できないチェーンは対象外
+						return { name, bytes: Infinity };
 					}
 				} catch (error: any) {
 					log.warn(`[Mempool] ${name} の Mempool 監視中にエラー: ${error.message}`);
-					return { name, bytes: Infinity }; // エラーが発生したチェーンは対象外
+					return { name, bytes: Infinity };
 				}
 			});
 
 			const statuses = await Promise.all(checks);
-
-			// 最も空いているチェーンを探す
 			const bestChain = statuses.sort((a, b) => a.bytes - b.bytes)[0];
 
 			if (bestChain && bestChain.bytes < MEMPOOL_BYTES_LIMIT) {
 				log.debug(`[Mempool] 空きチェーン発見: ${bestChain.name} (Bytes: ${bestChain.bytes})`);
-				// ChainInfo を返す (Map ではなく context から取得すべきだが...)
-				// -> ここで context を参照できないため、名前だけ返す (修正)
-				// -> いや、ChainManager から Client 取得時に ChainInfo も保持すべき
-				// -> findAvailableChain に渡す Map を <string, {client, chainInfo}> にすべき
-
-				// 仮修正: 名前に基づいて ChainInfo を生成
 				return { name: bestChain.name, type: 'datachain' };
 			}
 
-			// 空きがない場合は待機
 			log.debug(`[Mempool] 空きチェーンなし。待機中... (Min bytes: ${bestChain?.bytes ?? 'N/A'})`);
 			await sleep(MEMPOOL_POLL_INTERVAL_MS);
 		}
@@ -308,15 +290,12 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 		const tmClient = communicationStrategy.getRpcClient(rpcEndpoint);
 		if (!tmClient) throw new Error(`RPCクライアントが取得できません: ${chainName}`);
 
-		// getRpcClient は (TendermintClient | HttpBatchClient) を返すため、
-		// Mempool監視 (numUnconfirmedTxs) に必要な TendermintClient であることを確認
 		if (!('numUnconfirmedTxs' in tmClient)) {
 			throw new Error(`[Mempool] ${chainName} のクライアントは numUnconfirmedTxs をサポートしていません (HttpBatchClient?)`);
 		}
 
-		return tmClient as CometClient; // 型キャスト
+		return tmClient as CometClient;
 	}
-
 
 	/**
 	 * 1バッチ分のワーカー処理 (送信 + 確認)
@@ -326,23 +305,21 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 		chainInfo: ChainInfo,
 		chunks: Buffer[],
 		chunkIndexes: string[],
-		estimatedGasLimit: string // 追加
+		estimatedGasLimit: string
 	): Promise<boolean> {
 
 		const { tracker, confirmationStrategy, config } = context;
 		const chainName = chainInfo.name;
 
 		try {
-			// (SequentialUploadStrategy と同じ sendChunkBatch を使用)
 			const batchTxHashes = await this.sendChunkBatch(
 				context,
 				chainName,
 				chunks,
 				chunkIndexes,
-				estimatedGasLimit // 渡す
+				estimatedGasLimit
 			);
 
-			// 完了確認 (バッチごと)
 			const confirmOptions = { timeoutMs: config.confirmationStrategyOptions?.timeoutMs };
 			const results = await confirmationStrategy.confirmTransactions(context, chainName, batchTxHashes, confirmOptions);
 
@@ -370,14 +347,13 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 
 	/**
 	 * チャンクのバッチをノンス手動管理で逐次送信します。
-	 * (SequentialUploadStrategy からロジックを統合)
 	 */
 	private async sendChunkBatch(
 		context: RunnerContext,
 		chainName: string,
 		chunks: Buffer[],
 		indexes: string[],
-		gasLimit: string // 追加
+		gasLimit: string
 	): Promise<string[]> {
 
 		const { chainManager } = context;
@@ -403,8 +379,7 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 		const txHashes: string[] = [];
 		const txRawBytesList: Uint8Array[] = [];
 
-		// ★ 修正: GasPrice, calculateFee を使用して Fee を計算
-		const gasPrice = GasPrice.fromString(DEFAULT_GAS_PRICE); // DEFAULT_GAS_PRICE を使用
+		const gasPrice = GasPrice.fromString(DEFAULT_GAS_PRICE);
 		const fee: StdFee = calculateFee(parseInt(gasLimit, 10), gasPrice);
 
 		log.debug(`[sendChunkBatch ${chainName}] ${messages.length} 件のTxをオフライン署名中... (Start Seq: ${currentSequence}, GasLimit: ${gasLimit}, Fee: ${JSON.stringify(fee.amount)})`);
@@ -419,7 +394,7 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 			const txRaw = await client.sign(
 				account.address,
 				[msg],
-				fee, // 計算済みの fee を使用
+				fee,
 				'',
 				signerData
 			);
@@ -441,7 +416,6 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 				log.debug(`[sendChunkBatch ${chainName}] Txブロードキャスト成功 (Sync): ${hash}`);
 
 			} catch (error: any) {
-				// ★ 修正: エラーログを詳細化
 				const errorMessage = error?.message || String(error);
 				let errorDetails = '';
 				try {

@@ -1,7 +1,10 @@
 // controller/src/strategies/upload/SequentialUploadStrategy.ts
 import { sha256 } from '@cosmjs/crypto';
 import { toHex } from '@cosmjs/encoding';
+import { EncodeObject } from '@cosmjs/proto-signing';
+import { calculateFee, DeliverTxResponse, GasPrice, SignerData, StdFee } from '@cosmjs/stargate';
 import { TxRaw } from 'cosmjs-types/cosmos/tx/v1beta1/tx';
+import { DEFAULT_GAS_PRICE } from '../../core/ChainManager';
 import {
 	Manifest,
 	MsgCreateStoredChunk,
@@ -12,10 +15,6 @@ import {
 } from '../../types/index'; // index を明示
 import { log } from '../../utils/logger';
 import { IUploadStrategy } from './IUploadStrategy';
-// GasPrice と calculateFee をインポート
-import { EncodeObject } from '@cosmjs/proto-signing';
-import { calculateFee, DeliverTxResponse, GasPrice, SignerData, StdFee } from '@cosmjs/stargate';
-import { DEFAULT_GAS_PRICE } from '../../core/ChainManager'; // ★ 修正: ChainManager から定数をインポート
 
 // デフォルトのチャンクサイズ (1MB)
 const DEFAULT_CHUNK_SIZE = 1024 * 1024;
@@ -37,17 +36,22 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 	 * 逐次アップロード処理を実行します。
 	 * @param context 実行コンテキスト
 	 * @param data アップロード対象のデータ
-	 * @param targetUrl このデータに関連付けるURL (マニフェストのキー)
+	 * @param targetUrl このデータに関連付けるURL (マニフェストのキー) - エンコード前
 	 */
 	public async execute(
 		context: RunnerContext,
 		data: Buffer,
-		targetUrl: string
+		targetUrl: string // ★ エンコード前のURLを受け取る
 	): Promise<UploadResult> {
 
-		const { config, chainManager, tracker, confirmationStrategy, gasEstimationStrategy } = context;
+		// ★ 追加: UrlPathCodec をコンテキストから取得
+		const { config, chainManager, tracker, confirmationStrategy, gasEstimationStrategy, urlPathCodec } = context;
 		tracker.markUploadStart();
-		log.info(`[SequentialUpload] 開始... URL: ${targetUrl}, データサイズ: ${data.length} bytes`);
+		// ★ 修正: ログにRaw URL を使用
+		log.info(`[SequentialUpload] 開始... URL (Raw): ${targetUrl}, データサイズ: ${data.length} bytes`);
+
+		// ★ 追加: URLを解析
+		const urlParts = urlPathCodec.parseTargetUrl(targetUrl);
 
 		// 1. 設定と対象チェーンの決定
 		const options = config.uploadStrategyOptions ?? {};
@@ -115,73 +119,53 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 			log.step(`[SequentialUpload] バッチ ${i + 1}/${totalBatches} (${batchChunks.length} Tx) を "${targetChainName}" に送信中... (GasLimit: ${estimatedGasLimit})`);
 
 			try {
-				// sendChunkBatch に estimatedGasLimit を渡す
 				const batchTxHashes = await this.sendChunkBatch(
 					context,
 					targetChainName,
 					batchChunks,
 					batchIndexes,
-					estimatedGasLimit // ガスリミットを渡す
+					estimatedGasLimit
 				);
 				allTxHashes.push(...batchTxHashes);
 
-				// 完了確認 (バッチごと)
 				const confirmOptions = { timeoutMs: config.confirmationStrategyOptions?.timeoutMs };
 				const results = await confirmationStrategy.confirmTransactions(context, targetChainName, batchTxHashes, confirmOptions);
 
-				// 結果をトラッカーに記録
 				const txInfos: TransactionInfo[] = batchTxHashes.map(hash => ({
 					hash: hash,
 					chainName: targetChainName,
-					...results.get(hash)! // 結果が Map に存在することを前提とする (!)
+					...results.get(hash)!
 				}));
 				tracker.recordTransactions(txInfos);
 
-				// 1件でも失敗したら中断
 				const failedTxs = txInfos.filter(info => !info.success);
 				if (failedTxs.length > 0) {
-					// エラーメッセージに失敗理由を含める
 					const firstError = failedTxs[0]?.error || '不明なエラー';
 					throw new Error(`バッチ ${i + 1} で ${failedTxs.length} 件のTxが失敗しました (例: ${firstError})。アップロードを中断します。`);
 				}
 
 			} catch (error) {
 				log.error(`[SequentialUpload] バッチ ${i + 1} の処理中にエラーが発生しました。`, error);
-				tracker.markUploadEnd(); // 失敗時点で終了
-				return tracker.getUploadResult(); // エラー発生時も、それまでの結果を返す
+				tracker.markUploadEnd();
+				return tracker.getUploadResult();
 			}
 		}
 
 		log.step(`[SequentialUpload] 全 ${chunks.length} チャンクのアップロード完了。マニフェストを登録中...`);
 
-		// --- ★ 修正されたマニフェスト作成ロジック ---
-		const lastSlashIndex = targetUrl.lastIndexOf('/');
-		if (lastSlashIndex === -1 || lastSlashIndex === targetUrl.length - 1) {
-			log.error(`[SequentialUpload] targetUrl "${targetUrl}" の形式が無効です (ベースURLとファイルパスに分割できません)。`);
-			tracker.markUploadEnd();
-			return tracker.getUploadResult();
-		}
-
-		// Metachainに登録するベースURL (URIエンコードする)
-		const metachainUrl = targetUrl.substring(0, lastSlashIndex);
-		// Manifestのキーとなる相対ファイルパス (例: '/data.bin')
-		const relativeFilePath = targetUrl.substring(lastSlashIndex);
-
-		// ManifestのキーはURIエンコードされたファイルパスを使用
-		const encodedUrl = encodeURIComponent(metachainUrl);
-		const encodedFilePath = encodeURIComponent(relativeFilePath);
-
-		// 5. マニフェスト作成 (キーをURIエンコードされたファイルパスにする)
+		// --- ★ 修正: UrlParts を使用 ---
+		// 5. マニフェスト作成 (キーはエンコード済みファイルパス)
 		const manifest: Manifest = {
-			[encodedFilePath]: chunkIndexes,
+			[urlParts.filePathEncoded]: chunkIndexes, // ★ エンコード済みのパスをキーにする
 		};
 		const manifestContent = JSON.stringify(manifest);
 
 		// 6. マニフェストを metachain にアップロード
 		try {
+			// ★ 修正: メッセージの url フィールドにエンコード済みのベース URL を使用
 			const msg: MsgCreateStoredManifest = {
 				creator: metachainAccount.address,
-				url: encodedUrl,
+				url: urlParts.baseUrlEncoded, // ★ エンコード済みのベース URL
 				manifest: manifestContent,
 			};
 
@@ -191,7 +175,8 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 				'auto'
 			);
 
-			log.info(`[SequentialUpload] マニフェスト登録成功。TxHash: ${transactionHash}`);
+			// ★ 修正: ログには Raw 値を表示
+			log.info(`[SequentialUpload] マニフェスト登録成功 (BaseURL: ${urlParts.baseUrlRaw}, FilePath: ${urlParts.filePathRaw})。TxHash: ${transactionHash}`);
 
 			tracker.recordTransaction({
 				hash: transactionHash,
@@ -201,10 +186,11 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 				gasUsed: gasUsed,
 				feeAmount: undefined,
 			});
-			tracker.setManifestUrl(targetUrl); // ダウンロード時に再解析させるため、フルURLを保持
+			// ★ 修正: Tracker には元の完全な URL を記録
+			tracker.setManifestUrl(urlParts.original);
 
 		} catch (error) {
-			log.error(`[SequentialUpload] マニフェストの登録に失敗しました。`, error);
+			log.error(`[SequentialUpload] マニフェストの登録に失敗しました (BaseURL: ${urlParts.baseUrlRaw})。`, error);
 		}
 
 		// 7. 最終結果
@@ -212,8 +198,6 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 		log.info(`[SequentialUpload] 完了。所要時間: ${tracker.getUploadResult().durationMs} ms`);
 		return tracker.getUploadResult();
 	}
-
-	// ... (sendChunkBatch は省略) ...
 
 	/**
 	 * チャンクのバッチをノンス手動管理で逐次送信します。
@@ -250,9 +234,7 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 		const txHashes: string[] = [];
 		const txRawBytesList: Uint8Array[] = [];
 
-		// ガス価格を取得 (デフォルトを使用)
 		const gasPrice = GasPrice.fromString(DEFAULT_GAS_PRICE);
-		// 手数料を計算
 		const fee: StdFee = calculateFee(parseInt(gasLimit, 10), gasPrice);
 
 		log.debug(`[sendChunkBatch ${chainName}] ${messages.length} 件のTxをオフライン署名中... (Start Seq: ${currentSequence}, GasLimit: ${gasLimit}, Fee: ${JSON.stringify(fee.amount)})`);
@@ -263,7 +245,6 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 				chainId: chainId,
 			};
 
-			// client.sign に計算済みの fee オブジェクトを渡す
 			const txRaw = await client.sign(
 				account.address,
 				[msg],
@@ -276,17 +257,14 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 			currentSequence++;
 		}
 
-		// ローカルのシーケンス番号を更新
 		chainManager.incrementSequence(chainName, messages.length);
 
-		// broadcastTxSync で一括送信
 		log.debug(`[sendChunkBatch ${chainName}] ${txRawBytesList.length} 件のTxをブロードキャスト中...`);
 		for (const txBytes of txRawBytesList) {
 			const hash = toHex(sha256(txBytes)).toUpperCase();
 			txHashes.push(hash);
 			try {
 				const returnedHash = await client.broadcastTxSync(txBytes);
-				// 戻り値のハッシュが計算結果と一致するか確認 (デバッグ用)
 				if (returnedHash.toUpperCase() !== hash) {
 					log.warn(`[sendChunkBatch ${chainName}] ブロードキャストされたTxハッシュ (${returnedHash}) が計算結果 (${hash}) と一致しません。`);
 				}
@@ -296,7 +274,6 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 				let errorDetails = '';
 				try {
 					errorDetails = JSON.stringify(error, (key, value) => {
-						// ErrorやBigIntのJSON化に対応
 						if (value instanceof Error) return { message: value.message, stack: value.stack };
 						if (typeof value === 'bigint') return value.toString() + 'n';
 						return value;
@@ -304,7 +281,6 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 				} catch {
 					errorDetails = String(error);
 				}
-
 				log.error(`[sendChunkBatch ${chainName}] Tx (Hash: ${hash}) のブロードキャスト中に例外発生。メッセージ: ${errorMessage}\n詳細: ${errorDetails}`, error);
 			}
 		}

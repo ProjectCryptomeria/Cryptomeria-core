@@ -6,6 +6,7 @@ import { InfrastructureService } from "../infrastructure/InfrastructureService";
 import { ICommunicationStrategy } from "../strategies/communication/ICommunicationStrategy";
 import { IConfirmationStrategy } from "../strategies/confirmation/IConfirmationStrategy";
 import { IGasEstimationStrategy } from "../strategies/gas/IGasEstimationStrategy";
+import { UrlPathCodec } from "../utils/UrlPathCodec";
 
 /**
  * 実験設定ファイル (experiments/configs/*.config.ts) の型
@@ -150,6 +151,23 @@ export interface TransactionInfo extends ConfirmationResult {
 	chainName: string;
 }
 
+/**
+ * ユーザー指定の targetUrl を解析し、エンコード前後の値を保持する型。
+ */
+export interface UrlParts {
+	/** 元の完全な targetUrl (例: 'my-site/path/data.bin') */
+	original: string;
+
+	/** ベースURL部分 (エンコード前) (例: 'my-site/path') */
+	baseUrlRaw: string;
+	/** ベースURL部分 (エンコード済) (例: 'my-site%2Fpath') - Metachain のキーやクエリに使用 */
+	baseUrlEncoded: string;
+
+	/** ファイルパス部分 (エンコード前) (例: '/data.bin') */
+	filePathRaw: string;
+	/** ファイルパス部分 (エンコード済) (例: '%2Fdata.bin') - Manifest のキーに使用 */
+	filePathEncoded: string;
+}
 
 /**
  * 各戦略モジュール (Strategy) の実行時に渡されるコンテキストオブジェクト。
@@ -176,6 +194,9 @@ export interface RunnerContext {
 	 */
 	confirmationStrategy: IConfirmationStrategy;
 
-	/** ★ 追加: 現在のイテレーションで使用するガス計算戦略インスタンス */
+	/** 現在のイテレーションで使用するガス計算戦略インスタンス */
 	gasEstimationStrategy: IGasEstimationStrategy;
+
+	/** URL/パスのエンコード・デコード・分割を行うユーティリティ */
+	urlPathCodec: UrlPathCodec;
 }
