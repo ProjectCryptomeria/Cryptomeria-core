@@ -99,22 +99,7 @@ export class HttpCommunicationStrategy implements ICommunicationStrategy {
 			//    ここでは登録されているベースURLから適切なものを探す
 
 			const matchingBaseUrl = Array.from(this.restBaseUrls.keys()).find(base => path.startsWith(base));
-
-			if (matchingBaseUrl) {
-				// path は既にフルパスだった
-				fullUrl = path;
-			} else {
-				// path が相対パス (/cosmos/...) だった場合
-				// どのベースURLを使うか特定できない。
-				// HttpDownloadStrategy がフルパスを渡す前提に変更したため、
-				// ここでベースURLを付与するロジックは削除する。
-
-				// throw new Error(`[HTTP] REST API のベースURLが設定されていません (Path: ${path})。connect() で API エンドポイントを登録してください。`);
-
-				// Note: HttpDownloadStrategy 側で ${metachainApiUrl}${manifestPath} として
-				// フルのURLを渡すように実装したため、このロジックはフルURLを前提とする。
-				fullUrl = path;
-			}
+			fullUrl = path;
 		}
 
 		if (params) {
