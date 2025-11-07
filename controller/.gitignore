@@ -18,3 +18,4 @@ node_modules
 src/tests/*.txt
 *.log
 temp-file-*
+expriments/*
