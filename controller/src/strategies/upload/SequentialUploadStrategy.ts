@@ -156,7 +156,7 @@ export class SequentialUploadStrategy implements IUploadStrategy {
 		// --- ★ 修正: UrlParts を使用 ---
 		// 5. マニフェスト作成 (キーはエンコード済みファイルパス)
 		const manifest: Manifest = {
-			[urlParts.filePathEncoded]: chunkIndexes, // ★ エンコード済みのパスをキーにする
+			[urlParts.filePathRaw]: chunkIndexes, // ★ エンコード済みのパスをキーにする
 		};
 		const manifestContent = JSON.stringify(manifest);
 
