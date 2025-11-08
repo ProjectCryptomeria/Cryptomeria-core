@@ -156,7 +156,7 @@ export class ExperimentRunner {
 		let base = this.config.targetUrlBase
 			? this.config.targetUrlBase.replace(/\/+$/, '') // 末尾のスラッシュを削除
 			: `raidchain.test`;
-		base += `/${Date.now().toString()}`; // タイムスタンプを追加
+		base += `@${Date.now().toString()}`; // タイムスタンプを追加
 
 		// ★ 修正: ファイル名を固定 (data.bin) ではなく、より一般的に (例: /file)
 		//   ファイル名は UrlPathCodec で分離されるため、ここでは単純なファイル名を付加

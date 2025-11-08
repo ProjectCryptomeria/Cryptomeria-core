@@ -9,7 +9,7 @@ NAMESPACE         := "raidchain"
 IMAGE_DATACHAIN   := "raidchain/datachain:latest"
 IMAGE_METACHAIN   := "raidchain/metachain:latest"
 IMAGE_RELAYER     := "raidchain/relayer:latest"
-DEFAULT_CHAINS    := "7"
+DEFAULT_CHAINS    := "4"
 
 # justコマンドのデフォルトの挙動を設定。コマンド一覧を表示する。
 default:
@@ -30,7 +30,7 @@ all-in-one chains=DEFAULT_CHAINS:
     @just clean-all
     @just scaffold-chain
     @just build
-    @just deploy {{chains}}
+    @just deploy-clean {{chains}}
     @echo "✅ All-in-one process complete!"
 
 # --- Build Tasks ---

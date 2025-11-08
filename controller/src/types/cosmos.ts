@@ -15,9 +15,10 @@ export interface MsgCreateStoredChunk {
  * (metachain/x/metastore/types/tx.pb.go を参照)
  */
 export interface MsgCreateStoredManifest {
-	creator: string;  // 送信者のアドレス
-	url: string;      // サイト/リソース群の一意なURL (例: 'my-site/')
-	manifest: string; // ファイル構成情報 (JSON文字列)
+	creator: string;
+	index: string; 
+	domain: string; 
+	manifest: string;
 }
 
 /**
@@ -36,12 +37,13 @@ export interface StoredChunkResponse {
  * (metachain/x/metastore/types/query.pb.go ManifestResponse を参照)
  */
 export interface StoredManifestResponse {
-	manifest: {
-		url: string;
-		manifest: string; // JSON string of the Manifest interface
+	stored_manifest: {
+		index: string;
+		domain: string;
+		manifest: string;
+		creator: string;
 	};
 }
-
 /**
  * マニフェストJSON文字列をパースした後のオブジェクト型
  * (要件定義書 3.3. データ要件 metachain 構造を参照)

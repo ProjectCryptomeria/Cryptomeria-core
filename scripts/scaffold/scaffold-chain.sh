@@ -49,9 +49,9 @@ else
             ;;
         "metachain")
             # metachain: url(string)をキーとするKVS(map)を定義
-            ignite scaffold map storedManifest manifest:string \
+            ignite scaffold map storedManifest manifest:string domain:string \
                 --module "$MODULE_NAME" \
-                --index url:string \
+                --index index:string \
                 --signer creator \
                 --yes
             ;;

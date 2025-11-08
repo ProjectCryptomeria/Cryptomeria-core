@@ -53,32 +53,39 @@ const MsgCreateStoredChunkProto: GeneratedType = {
 };
 
 // --- MsgCreateStoredManifest のエンコード/デコード実装 ---
-
 const MsgCreateStoredManifestProto: GeneratedType = {
-	// ★ 修正点2: create メソッドを追加
+	// 1. create メソッド (これはユーザーのコードで正しかったです)
 	create(base?: Partial<MsgCreateStoredManifest>): MsgCreateStoredManifest {
 		return {
 			creator: base?.creator ?? "",
-			url: base?.url ?? "",
+			index: base?.index ?? "",
+			domain: base?.domain ?? "",
 			manifest: base?.manifest ?? "",
 		};
 	},
+
+	// 2. encode メソッド (タグ番号と型を修正)
 	encode(message: MsgCreateStoredManifest, writer: Writer = Writer.create()): Writer {
 		if (message.creator !== "") {
-			writer.uint32(10).string(message.creator);
+			writer.uint32(10).string(message.creator); // Tag 1: creator
 		}
-		if (message.url !== "") {
-			writer.uint32(18).string(message.url);
+		if (message.index !== "") {
+			writer.uint32(18).string(message.index); // Tag 2: index
 		}
 		if (message.manifest !== "") {
-			writer.uint32(26).string(message.manifest);
+			writer.uint32(26).string(message.manifest); // Tag 3: manifest
+		}
+		if (message.domain !== "") {
+			writer.uint32(34).string(message.domain); // Tag 4: domain
 		}
 		return writer;
 	},
+
+	// 3. decode メソッド (タグの順序を修正)
 	decode(input: Reader | Uint8Array, length?: number): MsgCreateStoredManifest {
 		const reader = input instanceof Reader ? input : new Reader(input);
 		const end = length === undefined ? reader.len : reader.pos + length;
-		const message: MsgCreateStoredManifest = { creator: "", url: "", manifest: "" };
+		const message: MsgCreateStoredManifest = { creator: "", index: "", domain: "", manifest: "" };
 		while (reader.pos < end) {
 			const tag = reader.uint32();
 			switch (tag >>> 3) {
@@ -86,10 +93,13 @@ const MsgCreateStoredManifestProto: GeneratedType = {
 					message.creator = reader.string();
 					break;
 				case 2:
-					message.url = reader.string();
+					message.index = reader.string();
 					break;
 				case 3:
-					message.manifest = reader.string();
+					message.manifest = reader.string(); // ★ Tag 3 は manifest
+					break;
+				case 4:
+					message.domain = reader.string(); // ★ Tag 4 は domain
 					break;
 				default:
 					reader.skipType(tag & 7);

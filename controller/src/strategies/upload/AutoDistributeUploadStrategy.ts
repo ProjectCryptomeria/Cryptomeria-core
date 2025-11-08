@@ -201,7 +201,8 @@ export class AutoDistributeUploadStrategy implements IUploadStrategy {
 			// ★ 修正: メッセージの url フィールドにエンコード済みのベース URL を使用
 			const msg: MsgCreateStoredManifest = {
 				creator: metachainAccount.address,
-				url: urlParts.baseUrlEncoded, // ★ エンコード済みのベース URL
+				index: urlParts.baseUrlEncoded, // ★ エンコード済みのベース URL
+				domain: urlParts.baseUrlRaw,
 				manifest: manifestContent,
 			};
 

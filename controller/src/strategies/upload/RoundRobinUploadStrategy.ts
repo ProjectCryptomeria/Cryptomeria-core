@@ -173,7 +173,8 @@ export class RoundRobinUploadStrategy implements IUploadStrategy {
 			// ★ 修正: メッセージの url フィールドにエンコード済みのベース URL を使用
 			const msg: MsgCreateStoredManifest = {
 				creator: metachainAccount.address,
-				url: urlParts.baseUrlEncoded, // ★ エンコード済みのベース URL
+				index: urlParts.baseUrlEncoded, // ★ エンコード済みのベース URL をインデックスに
+				domain: urlParts.baseUrlRaw, // ★ エンコード済みのベース URL
 				manifest: manifestContent,
 			};
 

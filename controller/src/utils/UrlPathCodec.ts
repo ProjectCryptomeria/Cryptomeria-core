@@ -36,9 +36,9 @@ export class UrlPathCodec {
 
 		// ★ エンコード処理を一元化 ★
 		// encodeURIComponent は '/' もエンコードするため、そのまま使用
-		const baseUrlEncoded = encodeURIComponent(baseUrlRaw);
+		const baseUrlEncoded = Buffer.from(baseUrlRaw).toString('base64url');
 		// ファイルパスも同様にエンコード
-		const filePathEncoded = encodeURIComponent(filePathRaw);
+		const filePathEncoded = Buffer.from(filePathRaw).toString('base64url');
 
 		log.debug(`URL Parsed: Original='${targetUrl}', BaseRaw='${baseUrlRaw}', FileRaw='${filePathRaw}', BaseEncoded='${baseUrlEncoded}', FileEncoded='${filePathEncoded}'`);
 
@@ -72,7 +72,7 @@ export class UrlPathCodec {
 	 */
 	decodeBaseUrl(encodedBaseUrl: string): string {
 		try {
-			return decodeURIComponent(encodedBaseUrl);
+			return Buffer.from(encodedBaseUrl, 'base64url').toString('utf-8');
 		} catch (e) {
 			log.warn(`Failed to decode base URL: "${encodedBaseUrl}"`, e);
 			return encodedBaseUrl; // デコード失敗時は元の文字列を返す

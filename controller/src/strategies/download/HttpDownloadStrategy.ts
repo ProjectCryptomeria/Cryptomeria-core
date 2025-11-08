@@ -62,11 +62,11 @@ export class HttpDownloadStrategy implements IDownloadStrategy {
 				`${metachainApiUrl}${manifestPath}`
 			);
 
-			if (!manifestResponse.manifest || !manifestResponse.manifest.manifest) {
+			if (!manifestResponse.stored_manifest || !manifestResponse.stored_manifest.manifest) {
 				throw new Error(`マニフェストが見つかりません (BaseURL Raw: ${urlParts.baseUrlRaw})`);
 			}
 
-			const manifest: Manifest = JSON.parse(manifestResponse.manifest.manifest);
+			const manifest: Manifest = JSON.parse(manifestResponse.stored_manifest.manifest);
 			log.debug(`[Download] マニフェスト取得成功。`);
 
 			// 3. datachain の API エンドポイントを取得し、commStrategy に接続
@@ -82,7 +82,7 @@ export class HttpDownloadStrategy implements IDownloadStrategy {
 			}
 
 			// 4. マニフェストからチャンクインデックスを取得
-			const chunkIndexes = manifest[urlParts.filePathEncoded];
+			const chunkIndexes = manifest[urlParts.filePathRaw];
 			if (!chunkIndexes || chunkIndexes.length === 0) {
 				throw new Error(`マニフェスト内にファイルパス "${urlParts.filePathRaw}" のチャンク情報が見つかりません。`);
 			}
