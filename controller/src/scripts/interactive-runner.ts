@@ -109,17 +109,17 @@ async function runInteractive() {
 				{ name: 'success', message: 'SUCCESS (緑色: 主要な成功ログのみ)' },
 				{ name: 'none', message: 'NONE    (無音: すべてのログを無効化)' }
 			],
-			initial: 1, // デフォルトを 'info' (インデックス 1) に設定
+			initial: 2, // デフォルトを 'success' (インデックス 2) に設定
 		});
 
 		// 4. プログレスバー表示確認 (enquirer 構文)
-		let showProgressBar = true;
+		let showProgressBar = false;
 		if (process.stdout.isTTY) {
 			const { confirmProgress } = await prompt<{ confirmProgress: boolean }>({
 				type: 'confirm',
 				name: 'confirmProgress',
 				message: '📈 プログレスバーを表示しますか？ (TTYが検出されました)',
-				initial: true,
+				initial: false,
 			});
 			showProgressBar = confirmProgress;
 		}
