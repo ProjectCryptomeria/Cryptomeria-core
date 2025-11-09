@@ -42,9 +42,11 @@ export class RoundRobinAllocator implements IChunkAllocator {
 
 		// 2. バッチサイズを決定
 		// (OneByOne の場合は実質1)
-		const batchSize = (config.strategies.upload === 'Sequential') // Sequential は OneByOneTransmitter を使う想定
+		// ★★★ 修正箇所 ★★★
+		const batchSize = (config.strategies.uploadTransmitter === 'OneByOne')
 			? 1
 			: DEFAULT_BATCH_SIZE_PER_CHAIN; // TODO: options から取得
+		// ★★★ 修正箇所 ★★★
 
 		const batches = this.coreLogic.createBatches(allChunks, batchSize);
 

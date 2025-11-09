@@ -21,7 +21,6 @@ const DEFAULT_BATCH_SIZE_PER_CHAIN = 100;
 export class AvailableAllocator implements IChunkAllocator {
 	private coreLogic: BaseCoreLogic;
 	private chainClients = new Map<string, CometClient>();
-	// ★★★ 修正: private -> public ★★★
 	public chainBars = new Map<string, IProgressBar>();
 
 	constructor() {
@@ -68,9 +67,11 @@ export class AvailableAllocator implements IChunkAllocator {
 		}
 
 		// 3. バッチサイズを決定 (OneByOne の場合は実質1)
-		const batchSize = (config.strategies.upload === 'Sequential') // Sequential は OneByOneTransmitter を使う想定
+		// ★★★ 修正箇所 ★★★
+		const batchSize = (config.strategies.uploadTransmitter === 'OneByOne')
 			? 1
 			: DEFAULT_BATCH_SIZE_PER_CHAIN; // TODO: options から取得
+		// ★★★ 修正箇所 ★★★
 
 		const batches = this.coreLogic.createBatches(allChunks, batchSize);
 		const batchQueue = [...batches];
@@ -126,11 +127,6 @@ export class AvailableAllocator implements IChunkAllocator {
 
 	/**
 	 * 割り当て処理完了後 (成功または失敗時) にバーの後処理を行う
-	 * (CompositeStrategy から呼び出されることを想定... だが責務が曖昧になる)
-	 *
-	 * → AvailableAllocator はバーの *割り当て* (setTotal, 'Batch Assigned') までを担当する。
-	 * Transmitter が実行中のステータス ('Broadcasting', 'Confirming', 'Batch Done') を更新する。
-	 * CompositeStrategy が全Job完了後に、バーの後処理 (cleanupBars) を行う。
 	 */
 	public cleanupBars(isError: boolean, actualChunksAssigned: Map<string, number>): void {
 		this.chainBars.forEach((bar, name) => {
@@ -189,7 +185,6 @@ export class AvailableAllocator implements IChunkAllocator {
 			statuses.forEach(status => {
 				const bar = chainBars.get(status.name);
 				if (!bar) return;
-				// (実行中のバーのステータスを上書きしないよう、'Waiting' または 'Mempool' 関連のステータスの場合のみ更新するほうが望ましいが、簡易実装)
 				if (status.bytes >= MEMPOOL_BYTES_LIMIT) {
 					const bytesMB = (status.bytes / 1024 / 1024).toFixed(1);
 					bar.updatePayload({

@@ -3,37 +3,27 @@ import * as fs from 'fs';
 import * as path from 'path';
 import winston, { Logform } from 'winston';
 import Transport from 'winston-transport';
-
-// ★ 修正 1: LogLevel に 'none' を追加
-export type LogLevel = 'error' | 'warn' | 'success' | 'info' | 'debug' | 'none';
+// ★ 修正 1: LogLevel のインポート元を変更 (または型を直接定義)
+// (types/index.ts からエクスポートされている前提)
+import { LogLevel } from '../types';
 
 // --- 動的なログファイルパスの定義 ---
-
-// ★★★ 修正箇所: 実行スクリプト名ではなく、設定ファイル名を取得するロジック ★★★
 const args = process.argv;
 const configIndex = args.indexOf('--config');
 let baseFileName: string;
 
 if (configIndex !== -1 && args[configIndex + 1]) {
-	// --config 引数が見つかった場合、そのファイル名を使用する
 	const configPath = args[configIndex + 1]!;
-	// パスから拡張子を除いたファイル名 (例: case3-Distribute-Poling) を取得
 	baseFileName = path.basename(configPath, path.extname(configPath));
 } else {
-	// 見つからない場合は、実行スクリプト名 (例: run-experiment) を使用する
 	baseFileName = path.basename(process.argv[1]!, path.extname(process.argv[1]!));
 }
-// ★★★ 修正箇所 ここまで ★★★
 
-// ログディレクトリを src/experiments/results/logs に変更
 const LOG_DIR = path.join(__dirname, '..', 'experiments', 'results', 'logs');
-
-// ログファイル名を動的に生成
 const ALL_LOG_FILE = path.join(LOG_DIR, `${baseFileName}.all.log`);
 const ERROR_LOG_FILE = path.join(LOG_DIR, `${baseFileName}.error.log`);
 
 
-// ログディレクトリが存在しない場合は作成
 try {
 	if (!fs.existsSync(LOG_DIR)) {
 		fs.mkdirSync(LOG_DIR, { recursive: true });
@@ -44,9 +34,8 @@ try {
 
 // --- カスタムレベルと色の定義 ---
 const customLevels = {
-	// ★ 修正 2: levels に 'none' を追加 (error より小さい値)
 	levels: {
-		none: -1, // このレベル自体は使わないが、設定用に定義
+		none: -1,
 		error: 0,
 		warn: 1,
 		success: 2,
@@ -59,21 +48,17 @@ const customLevels = {
 		success: 'green',
 		info: 'magenta',
 		debug: 'cyan',
-		none: 'grey', // 使われないが定義
+		none: 'grey',
 	},
 };
 
-// winston にカスタム色を登録
 winston.addColors(customLevels.colors);
 
-// ログレベル (デフォルトは 'info')
 let currentLogLevel: LogLevel = 'info';
-
-// ★★★ 新規: ファイルログ書き込みフラグ ★★★
 let isFileLoggingEnabled: boolean = true;
 
 
-// ログフォーマット
+// ログフォーマット (変更なし)
 const fileLogFormat = winston.format.combine(
 	winston.format.timestamp({ format: 'YYYY-MM-DDTHH:mm:ss.SSSZ' }),
 	winston.format.errors({ stack: true }),
@@ -85,9 +70,7 @@ const fileLogFormat = winston.format.combine(
 	})
 );
 
-// ★★★ コンソール用フォーマット (修正) ★★★
-
-const MAX_LEVEL_LENGTH = 7; // "SUCCESS" の長さ
+const MAX_LEVEL_LENGTH = 7;
 const levelAlign = winston.format((info) => {
 	const level = info.level.toUpperCase();
 	const padding = MAX_LEVEL_LENGTH - level.length;
@@ -110,7 +93,7 @@ const consoleLogFormat = winston.format.combine(
 	})
 );
 
-// メモリバッファ用トランスポート (エラーサマリー用)
+// メモリバッファ用トランスポート (変更なし)
 const memoryTransportBuffer: Logform.TransformableInfo[] = [];
 class MemoryTransport extends Transport {
 	log(info: Logform.TransformableInfo, callback: () => void) {
@@ -122,125 +105,92 @@ class MemoryTransport extends Transport {
 	}
 }
 
-// Winston ロガーインスタンスの作成
+// Winston ロガーインスタンスの作成 (変更なし)
 const logger = winston.createLogger({
-	level: currentLogLevel, // ★ 修正: ファイル/メモリのデフォルトレベル
+	level: currentLogLevel,
 	levels: customLevels.levels,
 	format: fileLogFormat,
 	transports: [
-		// 1. 全ログファイル (デバッグレベル以上)
 		new winston.transports.File({
 			filename: ALL_LOG_FILE,
-			level: 'debug', // ★ 修正: ファイルは常に debug 以上を書き込む
+			level: 'debug',
 			options: { flags: 'w' },
-			silent: !isFileLoggingEnabled // ★ 初期状態をフラグに連動
+			silent: !isFileLoggingEnabled
 		}),
-		// 2. エラーログファイル (警告レベル以上)
 		new winston.transports.File({
 			filename: ERROR_LOG_FILE,
 			level: 'warn',
 			options: { flags: 'w' },
-			silent: !isFileLoggingEnabled // ★ 初期状態をフラグに連動
+			silent: !isFileLoggingEnabled
 		}),
-
-		// ★★★ 3. コンソール出力 (修正) ★★★
 		new winston.transports.Console({
 			format: consoleLogFormat,
-			// 要件1: コンソールには 'success' レベルのみ出力
-			level: 'success',
-			// 要件2: 'stdout' (プログレスバー) との競合を避けるため、全ログを 'stderr' に出力
+			level: 'success', // ★ デフォルトは 'success'
 			stderrLevels: ['error', 'warn', 'success', 'info', 'debug'],
 		}),
-
-		// 4. メモリバッファ (エラー/警告のみ)
 		new MemoryTransport({ level: 'warn' }),
 	],
 	exitOnError: false,
 });
 
-// ★★★ 新規: ファイルログ制御関数 ★★★
-/**
- * ファイルログトランスポート（'all' と 'error'）の有効/無効を切り替えます。
- * @param enabled true の場合ファイル書き込みを有効化、false の場合無効化
- */
+// ファイルログ制御関数 (変更なし)
 const setFileLogging = (enabled: boolean): void => {
 	isFileLoggingEnabled = enabled;
-
-	// 現在のログレベルが 'none' の場合は、強制的に silent = true のままにする
 	if (currentLogLevel === 'none') {
 		logger.info(`(ファイルログ設定変更: ${enabled ? 'ON' : 'OFF'}。ただし現在LogLevel 'none' のため全ログ無効中)`);
 		return;
 	}
-
 	logger.transports.forEach(transport => {
 		if (transport instanceof winston.transports.File) {
 			transport.silent = !enabled;
 		}
 	});
-
 	logger.info(`ファイルログ書き込みが ${enabled ? '有効' : '無効'} に設定されました。`);
 };
 
-// ★ 修正 3: ログレベル変更関数 (setFileLogging と連動)
+// ログレベル変更関数 (変更なし)
 const setLogLevel = (newLevel: LogLevel): void => {
-	// 'none' の場合の特別処理
 	if (newLevel === 'none') {
 		currentLogLevel = 'none';
-		// すべてのトランスポートを silent (無効化) にする
 		logger.transports.forEach(transport => {
 			transport.silent = true;
 		});
 		logger.level = 'none';
-		// 'none' に設定したことを唯一 console.log (stderr ではない) で通知
 		console.log(`[Logger] LogLevel set to 'none'. All logging disabled.`);
 		return;
 	}
 
-	// 'none' 以外の場合
-	currentLogLevel = newLevel; // 先にレベルを更新
+	currentLogLevel = newLevel;
 
-	// レベルが存在するかチェック (none 以外)
 	if (customLevels.levels[newLevel as keyof typeof customLevels.levels] === undefined) {
 		logger.warn(`無効なログレベル: "${newLevel}"。 'info' を使用します。`);
 		newLevel = 'info';
 		currentLogLevel = 'info';
 	}
 
-	// logger.level (ファイル/メモリ用) はユーザー指定に従う
 	logger.level = currentLogLevel;
 
-	// 各トランスポートの silent 状態を再適用
 	logger.transports.forEach(transport => {
 		if (transport instanceof winston.transports.File) {
-			// ファイルトランスポートは isFileLoggingEnabled フラグに従う
 			transport.silent = !isFileLoggingEnabled;
 		} else if (transport instanceof winston.transports.Console) {
-			// コンソールは silent = false に戻し、レベルを調整
 			transport.silent = false;
-
-			// ★★★ 修正箇所: 抑制ロジックを削除し、指定レベルをそのまま適用する ★★★
-			// ユーザーが info/debug を選択した場合、そのままコンソールに表示されるようになる
+			// ★ 修正: ユーザー指定のレベルをそのままコンソールにも適用
 			transport.level = newLevel;
-			// ★★★ 修正箇所 ここまで ★★★
-
 		} else {
-			// MemoryTransport など
 			transport.silent = false;
 		}
 	});
 
 	const consoleTransport = logger.transports.find(t => t instanceof winston.transports.Console);
-	logger.info(`ファイルログレベルが "${currentLogLevel}" に設定されました。 (コンソールは "${consoleTransport?.level ?? 'success'}" レベル以上のみ表示)`);
+	logger.info(`ファイルログレベルが "${currentLogLevel}" に設定されました。 (コンソールは "${consoleTransport?.level ?? 'N/A'}" レベル以上のみ表示)`);
 };
 
-// ★ 修正 4: 終了時にエラーログを要約して表示する関数
+// エラーログ要約関数 (変更なし)
 const flushErrorLogs = async (): Promise<void> => {
-	// ログレベルが 'none' の場合はサマリーも表示しない
 	if (currentLogLevel === 'none') {
 		return;
 	}
-
-	// ★ 修正: エラー/警告のサマリーも console.error (stderr) に出力
 	if (memoryTransportBuffer.length > 0) {
 		console.error(`\n--- 🚨 エラー/警告 (${memoryTransportBuffer.length}件) ---`);
 		memoryTransportBuffer.forEach(info => {
@@ -257,6 +207,7 @@ const flushErrorLogs = async (): Promise<void> => {
 	}
 };
 
+// log オブジェクト (変更なし)
 const log = {
 	error: (message: string, error?: Error | any, ...meta: any[]) => {
 		if (error instanceof Error) {
@@ -268,19 +219,18 @@ const log = {
 	warn: (message: string, ...meta: any[]) => logger.warn(message, ...meta),
 	success: (message: string, ...meta: any[]) => logger.log('success', message, ...meta),
 	info: (message: string, ...meta: any[]) => logger.info(message, ...meta),
-	debug: (message: string, error?: Error | any, ...meta: any[]) => { // debugにもerror引数追加
+	debug: (message: string, error?: Error | any, ...meta: any[]) => {
 		if (error instanceof Error) {
 			logger.debug(message, { stack: error.stack, ...meta });
 		} else {
 			logger.debug(message, error, ...meta);
 		}
 	},
-	// ★★★ 修正: `\n` を削除 ★★★
 	step: (message: string) => logger.info(`--- STEP: ${message} ---`),
 	setLogLevel,
-	setFileLogging, // ★ 新規追加
+	setFileLogging,
 	flushErrorLogs,
-	isDebug: () => currentLogLevel === 'debug', // ★ 修正 5: 変更なし
+	isDebug: () => currentLogLevel === 'debug',
 };
 
 log.debug(`ロガーが初期化されました。デフォルトログレベル: ${currentLogLevel}`);

@@ -2,8 +2,10 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { ExperimentRunner } from './core/ExperimentRunner';
-import { ExperimentConfig, ExperimentResult } from './types';
-import { log, LogLevel } from './utils/logger';
+import { ExperimentConfig, ExperimentResult, LogLevel } from './types'; // LogLevel も types/index.ts からインポート (要修正)
+// ★ 修正: LogLevel を types からインポート (logger からは削除)
+// import { log, LogLevel } from './utils/logger';
+import { log } from './utils/logger';
 import { IProgressManager } from './utils/ProgressManager/IProgressManager';
 import { ProgressManager, SilentProgressManager } from './utils/ProgressManager/ProgressManager';
 import { UrlPathCodec } from './utils/UrlPathCodec';
@@ -129,67 +131,23 @@ function instantiateStrategies(config: ExperimentConfig, logLevel: LogLevel, noP
 	}
 
 	// ★★★ 5. アップロード戦略 (Composite パターン) ★★★
-	// (config.strategies.upload には 'Sequential', 'Distribute' が入ってくる想定)
 
 	// 5a. 送信方式 (Transmitter) を決定
-	// (計画書 4-3: 'Sequential' -> OneByOne, 'Distribute' -> MultiBurst)
 	let transmitter: IUploadTransmitter;
-	let allocatorName: string; // Allocator を決定するための内部名
-
-	switch (config.strategies.upload) {
-		case 'Sequential':
-			// Sequential (S-1, S-2) は OneByOne 送信
+	switch (config.strategies.uploadTransmitter) {
+		case 'OneByOne':
 			transmitter = new OneByOneTransmitter();
-			// Allocator はタスクの chainCount や targetChain で決まる
-			// (ここでは単純化し、Sequential=StaticOneByOne と仮定)
-			// → config.strategies.upload の値が 'Sequential' や 'Distribute' のままでは
-			//   S-1 と S-2 を区別できない。
-			//   計画書 4-3「新しい戦略名（例: 'StaticOneByOne', 'AvailableBurst'など）を定義し」
-			//   とあるが、config ファイルは 'Sequential', 'Distribute' のまま。
-			//
-			//   仕様書「アップロード戦略仕様.md」のケース分類に基づき、
-			//   config の *組み合わせ* で Allocator を決定する必要がある。
-			//
-			//   config.strategies.upload == 'Sequential' (Transmitter: OneByOne)
-			//     -> S-1/M-1 (Mega_Chunk/Static) -> StaticMultiAllocator
-			//     -> S-2/M-3 (Common_Queue/Dynamic) -> RoundRobinAllocator (or Available/Random)
-			//   config.strategies.upload == 'Distribute' (Transmitter: MultiBurst)
-			//     -> S-3/M-2 (Mega_Chunk/Static) -> StaticMultiAllocator
-			//     -> S-4/M-4 (Common_Queue/Dynamic) -> RoundRobinAllocator or Available/Random
-			//
-			//   現状の config (case1-4.config.ts) は 'upload' 戦略しか指定しておらず、
-			//   Allocator (Mega_Chunk/Common_Queue) の区別ができない。
-			//
-			//   唯一の手がかり:
-			//   - case1/2 (Sequential) には `targetChain: 'data-0'` がある
-			//   - case3/4/5/7 (Distribute) には `targetChain` がない
-			//
-			//   この情報から、'Sequential' は「静的 (Static)」割当、
-			//   'Distribute' は「動的 (Available)」割当を意図していると推測する。
-			//
-			//   [推測]
-			//   - 'Sequential' -> OneByOneTransmitter + StaticMultiAllocator (S-1, M-1)
-			//   - 'Distribute' -> MultiBurstTransmitter + AvailableAllocator (M-3_D, M-4_D)
-			//
-			//   この推測で実装を進める。
-
-			transmitter = new OneByOneTransmitter();
-			allocatorName = 'StaticMulti'; // 'Sequential' は Static (Mega_Chunk) と推測
 			break;
-
-		case 'Distribute':
+		case 'MultiBurst':
 			transmitter = new MultiBurstTransmitter();
-			allocatorName = 'Available'; // 'Distribute' は Available (Mempool監視) と推測
 			break;
-
 		default:
-			// @ts-ignore
-			throw new Error(`不明なアップロード戦略: ${config.strategies.upload}。Sequential または Distribute を指定してください。`);
+			throw new Error(`不明な UploadTransmitter 戦略: ${config.strategies.uploadTransmitter}`);
 	}
 
 	// 5b. 割当方式 (Allocator) を決定
 	let allocator: IChunkAllocator;
-	switch (allocatorName) {
+	switch (config.strategies.uploadAllocator) {
 		case 'StaticMulti':
 			allocator = new StaticMultiAllocator();
 			break;
@@ -206,7 +164,7 @@ function instantiateStrategies(config: ExperimentConfig, logLevel: LogLevel, noP
 			allocator = new RandomAllocator();
 			break;
 		default:
-			throw new Error(`不明なアロケータ名: ${allocatorName}`);
+			throw new Error(`不明な UploadAllocator 戦略: ${config.strategies.uploadAllocator}`);
 	}
 
 	// 5c. 2つを合成
@@ -251,10 +209,10 @@ function parseArgs(): { configPath: string, logLevel: string | undefined, noProg
 
 
 /**
- * 実験結果をCSV形式の文字列に変換します (変更なし)
+ * 実験結果をCSV形式の文字列に変換します
+ * (★ 修正: config.strategies.upload を .uploadAllocator/.uploadTransmitter に変更)
  */
 async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
-	// ... (変更なし) ...
 	const header = [
 		'Timestamp',
 		'ExperimentDescription',
@@ -275,7 +233,9 @@ async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
 		'Data_Size_Bytes',
 		'Verification_Success',
 		'Strategy_Comm',
-		'Strategy_Upload',
+		// ★ 修正
+		'Strategy_Upload_Allocator',
+		'Strategy_Upload_Transmitter',
 		'Strategy_Confirm',
 	].join(',');
 
@@ -310,7 +270,9 @@ async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
 			dataSize,
 			iter.verificationResult.verified,
 			config.strategies.communication,
-			config.strategies.upload,
+			// ★ 修正
+			config.strategies.uploadAllocator,
+			config.strategies.uploadTransmitter,
 			config.strategies.confirmation,
 		].join(',');
 	});
@@ -320,7 +282,7 @@ async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
 
 /**
  * メイン実行関数
- * (変更なし)
+ * (★ 修正: LogLevel を string からキャスト)
  */
 async function main() {
 	let runner: ExperimentRunner | undefined;
@@ -329,6 +291,7 @@ async function main() {
 	try {
 		// 1. 引数解析
 		const { configPath, logLevel: logLevelArg, noProgress } = parseArgs();
+		// ★ 修正
 		const logLevel: LogLevel = (logLevelArg as LogLevel) ?? 'info';
 
 		if (logLevelArg) {
@@ -354,7 +317,7 @@ async function main() {
 		runner = new ExperimentRunner(config, strategies, urlPathCodec);
 		const result = await runner.run();
 
-		// 5. 結果の表示
+		// 5. 結果の表示 (変更なし)
 		log.step('--- 実験結果サマリー ---');
 		console.error(JSON.stringify(result.summary ?? { message: 'サマリーなし' }, null, 2));
 		log.step('--- イテレーション詳細 (タスク別) ---');
@@ -370,7 +333,7 @@ async function main() {
 			}))
 		);
 
-		// 6. CSVファイルへの保存
+		// 6. CSVファイルへの保存 (変更なし)
 		const csvData = await formatResultsAsCSV(result);
 		const resultsDir = path.join(__dirname, 'experiments', 'results');
 
@@ -389,7 +352,7 @@ async function main() {
 		log.error('実験の実行中に致命的なエラーが発生しました。', error);
 		process.exitCode = 1;
 	} finally {
-		// 7. 終了処理
+		// 7. 終了処理 (変更なし)
 		if (strategies && strategies.progressManager) {
 			strategies.progressManager.stop();
 		}

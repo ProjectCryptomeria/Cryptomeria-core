@@ -41,9 +41,11 @@ export class RandomAllocator implements IChunkAllocator {
 		}
 
 		// 2. バッチサイズを決定
-		const batchSize = (config.strategies.upload === 'Sequential')
+		// ★★★ 修正箇所 ★★★
+		const batchSize = (config.strategies.uploadTransmitter === 'OneByOne')
 			? 1
 			: DEFAULT_BATCH_SIZE_PER_CHAIN;
+		// ★★★ 修正箇所 ★★★
 
 		const batches = this.coreLogic.createBatches(allChunks, batchSize);
 

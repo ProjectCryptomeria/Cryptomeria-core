@@ -145,6 +145,10 @@ ctl-install:
 ctl-add *args:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn add {{args}}"
 
+# [コントローラー] パッケージを削除
+ctl-rmv *args:
+    @{{RUN_SCRIPT}} bash -c "cd controller && yarn remove {{args}}"
+
 # [コントローラー] 開発サーバーを起動
 ctl-dev:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn start"

@@ -6,11 +6,10 @@ import { InfrastructureService } from "../infrastructure/InfrastructureService";
 import { ICommunicationStrategy } from "../strategies/communication/ICommunicationStrategy";
 import { IConfirmationStrategy } from "../strategies/confirmation/IConfirmationStrategy";
 import { IGasEstimationStrategy } from "../strategies/gas/IGasEstimationStrategy";
-// ★ 修正: IProgressManager のインポートパス
 import { IProgressManager } from "../utils/ProgressManager/IProgressManager";
 import { UrlPathCodec } from "../utils/UrlPathCodec";
 
-// (TaskTarget, TaskOption, ExperimentConfig, ExperimentResult, IterationResult, ... 他の型 ... は変更なし)
+// (TaskTarget, TaskOption は変更なし)
 export type TaskTarget = {
 	type: 'sizeKB';
 	value: number;
@@ -26,17 +25,31 @@ export interface TaskOption {
 	targetChain?: string;
 	pipelineDepth?: number;
 }
+
+// ★★★ 修正箇所 (ここから) ★★★
+/**
+ * IChunkAllocator の実装クラス名
+ */
+export type UploadAllocatorStrategy = 'StaticMulti' | 'RoundRobin' | 'Random' | 'Available';
+/**
+ * IUploadTransmitter の実装クラス名
+ */
+export type UploadTransmitterStrategy = 'OneByOne' | 'MultiBurst';
+
 export interface ExperimentConfig {
 	description: string;
 	iterations: number;
 	tasks: TaskOption[];
 	strategies: {
 		communication: 'Http' | 'WebSocket';
-		upload: 'Sequential' | 'Distribute';
+		// upload: 'Sequential' | 'Distribute'; // <-- 廃止
+		uploadAllocator: UploadAllocatorStrategy; // <-- 新設
+		uploadTransmitter: UploadTransmitterStrategy; // <-- 新設
 		confirmation: 'Polling' | 'TxEvent';
 		download: 'Http';
 		verification: 'BufferFull' | 'BufferPartial';
 	};
+	// ★★★ 修正箇所 (ここまで) ★★★
 	communicationStrategyOptions?: any;
 	uploadStrategyOptions?: {};
 	confirmationStrategyOptions?: {
@@ -48,6 +61,8 @@ export interface ExperimentConfig {
 	};
 	targetUrlBase?: string;
 }
+
+// (以降の型定義 ExperimentResult, IterationResult, ... UrlParts は変更なし)
 export interface ExperimentResult {
 	config: ExperimentConfig;
 	iterationResults: IterationResult[];
@@ -118,7 +133,7 @@ export interface UrlParts {
 	filePathRaw: string;
 	filePathEncoded: string;
 }
-
+export type LogLevel = 'error' | 'warn' | 'success' | 'info' | 'debug' | 'none';
 
 /**
  * 各戦略モジュール (Strategy) の実行時に渡されるコンテキストオブジェクト。
