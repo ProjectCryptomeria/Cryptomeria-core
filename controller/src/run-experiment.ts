@@ -2,8 +2,12 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { ExperimentRunner } from './core/ExperimentRunner';
+// ★ 修正: IProgressManager のインポートパス
+import { IProgressManager } from './utils/ProgressManager/IProgressManager';
+// ★ 修正: ProgressManager のインポートパス
 import { ExperimentConfig, ExperimentResult } from './types';
-import { log } from './utils/logger';
+import { log, LogLevel } from './utils/logger';
+import { ProgressManager } from './utils/ProgressManager/ProgressManager';
 import { UrlPathCodec } from './utils/UrlPathCodec';
 
 // --- すべての具象戦略クラスをインポート ---
@@ -21,21 +25,18 @@ import {
 	HttpDownloadStrategy,
 	IDownloadStrategy
 } from './strategies/download';
-
-// ★ 修正: インポートする具象戦略クラスを変更
-import {
-	DistributeUploadStrategy, // ★ 修正
-	IUploadStrategy,
-	SequentialUploadStrategy // ★ 修正
-} from './strategies/upload';
-// (RoundRobinUploadStrategy と AutoDistributeUploadStrategy は削除)
-
 import { IGasEstimationStrategy, SimulationGasEstimationStrategy } from './strategies/gas';
+import {
+	DistributeUploadStrategy,
+	IUploadStrategy,
+	SequentialUploadStrategy
+} from './strategies/upload';
 import {
 	BufferVerificationStrategy,
 	IVerificationStrategy
 } from './strategies/verification';
 
+// ★ 修正: progressManager を追加
 interface ExperimentStrategies {
 	commStrategy: ICommunicationStrategy;
 	uploadStrategy: IUploadStrategy;
@@ -43,14 +44,16 @@ interface ExperimentStrategies {
 	downloadStrategy: IDownloadStrategy;
 	verifyStrategy: IVerificationStrategy;
 	gasEstimationStrategy: IGasEstimationStrategy;
+	progressManager: IProgressManager;
 }
 
 /**
  * 設定オブジェクト（文字列）に基づき、
  * 戦略クラスの具象インスタンスを生成します。
+ * (★ 修正: progressManager を返すように変更)
  */
 function instantiateStrategies(config: ExperimentConfig): ExperimentStrategies {
-	log.info('戦略モジュールをインスタンス化しています...');
+	log.info('戦略モジュールをインスタンス化しています...'); // (ファイルログ用)
 
 	let commStrategy: ICommunicationStrategy;
 	switch (config.strategies.communication) {
@@ -79,28 +82,21 @@ function instantiateStrategies(config: ExperimentConfig): ExperimentStrategies {
 			throw new Error(`不明な完了確認戦略: ${config.strategies.confirmation}`);
 	}
 
-	// ★★★ 修正箇所: アップロード戦略のインスタンス化 ★★★
 	let uploadStrategy: IUploadStrategy;
 	switch (config.strategies.upload) {
-
-		// 方式1: シーケンシャル（ワンバイワン）
 		case 'Sequential':
 			uploadStrategy = new SequentialUploadStrategy();
 			break;
-
-		// 方式2: ディストリビュート（マルチバースト）
-		case 'Distribute': // ★ ご要望の「ディストリビュート戦略」
-			// この戦略は Mempool 監視のため WebSocket (RPC Client) が必須
+		case 'Distribute':
 			if (config.strategies.communication !== 'WebSocket') {
 				throw new Error('DistributeUploadStrategy は WebSocketCommunicationStrategy が必要です (Mempool 監視のため)。');
 			}
 			uploadStrategy = new DistributeUploadStrategy();
 			break;
 		default:
-			// @ts-ignore (型チェックで 'RoundRobin' や 'AutoDistribute' がエラーになるが、実行時エラーとして捕捉)
+			// @ts-ignore
 			throw new Error(`不明なアップロード戦略: ${config.strategies.upload}。Sequential または Distribute を指定してください。`);
 	}
-	// ★★★ 修正箇所ここまで ★★★
 
 	let downloadStrategy: IDownloadStrategy;
 	switch (config.strategies.download) {
@@ -123,39 +119,40 @@ function instantiateStrategies(config: ExperimentConfig): ExperimentStrategies {
 
 	const gasEstimationStrategy = new SimulationGasEstimationStrategy();
 
-	log.info('すべての戦略モジュールのインスタンス化が完了しました。');
+	// ★ 追加: ProgressManager をインスタンス化
+	const progressManager = new ProgressManager();
+
+	log.info('すべての戦略モジュールのインスタンス化が完了しました。'); // (ファイルログ用)
 	return {
 		commStrategy,
 		uploadStrategy,
 		confirmStrategy,
 		downloadStrategy,
 		verifyStrategy,
-		gasEstimationStrategy
+		gasEstimationStrategy,
+		progressManager // ★ 返す
 	};
 }
 
 /**
  * コマンドライン引数を解析します。
- * (★ ステップ3: 修正)
  */
 function parseArgs(): { configPath: string, logLevel: string | undefined } {
 	const args = process.argv.slice(2);
 
-	// Config Path
 	const configIndex = args.indexOf('--config');
 	if (configIndex === -1 || !args[configIndex + 1]) {
-		// このエラーログは logger.ts のデフォルトレベル('info')で出力される
+		// ★ 修正: log.error は stderr に出力される
 		log.error('引数エラー: --config <path/to/config.ts> が必要です。');
 		log.error('例: yarn ts-node src/run-experiment.ts --config experiments/configs/case1-Sequential-Polling.config.ts');
 		process.exit(1);
 	}
-	const configPath = args[configIndex + 1]!; // 上でチェック済み
+	const configPath = args[configIndex + 1]!;
 
-	// Log Level
 	const logLevelIndex = args.indexOf('--logLevel');
 	const logLevel = (logLevelIndex !== -1 && args[logLevelIndex + 1])
 		? args[logLevelIndex + 1]
-		: undefined; // デフォルトは logger.ts 側で 'info' になる
+		: undefined;
 
 	return { configPath, logLevel };
 }
@@ -163,19 +160,18 @@ function parseArgs(): { configPath: string, logLevel: string | undefined } {
 
 /**
  * 実験結果をCSV形式の文字列に変換します
- * ★★★ 修正箇所 ★★★
  */
 async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
 	const header = [
 		'Timestamp',
-		'ExperimentDescription', // 'Description' -> 'ExperimentDescription'
+		'ExperimentDescription',
 		'Iteration',
-		'TaskDescription', // ★ 追加
-		'TaskChainCount', // ★ 'ChainCount' -> 'TaskChainCount'
-		'TaskTargetKB', // ★ 追加
-		'TaskChunkSizeBytes', // ★ 'Chunk_Size_Bytes' -> 'TaskChunkSizeBytes'
-		'TaskTargetChain', // ★ 追加
-		'TaskPipelineDepth', // ★ 追加
+		'TaskDescription',
+		'TaskChainCount',
+		'TaskTargetKB',
+		'TaskChunkSizeBytes',
+		'TaskTargetChain',
+		'TaskPipelineDepth',
 		'Upload_ms',
 		'Download_ms',
 		'Total_Tx',
@@ -183,7 +179,7 @@ async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
 		'Failed_Tx',
 		'Total_Gas',
 		'Avg_Gas_Per_Tx',
-		'Data_Size_Bytes', // (実測ダウンロードサイズ)
+		'Data_Size_Bytes',
 		'Verification_Success',
 		'Strategy_Comm',
 		'Strategy_Upload',
@@ -195,23 +191,22 @@ async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
 
 	const rows = result.iterationResults.map(iter => {
 		const upload = iter.uploadResult;
-		const task = iter.task; // ★ iter.task を取得
+		const task = iter.task;
 
-		// ★ 変更: task.target を参照
 		const dataSize = iter.downloadResult.downloadedData.length > 0
 			? iter.downloadResult.downloadedData.length
 			: (task.target.type === 'sizeKB' ? task.target.value * 1024 : 0);
 
 		return [
 			now,
-			`"${config.description}"`, // 実験全体の説明
+			`"${config.description}"`,
 			iter.iteration,
-			`"${task.description ?? 'N/A'}"`, // ★ タスクの説明
-			task.chainCount, // ★ task.chainCount
-			task.target.type === 'sizeKB' ? task.target.value : 'N/A (File)', // ★ task.target.value
-			task.chunkSize, // ★ task.chunkSize
-			task.targetChain ?? 'N/A', // ★ 追加
-			task.pipelineDepth ?? 'N/A', // ★ 追加
+			`"${task.description ?? 'N/A'}"`,
+			task.chainCount,
+			task.target.type === 'sizeKB' ? task.target.value : 'N/A (File)',
+			task.chunkSize,
+			task.targetChain ?? 'N/A',
+			task.pipelineDepth ?? 'N/A',
 			upload.durationMs,
 			iter.downloadResult.durationMs,
 			upload.totalTx,
@@ -232,19 +227,19 @@ async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
 
 /**
  * メイン実行関数
- * (★ ステップ3: 修正)
  */
 async function main() {
 	let runner: ExperimentRunner | undefined;
+	// ★ 追加: strategies を try ブロックの外で宣言 (finally で使うため)
+	let strategies: ExperimentStrategies | undefined;
 
 	try {
 		// 1. 引数解析
 		const { configPath, logLevel } = parseArgs();
 
-		// ★★★ ログレベルを早期に設定 ★★★
-		// これ以降のログは指定されたレベルで出力される
+		// ★ 修正: これ以降、log.info/debug はファイルにのみ書き込まれる
 		if (logLevel) {
-			log.setLogLevel(logLevel);
+			log.setLogLevel(logLevel as LogLevel);
 		}
 
 		log.info(`設定ファイル ${configPath} を読み込んでいます...`);
@@ -259,22 +254,20 @@ async function main() {
 		}
 
 		// 3. 戦略のインスタンス化
-		const strategies = instantiateStrategies(config);
-
+		strategies = instantiateStrategies(config); // ★ strategies に代入
 		const urlPathCodec = new UrlPathCodec();
 
 		// 4. ExperimentRunner の初期化と実行
 		runner = new ExperimentRunner(config, strategies, urlPathCodec);
 		const result = await runner.run();
 
-		// 5. 結果の表示
-		log.step('--- 実験結果サマリー ---');
-		console.log(JSON.stringify(result.summary ?? { message: 'サマリーなし' }, null, 2));
-		log.step('--- イテレーション詳細 (タスク別) ---'); // ★ ログメッセージ変更
-		console.log(
+		// 5. 結果の表示 (★ 修正: console.error で stderr に出力)
+		log.step('--- 実験結果サマリー ---'); // (これは 'success' レベルなので stderr に出る)
+		console.error(JSON.stringify(result.summary ?? { message: 'サマリーなし' }, null, 2));
+		log.step('--- イテレーション詳細 (タスク別) ---');
+		console.error(
 			result.iterationResults.map(r => ({
 				iter: r.iteration,
-				// ★ 修正: task の表示内容を拡充
 				task: r.task.description ?? `size=${r.task.target.value}KB, chunk=${r.task.chunkSize}, chains=${r.task.chainCount}, target=${r.task.targetChain ?? 'N/A'}`,
 				uploadMs: Number(r.uploadResult.durationMs),
 				downloadMs: Number(r.downloadResult.durationMs),
@@ -303,6 +296,10 @@ async function main() {
 		log.error('実験の実行中に致命的なエラーが発生しました。', error);
 		process.exitCode = 1;
 	} finally {
+		// ★ 追加: エラー発生時でもプログレスバーが起動していれば停止する
+		if (strategies && strategies.progressManager) {
+			strategies.progressManager.stop();
+		}
 		// ログバッファをフラッシュ
 		await log.flushErrorLogs();
 		process.exit();

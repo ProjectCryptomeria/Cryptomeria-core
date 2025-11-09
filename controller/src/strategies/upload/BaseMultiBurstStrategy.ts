@@ -11,10 +11,10 @@ import {
 	TransactionInfo,
 } from '../../types/index';
 import { log } from '../../utils/logger';
-// ★ 修正: ChunkLocation をインポート
+import { IProgressBar } from '../../utils/ProgressManager/IProgressManager';
+import { ConfirmationOptions } from '../confirmation';
 import { BaseUploadStrategy, ChunkBatch, ChunkInfo, ChunkLocation } from './BaseUploadStrategy';
 
-// 各チェーンが一度に送信するバッチサイズ (Tx数) のデフォルト
 const DEFAULT_BATCH_SIZE_PER_CHAIN = 100;
 
 /**
@@ -27,25 +27,20 @@ export abstract class BaseMultiBurstStrategy extends BaseUploadStrategy {
 
 	constructor() {
 		super();
-		// バッチサイズは config からも読めるようにするとより柔軟だが、一旦固定
 		this.batchSizePerChain = DEFAULT_BATCH_SIZE_PER_CHAIN;
 	}
 
 	/**
 	 * 【Template Method】マルチバースト方式のアップロード処理を実行します。
-	 * 派生クラスは、スケジューリングロジック (distributeAndProcessMultiBurst) のみを実装します。
-	 * ★ 修正: 戻り値を ChunkLocation[] | null に変更
 	 */
 	protected async processUpload(
 		context: RunnerContext,
 		allChunks: ChunkInfo[],
 		estimatedGasLimit: string
-	): Promise<ChunkLocation[] | null> { // ★ 修正: 戻り値の型
+	): Promise<ChunkLocation[] | null> {
 
-		log.step(`[${this.constructor.name}] ${allChunks.length} チャンクをマルチバースト方式で処理開始... (GasLimit: ${estimatedGasLimit})`);
+		log.info(`[${this.constructor.name}] ${allChunks.length} チャンクをマルチバースト方式で処理開始... (GasLimit: ${estimatedGasLimit})`);
 
-		// 【抽象メソッド】派生クラス（具象戦略）がスケジューリングを実行
-		// ★ 修正: 戻り値 (実績リスト or null) を受け取る
 		const locations = await this.distributeAndProcessMultiBurst(
 			context,
 			allChunks,
@@ -57,56 +52,78 @@ export abstract class BaseMultiBurstStrategy extends BaseUploadStrategy {
 			return null;
 		}
 
-		// --- ★ ログレベル変更 (info -> success) ---
-		log.success(`[${this.constructor.name}] マルチバースト処理が正常に完了しました。 (処理チャンク数: ${locations.length})`);
+		log.info(`[${this.constructor.name}] マルチバースト処理が正常に完了しました。 (処理チャンク数: ${locations.length})`);
 		return locations;
 	}
 
 	/**
 	 * 【抽象メソッド】スケジューリングロジック。
-	 * 派生クラスは、全チャンクをどのようにバッチ化し、
-	 * どのチェーンに割り当てて処理 (processBatchWorker) するかを定義します。
-	 * ★ 修正: 戻り値の型
 	 */
 	protected abstract distributeAndProcessMultiBurst(
 		context: RunnerContext,
 		allChunks: ChunkInfo[],
 		estimatedGasLimit: string
-	): Promise<ChunkLocation[] | null>; // ★ 修正: 戻り値の型
+	): Promise<ChunkLocation[] | null>;
 
 
 	/**
 	 * 1バッチ分のTxを送信し、完了確認まで行うワーカー処理 (共通)
-	 * ★ 修正: 戻り値を ChunkLocation[] | null に変更
+	 * (★ 修正: onProgress のロジックを修正)
 	 */
 	protected async processBatchWorker(
 		context: RunnerContext,
 		chainName: string,
 		batch: ChunkBatch,
-		estimatedGasLimit: string
-	): Promise<ChunkLocation[] | null> { // ★ 修正: 戻り値の型
+		estimatedGasLimit: string,
+		bar: IProgressBar
+	): Promise<ChunkLocation[] | null> {
 		const { tracker, confirmationStrategy, config } = context;
 
 		try {
 			// 1. バッチ送信 (マルチバースト)
+			bar.updatePayload({ status: 'Broadcasting...' });
 			const batchTxHashes = await this.sendChunkBatch(
 				context,
 				chainName,
 				batch.chunks,
-				estimatedGasLimit
+				estimatedGasLimit,
+				bar
 			);
 
 			// 2. 完了確認 (TxEvent または Polling)
-			const confirmOptions = { timeoutMs: config.confirmationStrategyOptions?.timeoutMs };
+			bar.updatePayload({ status: 'Confirming (0%)' });
+
+			// ★★★ 修正点 2 ★★★
+			let confirmedCountInBatch = 0;
+			const totalInBatch = batchTxHashes.length; // (ブロードキャストに成功したハッシュの総数)
+
+			const confirmOptions: ConfirmationOptions = {
+				timeoutMs: config.confirmationStrategyOptions?.timeoutMs,
+
+				onProgress: (result) => {
+					confirmedCountInBatch++;
+					const isLast = confirmedCountInBatch === totalInBatch;
+
+					if (result.success) {
+						// 最後のTxならステータスを 'Batch Done' に
+						const status = isLast ? 'Batch Done' : 'Confirming...';
+						bar.increment(1, { height: result.height, status: status });
+					} else {
+						// 最後のTxが失敗なら 'Batch Failed!' に
+						const status = isLast ? 'Batch Failed!' : 'Tx Failed!';
+						bar.increment(1, { height: result.height, status: status });
+					}
+				}
+			};
 			const results = await confirmationStrategy.confirmTransactions(context, chainName, batchTxHashes, confirmOptions);
+			// ★★★ (ここまで) ★★★
 
 			// 3. 結果記録 (PerformanceTracker 用)
-			// ★ 修正: txInfos に chunkIndex を含める
 			const txInfos: TransactionInfo[] = batchTxHashes.map((hash, i) => ({
 				hash: hash,
 				chainName: chainName,
-				// @ts-ignore (BaseUploadStrategy で chunkIndex を追加したが、型定義に反映されていない可能性)
-				chunkIndex: batch.chunks[i]?.index, // ★ 修正: PerformanceTracker 用
+				// @ts-ignore
+				chunkIndex: batch.chunks[i]?.index,
 				...results.get(hash)!
 			}));
 			tracker.recordTransactions(txInfos);
@@ -115,13 +132,13 @@ export abstract class BaseMultiBurstStrategy extends BaseUploadStrategy {
 			const failedTxs = txInfos.filter(info => !info.success);
 			if (failedTxs.length > 0) {
 				log.error(`[MultiBurstWorker ${chainName}] バッチ処理で ${failedTxs.length} 件のTxが失敗しました (例: ${failedTxs[0]?.error})。`);
-				return null; // ★ 修正: 失敗時は null
+				// (ステータスは onProgress の 'Batch Failed!' で更新済み)
+				return null;
 			}
 
-			// --- ★ ログレベル変更 (info -> success) ---
-			log.success(`[MultiBurstWorker ${chainName}] バッチ (${batch.chunks.length} Tx) の処理が正常に完了しました。`);
+			// ★ 削除: bar.updatePayload({ status: 'Batch Done' });
+			// (onProgress で 'Batch Done' が設定されるため不要)
 
-			// ★ 修正: 成功時は、このバッチの実績リストを返す
 			const batchLocations: ChunkLocation[] = batch.chunks.map(chunk => ({
 				index: chunk.index,
 				chainName: chainName,
@@ -130,7 +147,8 @@ export abstract class BaseMultiBurstStrategy extends BaseUploadStrategy {
 
 		} catch (error) {
 			log.error(`[MultiBurstWorker ${chainName}] バッチ処理中にエラーが発生しました。`, error);
-			return null; // ★ 修正: 失敗時は null
+			bar.updatePayload({ status: 'Error!' });
+			return null;
 		}
 	}
 
@@ -141,7 +159,8 @@ export abstract class BaseMultiBurstStrategy extends BaseUploadStrategy {
 		context: RunnerContext,
 		chainName: string,
 		chunks: ChunkInfo[],
-		gasLimit: string
+		gasLimit: string,
+		bar: IProgressBar
 	): Promise<string[]> {
 
 		const { chainManager } = context;
@@ -186,14 +205,18 @@ export abstract class BaseMultiBurstStrategy extends BaseUploadStrategy {
 
 		log.debug(`[sendChunkBatch ${chainName}] ${txRawBytesList.length} 件のTxをブロードキャスト中...`);
 
+		bar.updatePayload({ status: 'Broadcasting...' });
+
 		for (const txBytes of txRawBytesList) {
 			const hash = toHex(sha256(txBytes)).toUpperCase();
 			txHashes.push(hash);
 			try {
-				await client.broadcastTxSync(txBytes);
-				log.debug(`[sendChunkBatch ${chainName}] Txブロードキャスト成功 (Sync): ${hash.substring(0, 10)}...`);
+				client.broadcastTx(txBytes).catch(broadcastError => {
+					log.warn(`[sendChunkBatch ${chainName}] Tx (Hash: ${hash}) のブロードキャストで非同期エラー発生。`, broadcastError);
+				});
+				log.debug(`[sendChunkBatch ${chainName}] Txブロードキャスト送信: ${hash.substring(0, 10)}...`);
 			} catch (error: any) {
-				log.error(`[sendChunkBatch ${chainName}] Tx (Hash: ${hash}) のブロードキャスト中に例外発生。`, error);
+				log.error(`[sendChunkBatch ${chainName}] Tx (Hash: ${hash}) のブロードキャスト呼び出し中に例外発生。`, error);
 			}
 		}
 		return txHashes;

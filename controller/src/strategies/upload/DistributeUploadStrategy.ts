@@ -2,9 +2,9 @@
 import { CometClient } from '@cosmjs/tendermint-rpc';
 import { ChainInfo, RunnerContext } from '../../types';
 import { log } from '../../utils/logger';
+import { IProgressBar } from '../../utils/ProgressManager/IProgressManager';
 import { sleep } from '../../utils/retry';
 import { BaseMultiBurstStrategy } from './BaseMultiBurstStrategy';
-// ★ 修正: ChunkLocation をインポート
 import { ChunkInfo, ChunkLocation } from './BaseUploadStrategy';
 import { IUploadStrategy } from './IUploadStrategy';
 
@@ -27,37 +27,41 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 	/**
 	 * 【戦略固有ロジック】
 	 * Mempoolを監視し、空いているチェーンにバッチを動的に割り当てて並列処理します。
-	 * ★ 修正: 戻り値を ChunkLocation[] | null に変更
+	 * (★ 修正: バーの初期化と完了処理)
 	 */
 	protected async distributeAndProcessMultiBurst(
 		context: RunnerContext,
 		allChunks: ChunkInfo[],
 		estimatedGasLimit: string
-	): Promise<ChunkLocation[] | null> { // ★ 修正: 戻り値の型
+	): Promise<ChunkLocation[] | null> {
 
-		const { chainManager, config } = context;
+		const { chainManager, progressManager } = context;
 
-		// ★★★ 1. 対象チェーンを決定 (変更点) ★★★
-		// config.chainCount ではなく context.currentTask.chainCount を参照
+		// 1. 対象チェーンを決定
 		const allDatachains = chainManager.getDatachainInfos();
-
 		const task = context.currentTask;
 		if (!task) {
 			throw new Error('DistributeUploadStrategy: context.currentTask が設定されていません。');
 		}
-
 		const chainCount = task.chainCount && typeof task.chainCount === 'number'
 			? task.chainCount
 			: allDatachains.length;
 		const targetDatachains = allDatachains.slice(0, chainCount);
-		// ★★★ 変更点 (ここまで) ★★★
 
 		if (targetDatachains.length === 0) {
 			log.error('[DistributeUpload] 利用可能な datachain が0件です。');
-			return null; // ★ 修正: 失敗
+			return null;
 		}
 
-		// 2. Mempool監視用のクライアントを準備 (Distribute 固有)
+		// ★★★ 修正点 1: バーの初期化 (total: 0) ★★★
+		const chainBars = new Map<string, IProgressBar>();
+		for (const chain of targetDatachains) {
+			// total = 0 で初期化し、バッチ割り当て時に setTotal で動的に更新する
+			const bar = progressManager.addBar(chain.name.padEnd(8), 0, 0, { status: 'Waiting...' });
+			chainBars.set(chain.name, bar);
+		}
+
+		// 2. Mempool監視用のクライアントを準備
 		const chainClients = new Map<string, CometClient>();
 		for (const chain of targetDatachains) {
 			try {
@@ -65,81 +69,122 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 				chainClients.set(chain.name, client);
 			} catch (error) {
 				log.error(`[DistributeUpload] Mempool監視クライアント (${chain.name}) の取得に失敗しました。`, error);
-				return null; // ★ 修正: 失敗
+				return null;
 			}
 		}
 
-		// 3. 全チャンクをバッチ化 (Distribute 固有)
+		// 3. 全チャンクをバッチ化
 		const batches = this.createBatches(allChunks, this.batchSizePerChain);
-		const batchQueue = [...batches]; // コピーしてキューとして使用
+		const batchQueue = [...batches];
 		log.info(`[DistributeUpload] ${allChunks.length} チャンクを ${batches.length} バッチに分割 (BatchSize: ${this.batchSizePerChain})`);
 
-		// 4. バッチキューとワーカープールによる動的割り当て (Distribute 固有)
+		// 4. バッチキューとワーカープールによる動的割り当て
 		log.info(`[DistributeUpload] ${batches.length} バッチを ${targetDatachains.length} チェーン（ワーカー）で処理開始...`);
 
-		// ★ 修正: 実績リストと処理中フラグ
 		const allSuccessfulLocations: ChunkLocation[] = [];
-		let processingFailed = false; // 1つでも失敗したら true
+		let processingFailed = false;
 		const processingPromises = new Set<Promise<void>>();
 
-		while (batchQueue.length > 0) {
-			// ★ 修正: 既に失敗が検出されたら、新しいバッチの割り当てを停止
-			if (processingFailed) {
-				log.warn('[DistributeUpload] 他のバッチ処理が失敗したため、新規バッチの割り当てを停止します。');
-				break;
+		// ★ 修正点 2: 実際にチェーンに割り当てたチャンク数を追跡
+		const actualChunksAssigned = new Map<string, number>();
+		targetDatachains.forEach(c => actualChunksAssigned.set(c.name, 0));
+
+		try {
+			while (batchQueue.length > 0) {
+				if (processingFailed) {
+					log.warn('[DistributeUpload] 他のバッチ処理が失敗したため、新規バッチの割り当てを停止します。');
+					break;
+				}
+
+				const availableChain = await this.findAvailableChain(
+					chainClients,
+					chainBars
+				);
+
+				if (!availableChain) {
+					log.error('[DistributeUpload] 空いているチェーンが見つかりませんでした (タイムアウト)。アップロードを中断します。');
+					processingFailed = true;
+					break;
+				}
+
+				const availableChainName = availableChain.name;
+				const bar = chainBars.get(availableChainName)!;
+
+				const nextBatch = batchQueue.shift();
+				if (!nextBatch) {
+					break;
+				}
+
+				// ★ 修正点 3: バーの最大値(Total)を動的に *調整* する
+				const currentAssigned = actualChunksAssigned.get(availableChainName) ?? 0;
+				const newTotalAssigned = currentAssigned + nextBatch.chunks.length;
+				actualChunksAssigned.set(availableChainName, newTotalAssigned);
+				bar.setTotal(newTotalAssigned); // (total を累積で更新)
+
+				bar.updatePayload({ status: 'Batch Assigned' });
+				log.info(`[DistributeUpload] バッチ ${batches.length - batchQueue.length}/${batches.length} を ${availableChainName} に割り当て`);
+
+				const promise = this.processBatchWorker(
+					context,
+					availableChainName,
+					nextBatch,
+					estimatedGasLimit,
+					bar
+				)
+					.then(batchLocations => {
+						if (batchLocations === null) {
+							log.error(`[DistributeUpload] ワーカー処理失敗 (Chain: ${availableChainName}, Batch: ${batches.length - batchQueue.length})`);
+							processingFailed = true;
+						} else {
+							allSuccessfulLocations.push(...batchLocations);
+						}
+					})
+					.finally(() => {
+						processingPromises.delete(promise);
+					});
+
+				processingPromises.add(promise);
 			}
 
-			// 4a. 空いているチェーンを探す
-			const availableChain = await this.findAvailableChain(chainClients);
+			// 5. すべての処理が完了するのを待つ
+			await Promise.all(Array.from(processingPromises));
 
-			if (!availableChain) {
-				log.error('[DistributeUpload] 空いているチェーンが見つかりませんでした (タイムアウト)。アップロードを中断します。');
-				processingFailed = true; // ★ 修正
-				break; // while ループを抜ける
-			}
+		} catch (error) {
+			log.error(`[DistributeUpload] 処理ループ中に予期せぬエラーが発生しました。`, error);
+			processingFailed = true;
+		} finally {
+			// ★★★ 修正点 4: 完了処理 (見栄え修正) ★★★
+			chainBars.forEach((bar, name) => {
+				const totalAssigned = actualChunksAssigned.get(name) ?? 0;
 
-			// 4b. キューから次のバッチを取り出す
-			const nextBatch = batchQueue.shift();
-			if (!nextBatch) {
-				break; // キューが空になった
-			}
-
-			log.info(`[DistributeUpload] バッチ ${batches.length - batchQueue.length}/${batches.length} を ${availableChain.name} に割り当て`);
-
-			// 4c. 基底クラスのワーカー処理を非同期で実行
-			const promise = this.processBatchWorker(
-				context,
-				availableChain.name, // 利用可能なチェーン名
-				nextBatch,
-				estimatedGasLimit
-			)
-				.then(batchLocations => {
-					// ★ 修正: 戻り値 (実績リスト or null) でハンドリング
-					if (batchLocations === null) {
-						log.error(`[DistributeUpload] ワーカー処理失敗 (Chain: ${availableChain.name}, Batch: ${batches.length - batchQueue.length})`);
-						processingFailed = true; // 1つでも失敗したら全体を失敗とする
+				if (processingFailed) {
+					// 失敗時は、現在の進捗のままステータスを Failed にする
+					// (ただし、onProgress で 'Batch Failed!' になっている可能性もある)
+					if (bar.getTotal() > 0) {
+						bar.updatePayload({ status: 'Failed!' });
 					} else {
-						// 成功した実績を（順序不同で）追加
-						allSuccessfulLocations.push(...batchLocations);
+						bar.update(0, { status: 'Failed (0 Tx)' });
 					}
-				})
-				.finally(() => {
-					processingPromises.delete(promise); // 完了したらSetから削除
-				});
-
-			processingPromises.add(promise);
+				} else if (totalAssigned === 0) {
+					// 正常終了したが、何も割り当てられなかった場合
+					// total: 0 のまま value: 0 をセットし、100% (0/0) にする
+					bar.update(0, { status: 'Done (0 Tx)' });
+				} else {
+					// 正常終了し、割り当てがあった場合
+					// (onProgress で 'Batch Done' になっているはずだが、
+					//  Mempool 待ちなどで終わった場合のために 'Done' にする)
+					bar.update(totalAssigned, { status: 'Done' });
+				}
+			});
+			// ★★★ 修正点 4 (ここまで) ★★★
 		}
 
-		// 5. すべての処理が完了するのを待つ
-		await Promise.all(Array.from(processingPromises));
 
-		// ★ 修正: 最終結果の判定
 		if (processingFailed) {
 			log.error('[DistributeUpload] アップロード処理中に1つ以上のバッチが失敗しました。');
 			return null;
 		}
 
-		// 順序がバラバラになっているため、インデックス番号でソートして返す
 		const sortedLocations = allSuccessfulLocations.sort((a, b) => {
 			const numA = parseInt(a.index.split('-').pop() ?? '0', 10);
 			const numB = parseInt(b.index.split('-').pop() ?? '0', 10);
@@ -156,7 +201,8 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 	 * Mempool に空きがあるチェーンをポーリングして探す
 	 */
 	private async findAvailableChain(
-		chainClients: Map<string, CometClient>
+		chainClients: Map<string, CometClient>,
+		chainBars: Map<string, IProgressBar>
 	): Promise<ChainInfo | null> {
 
 		const startTime = Date.now();
@@ -171,6 +217,7 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 					return { name, bytes };
 				} catch (error: any) {
 					log.warn(`[Mempool] ${name} の Mempool 監視中にエラー: ${error.message}`);
+					chainBars.get(name)?.updatePayload({ status: 'Mempool Error!' });
 					return { name, bytes: Infinity };
 				}
 			});
@@ -180,8 +227,23 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 
 			if (bestChain && bestChain.bytes < MEMPOOL_BYTES_LIMIT) {
 				log.debug(`[Mempool] 空きチェーン発見: ${bestChain.name} (Bytes: ${bestChain.bytes})`);
+				chainBars.get(bestChain.name)?.updatePayload({ status: 'Mempool Ready' });
 				return { name: bestChain.name, type: 'datachain' };
 			}
+
+			// Mempool 待ちのステータス更新
+			statuses.forEach(status => {
+				const bar = chainBars.get(status.name);
+				if (!bar) return;
+
+				// (バーの現在の値を取得する機能は IProgressBar にはないため、
+				//  ステータスが 'Confirming' などで上書きされるのを防ぐロジックは省略)
+
+				if (status.bytes >= MEMPOOL_BYTES_LIMIT) {
+					const bytesMB = (status.bytes / 1024 / 1024).toFixed(1);
+					bar.updatePayload({ status: `Mempool Full (${bytesMB}MB)` });
+				}
+			});
 
 			log.debug(`[Mempool] 空きチェーンなし。待機中... (Min bytes: ${bestChain?.bytes ?? 'N/A'})`);
 			await sleep(MEMPOOL_POLL_INTERVAL_MS);

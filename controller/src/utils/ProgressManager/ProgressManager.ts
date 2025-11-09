@@ -1,0 +1,130 @@
+// controller/src/utils/ProgressManager/ProgressManager.ts
+import cliProgress from 'cli-progress';
+// ★ 修正: インポートパス
+import { IProgressBar, IProgressManager } from './IProgressManager';
+
+// TTY でない場合に使用するダミー（何もしない）実装
+class SilentProgressBar implements IProgressBar {
+	increment(value?: number, payload?: object): void { }
+	update(value: number, payload?: object): void { }
+	updatePayload(payload: object): void { }
+	setTotal(newTotal: number): void { }
+	getTotal(): number { return 0; }
+}
+const silentProgressBar = new SilentProgressBar();
+
+class SilentProgressManager implements IProgressManager {
+	start(): void { }
+	stop(): void { }
+	addBar(name: string, total: number, startValue?: number, payload?: object): IProgressBar {
+		return silentProgressBar;
+	}
+	removeBar(bar: IProgressBar): void { }
+}
+
+// SingleBar を IProgressBar でラップする
+class ProgressBarWrapper implements IProgressBar {
+	private total: number;
+
+	constructor(public readonly bar: cliProgress.SingleBar, initialTotal: number) {
+		this.total = initialTotal;
+	}
+
+	increment(value: number = 1, payload?: object): void {
+		this.bar.increment(value, payload);
+	}
+
+	update(value: number, payload?: object): void {
+		this.bar.update(value, payload);
+	}
+
+	updatePayload(payload: object): void {
+		this.bar.update(undefined as any, payload);
+	}
+
+	setTotal(newTotal: number): void {
+		this.total = newTotal;
+		this.bar.setTotal(newTotal);
+	}
+
+	getTotal(): number {
+		return this.total;
+	}
+}
+
+/**
+ * cli-progress を使った IProgressManager の具象実装
+ */
+class RealProgressManager implements IProgressManager {
+	private multiBar: cliProgress.MultiBar | null = null;
+	private bars: Set<cliProgress.SingleBar> = new Set();
+
+	constructor() { }
+
+	public start(): void {
+		if (this.multiBar) {
+			// ★ 修正: 既に開始されている場合は何もしない (stop() しない)
+			return;
+		}
+
+		this.multiBar = new cliProgress.MultiBar({
+			stream: process.stdout,
+			clearOnComplete: false,
+			hideCursor: true,
+			// ★ 修正: バーが完了しても消えないようにする
+			stopOnComplete: false,
+			format: ' {bar} | {name} | {percentage}% ({value}/{total}) | ETA: {eta_formatted} | {status}',
+		}, cliProgress.Presets.shades_classic);
+	}
+
+	public stop(): void {
+		if (this.multiBar) {
+			this.multiBar.stop();
+			this.multiBar = null;
+			this.bars.clear();
+		}
+	}
+
+	public addBar(name: string, total: number, startValue: number = 0, payload: object = { status: 'Initializing...' }): IProgressBar {
+		if (!this.multiBar) {
+			this.start();
+		}
+
+		const bar = this.multiBar!.create(total, startValue, {
+			name: name.padEnd(8),
+			...payload
+		});
+
+		this.bars.add(bar);
+		return new ProgressBarWrapper(bar, total);
+	}
+
+	public removeBar(bar: IProgressBar): void {
+		if (this.multiBar) {
+			const wrapper = bar as ProgressBarWrapper;
+			if (wrapper.bar) {
+				this.multiBar.remove(wrapper.bar);
+				this.bars.delete(wrapper.bar);
+			}
+		}
+	}
+}
+
+// TTY（対話型端末）かどうかを判定
+const isTTY = process.stdout.isTTY;
+
+/**
+ * TTY の場合のみ RealProgressManager を、それ以外は SilentProgressManager を
+ * エクスポート（インスタンス化）するファクトリクラス
+ */
+export class ProgressManager extends (isTTY ? RealProgressManager : SilentProgressManager) {
+	constructor() {
+		super();
+		if (!isTTY) {
+			// (ファイルログにのみ記録される)
+			// ★ 修正: console.log -> log.info
+			// (log をインポートすると循環参照になるため console.log を使う)
+			console.log('[ProgressManager] STDOUT is not a TTY. Progress bar is disabled (Silent Mode).');
+		}
+	}
+}

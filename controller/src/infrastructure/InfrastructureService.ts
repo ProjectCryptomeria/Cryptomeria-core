@@ -47,8 +47,7 @@ export class InfrastructureService {
 		try {
 			const info = await this.chainInfoPromise;
 			this.chainInfoCache = info;
-			// --- ★ ログレベル変更 (info -> success) ---
-			log.success(`チェーン情報 (${info.length}件) を取得し、キャッシュしました。`);
+			log.info(`チェーン情報 (${info.length}件) を取得し、キャッシュしました。`);
 			return info;
 		} catch (error) {
 			log.error('チェーン情報の取得に失敗しました。', error);
@@ -148,8 +147,7 @@ export class InfrastructureService {
 				throw new Error(`キー "${MNEMONIC_KEY}" のニーモニックのデコードに失敗しました。`);
 			}
 
-			// --- ★ ログレベル変更 (info -> success) ---
-			log.success(`"${chainName}" のニーモニックを取得し、デコードしました。`);
+			log.info(`"${chainName}" のニーモニックを取得し、デコードしました。`);
 			this.mnemonicCache.set(chainName, decodedMnemonic);
 			return decodedMnemonic;
 
@@ -202,8 +200,7 @@ export class InfrastructureService {
 			throw err;
 		}
 
-		// --- ★ ログレベル変更 (info -> success) ---
-		log.success(`RPCエンドポイント (${Object.keys(endpoints).length}件) の生成が完了しました。`);
+		log.info(`RPCエンドポイント (${Object.keys(endpoints).length}件) の生成が完了しました。`);
 		return endpoints;
 	}
 
@@ -250,8 +247,7 @@ export class InfrastructureService {
 			throw err;
 		}
 
-		// --- ★ ログレベル変更 (info -> success) ---
-		log.success(`APIエンドポイント (${Object.keys(endpoints).length}件) の生成が完了しました。`);
+		log.info(`APIエンドポイント (${Object.keys(endpoints).length}件) の生成が完了しました。`);
 		return endpoints;
 	}
 

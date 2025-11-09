@@ -8,8 +8,11 @@ import type { ConfirmationResult } from '../../types/experiment';
 export interface ConfirmationOptions {
 	/** タイムアウト (ミリ秒) */
 	timeoutMs?: number;
-	/** プログレスバー更新等のためのコールバック (オプション) */
-	onProgress?: (confirmedCount: number, total: number) => void;
+
+	/** * ★ 修正: プログレスバー更新等のためのコールバック (オプション)
+	 * 1件確認が完了するたびに呼び出されます。
+	 */
+	onProgress?: (result: ConfirmationResult) => void;
 }
 
 /**
