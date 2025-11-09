@@ -27,7 +27,7 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 	/**
 	 * 【戦略固有ロジック】
 	 * Mempoolを監視し、空いているチェーンにバッチを動的に割り当てて並列処理します。
-	 * (★ 修正: バーの初期化と完了処理)
+	 * (★ 修正: バッチサイズの動的計算、バーの初期化と完了処理)
 	 */
 	protected async distributeAndProcessMultiBurst(
 		context: RunnerContext,
@@ -37,7 +37,7 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 
 		const { chainManager, progressManager } = context;
 
-		// 1. 対象チェーンを決定
+		// 1. 対象チェーンを決定 (変更なし)
 		const allDatachains = chainManager.getDatachainInfos();
 		const task = context.currentTask;
 		if (!task) {
@@ -53,7 +53,7 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 			return null;
 		}
 
-		// ★★★ 修正点 1: バーの初期化 (total: 0) ★★★
+		// ★★★ 修正点 1: バーの初期化 (total: 0) ★★★ (変更なし)
 		const chainBars = new Map<string, IProgressBar>();
 		for (const chain of targetDatachains) {
 			// total = 0 で初期化し、バッチ割り当て時に setTotal で動的に更新する
@@ -61,7 +61,7 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 			chainBars.set(chain.name, bar);
 		}
 
-		// 2. Mempool監視用のクライアントを準備
+		// 2. Mempool監視用のクライアントを準備 (変更なし)
 		const chainClients = new Map<string, CometClient>();
 		for (const chain of targetDatachains) {
 			try {
@@ -73,19 +73,34 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 			}
 		}
 
-		// 3. 全チャンクをバッチ化
-		const batches = this.createBatches(allChunks, this.batchSizePerChain);
-		const batchQueue = [...batches];
-		log.info(`[DistributeUpload] ${allChunks.length} チャンクを ${batches.length} バッチに分割 (BatchSize: ${this.batchSizePerChain})`);
+		// ★★★ 3. (修正箇所) 全チャンクをバッチ化 (動的バッチサイズ) ★★★
+		const totalChunks = allChunks.length;
+		const availableChainCount = targetDatachains.length;
+		const defaultMaxBatchSize = this.batchSizePerChain; // (デフォルト: 100)
 
-		// 4. バッチキューとワーカープールによる動的割り当て
-		log.info(`[DistributeUpload] ${batches.length} バッチを ${targetDatachains.length} チェーン（ワーカー）で処理開始...`);
+		// 1チェーンあたりの理想的なチャンク数 (チェーン数本位制)
+		// (最低1チャンクは保証する)
+		const idealBatchSize = Math.max(1, Math.ceil(totalChunks / availableChainCount));
+
+		// 理想サイズがデフォルト最大バッチサイズ(100)を超えないようにする
+		const actualBatchSize = Math.min(idealBatchSize, defaultMaxBatchSize);
+
+		log.info(`[DistributeUpload] バッチサイズ計算: TotalChunks=${totalChunks}, Chains=${availableChainCount}, DefaultMaxBatchSize=${defaultMaxBatchSize}, IdealBatchSize=${idealBatchSize}, ActualBatchSize=${actualBatchSize}`);
+
+		const batches = this.createBatches(allChunks, actualBatchSize);
+		const batchQueue = [...batches];
+		log.info(`[DistributeUpload] ${allChunks.length} チャンクを ${batches.length} バッチに分割 (BatchSize: ${actualBatchSize})`);
+		// ★★★ 修正箇所 ここまで ★★★
+
+
+		// 4. バッチキューとワーカープールによる動的割り当て (変更なし)
+		log.info(`[DistributeUpload] ${batches.length} バッチを ${availableChainCount} チェーン（ワーカー）で処理開始...`);
 
 		const allSuccessfulLocations: ChunkLocation[] = [];
 		let processingFailed = false;
 		const processingPromises = new Set<Promise<void>>();
 
-		// ★ 修正点 2: 実際にチェーンに割り当てたチャンク数を追跡
+		// ★ 修正点 2: 実際にチェーンに割り当てたチャンク数を追跡 (変更なし)
 		const actualChunksAssigned = new Map<string, number>();
 		targetDatachains.forEach(c => actualChunksAssigned.set(c.name, 0));
 
@@ -115,7 +130,7 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 					break;
 				}
 
-				// ★ 修正点 3: バーの最大値(Total)を動的に *調整* する
+				// ★ 修正点 3: バーの最大値(Total)を動的に *調整* する (変更なし)
 				const currentAssigned = actualChunksAssigned.get(availableChainName) ?? 0;
 				const newTotalAssigned = currentAssigned + nextBatch.chunks.length;
 				actualChunksAssigned.set(availableChainName, newTotalAssigned);
@@ -146,7 +161,7 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 				processingPromises.add(promise);
 			}
 
-			// 5. すべての処理が完了するのを待つ
+			// 5. すべての処理が完了するのを待つ (変更なし)
 			await Promise.all(Array.from(processingPromises));
 
 		} catch (error) {
@@ -166,9 +181,10 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 						bar.update(0, { status: 'Failed' });
 					}
 				} else if (totalAssigned === 0) {
-					// 正常終了したが、何も割り当てられなかった場合
-					// total: 0 のまま value: 0 をセットし、100% (0/0) にする
-					bar.update(0, { status: 'Done' });
+					// ★ 修正: 正常終了したが、何も割り当てられなかった場合
+					// 100% (1/1) 表示にするため total を 1 に設定
+					bar.setTotal(1);
+					bar.update(1, { status: 'Done' });
 				} else {
 					// 正常終了し、割り当てがあった場合
 					// (onProgress で 'Batch Done' になっているはずだが、
@@ -184,6 +200,7 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 			return null;
 		}
 
+		// (変更なし)
 		const sortedLocations = allSuccessfulLocations.sort((a, b) => {
 			const numA = parseInt(a.index.split('-').pop() ?? '0', 10);
 			const numB = parseInt(b.index.split('-').pop() ?? '0', 10);
@@ -194,7 +211,7 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 	}
 
 
-	// --- 以下、Distribute 固有のプライベートメソッド ---
+	// --- 以下、Distribute 固有のプライベートメソッド --- (変更なし)
 
 	/**
 	 * Mempool に空きがあるチェーンをポーリングして探す
