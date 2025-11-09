@@ -176,7 +176,6 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 					bar.update(totalAssigned, { status: 'Done' });
 				}
 			});
-			// ★★★ 修正点 4 (ここまで) ★★★
 		}
 
 

@@ -107,11 +107,11 @@ export abstract class BaseMultiBurstStrategy extends BaseUploadStrategy {
 					if (result.success) {
 						// 最後のTxならステータスを 'Batch Done' に
 						const status = isLast ? 'Batch Done' : 'Confirming...';
-						bar.increment(1, { height: result.height, status: status });
+						bar.increment(1, { status: status });
 					} else {
 						// 最後のTxが失敗なら 'Batch Failed!' に
 						const status = isLast ? 'Batch Failed!' : 'Tx Failed!';
-						bar.increment(1, { height: result.height, status: status });
+						bar.increment(1, { status: status });
 					}
 				}
 			};

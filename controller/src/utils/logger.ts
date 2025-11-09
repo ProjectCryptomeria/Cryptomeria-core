@@ -7,10 +7,31 @@ import Transport from 'winston-transport';
 // ★ 修正 1: LogLevel に 'none' を追加
 export type LogLevel = 'error' | 'warn' | 'success' | 'info' | 'debug' | 'none';
 
+// --- 動的なログファイルパスの定義 ---
+
+// ★★★ 修正箇所: 実行スクリプト名ではなく、設定ファイル名を取得するロジック ★★★
+const args = process.argv;
+const configIndex = args.indexOf('--config');
+let baseFileName: string;
+
+if (configIndex !== -1 && args[configIndex + 1]) {
+	// --config 引数が見つかった場合、そのファイル名を使用する
+	const configPath = args[configIndex + 1]!;
+	// パスから拡張子を除いたファイル名 (例: case3-Distribute-Poling) を取得
+	baseFileName = path.basename(configPath, path.extname(configPath));
+} else {
+	// 見つからない場合は、実行スクリプト名 (例: run-experiment) を使用する
+	baseFileName = path.basename(process.argv[1]!, path.extname(process.argv[1]!));
+}
+// ★★★ 修正箇所 ここまで ★★★
+
 // ログディレクトリを src/experiments/results/logs に変更
 const LOG_DIR = path.join(__dirname, '..', 'experiments', 'results', 'logs');
-const ALL_LOG_FILE = path.join(LOG_DIR, 'experiment.all.log');
-const ERROR_LOG_FILE = path.join(LOG_DIR, 'experiment.error.log');
+
+// ログファイル名を動的に生成
+const ALL_LOG_FILE = path.join(LOG_DIR, `${baseFileName}.all.log`);
+const ERROR_LOG_FILE = path.join(LOG_DIR, `${baseFileName}.error.log`);
+
 
 // ログディレクトリが存在しない場合は作成
 try {
@@ -196,10 +217,12 @@ const setLogLevel = (newLevel: LogLevel): void => {
 		} else if (transport instanceof winston.transports.Console) {
 			// コンソールは silent = false に戻し、レベルを調整
 			transport.silent = false;
-			const consoleLevel = (customLevels.levels[newLevel] < customLevels.levels.success)
-				? newLevel
-				: 'success';
-			transport.level = consoleLevel;
+
+			// ★★★ 修正箇所: 抑制ロジックを削除し、指定レベルをそのまま適用する ★★★
+			// ユーザーが info/debug を選択した場合、そのままコンソールに表示されるようになる
+			transport.level = newLevel;
+			// ★★★ 修正箇所 ここまで ★★★
+
 		} else {
 			// MemoryTransport など
 			transport.silent = false;
@@ -245,7 +268,13 @@ const log = {
 	warn: (message: string, ...meta: any[]) => logger.warn(message, ...meta),
 	success: (message: string, ...meta: any[]) => logger.log('success', message, ...meta),
 	info: (message: string, ...meta: any[]) => logger.info(message, ...meta),
-	debug: (message: string, ...meta: any[]) => logger.debug(message, ...meta),
+	debug: (message: string, error?: Error | any, ...meta: any[]) => { // debugにもerror引数追加
+		if (error instanceof Error) {
+			logger.debug(message, { stack: error.stack, ...meta });
+		} else {
+			logger.debug(message, error, ...meta);
+		}
+	},
 	// ★★★ 修正: `\n` を削除 ★★★
 	step: (message: string) => logger.info(`--- STEP: ${message} ---`),
 	setLogLevel,

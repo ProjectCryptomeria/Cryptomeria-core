@@ -1,13 +1,14 @@
 // controller/src/utils/ProgressManager/ProgressManager.ts
 import cliProgress from 'cli-progress';
-// ★ 修正: インポートパス
-import { IProgressBar, IProgressManager } from './IProgressManager';
+// ★ 修正: インポートパス と ProgressPayload をインポート
+import { IProgressBar, IProgressManager, ProgressPayload } from './IProgressManager';
 
 // TTY でない場合に使用するダミー（何もしない）実装
 class SilentProgressBar implements IProgressBar {
-	increment(value?: number, payload?: object): void { }
-	update(value: number, payload?: object): void { }
-	updatePayload(payload: object): void { }
+	// ★ 修正: payload の型を ProgressPayload に
+	increment(value?: number, payload?: ProgressPayload): void { }
+	update(value: number, payload?: ProgressPayload): void { }
+	updatePayload(payload: ProgressPayload): void { }
 	setTotal(newTotal: number): void { }
 	getTotal(): number { return 0; }
 }
@@ -21,7 +22,8 @@ const silentProgressBar = new SilentProgressBar();
 export class SilentProgressManager implements IProgressManager {
 	start(): void { }
 	stop(): void { }
-	addBar(name: string, total: number, startValue?: number, payload?: object): IProgressBar {
+	// ★ 修正: payload の型を ProgressPayload に
+	addBar(name: string, total: number, startValue?: number, payload?: ProgressPayload): IProgressBar {
 		return silentProgressBar;
 	}
 	removeBar(bar: IProgressBar): void { }
@@ -35,15 +37,18 @@ class ProgressBarWrapper implements IProgressBar {
 		this.total = initialTotal;
 	}
 
-	increment(value: number = 1, payload?: object): void {
+	// ★ 修正: payload の型を ProgressPayload に
+	increment(value: number = 1, payload?: ProgressPayload): void {
 		this.bar.increment(value, payload);
 	}
 
-	update(value: number, payload?: object): void {
+	// ★ 修正: payload の型を ProgressPayload に
+	update(value: number, payload?: ProgressPayload): void {
 		this.bar.update(value, payload);
 	}
 
-	updatePayload(payload: object): void {
+	// ★ 修正: payload の型を ProgressPayload に
+	updatePayload(payload: ProgressPayload): void {
 		this.bar.update(undefined as any, payload);
 	}
 
@@ -75,7 +80,8 @@ class RealProgressManager implements IProgressManager {
 		this.multiBar = new cliProgress.MultiBar({
 			stream: process.stdout,
 			hideCursor: true,
-			format: ' {bar} | {name} | {percentage}% ({value}/{total}) | ETA: {eta_formatted} | {status}',
+			// ★ Note: format が {status} を使用しているため、Payload は { status: string } を想定
+			format: '{name} | {bar} | {percentage}% ({value}/{total}) | ETA: {eta_formatted} | {status}',
 		}, cliProgress.Presets.shades_classic);
 	}
 
@@ -86,7 +92,8 @@ class RealProgressManager implements IProgressManager {
 		}
 	}
 
-	public addBar(name: string, total: number, startValue: number = 0, payload: object = { status: 'Initializing...' }): IProgressBar {
+	// ★ 修正: payload の型を ProgressPayload に
+	public addBar(name: string, total: number, startValue: number = 0, payload: ProgressPayload = { status: 'Initializing...' }): IProgressBar {
 		if (!this.multiBar) {
 			this.start();
 		}

@@ -41,7 +41,6 @@ export abstract class BaseOneByOneStrategy extends BaseUploadStrategy {
 
 		for (let i = 0; i < jobs.length; i++) {
 			const job = jobs[i]!;
-			// ★ 削除: log.info(`[...] チャンク ${i + 1}/${jobs.length} ...`);
 
 			// ★ bar を渡す
 			const location = await this.processChunkOneByOne(context, job.chainName, job.chunk, bar);
@@ -119,12 +118,12 @@ export abstract class BaseOneByOneStrategy extends BaseUploadStrategy {
 			if (!success) {
 				log.warn(`[OneByOne] Tx失敗 (Chain: ${chainName}, Hash: ${transactionHash}): ${rawLog}`);
 				// ★ バーの進捗は進めるが、ペイロードを更新
-				bar.increment(1, { status: 'Tx Failed!', height: height });
+				bar.increment(1, { status: 'Tx Failed!'});
 				return null;
 			}
 
 			// ★ 修正: 成功時はバーの進捗を更新
-			bar.increment(1, { height: height, hash: transactionHash.substring(0, 6) });
+			bar.increment(1);
 			return { index: chunk.index, chainName: chainName };
 
 		} catch (error: any) {

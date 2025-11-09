@@ -106,7 +106,7 @@ export abstract class BaseUploadStrategy implements IUploadStrategy {
 		} else {
 
 			// ★★★ 修正: 競合するためこのログを削除 ★★★
-			// log.success(`[${this.constructor.name}] 全チャンクのアップロード完了`);
+			log.success(`[${this.constructor.name}] 全チャンクのアップロード完了`);
 
 			log.info(`[${this.constructor.name}] マニフェストを登録中...`);
 			try {

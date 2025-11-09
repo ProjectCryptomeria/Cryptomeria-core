@@ -44,7 +44,7 @@ async function runInteractive() {
 
 		// ★★★ 4. (新規) プログレスバー表示確認 ★★★
 		let showProgressBar = true;
-		if (logLevel !== 'none' && process.stdout.isTTY) {
+		if (process.stdout.isTTY) {
 			const { confirmProgress } = await prompt<{ confirmProgress: boolean }>({
 				type: 'confirm',
 				name: 'confirmProgress',
@@ -52,8 +52,6 @@ async function runInteractive() {
 				initial: true,
 			});
 			showProgressBar = confirmProgress;
-		} else if (logLevel === 'none') {
-			showProgressBar = false; // logLevel 'none' なら無条件で非表示
 		}
 
 		// 5. run-experiment.ts に渡す引数を構築
