@@ -1,21 +1,16 @@
 // controller/src/strategies/confirmation/PollingConfirmationStrategy.ts
 import { decodeTxRaw } from '@cosmjs/proto-signing';
+import { TxParams, TxResponse } from '@cosmjs/tendermint-rpc/build/comet38';
 import { ConfirmationResult, RunnerContext } from '../../types';
 import { log } from '../../utils/logger';
 import { sleep } from '../../utils/retry';
-import { ConfirmationOptions, IConfirmationStrategy } from './IConfirmationStrategy';
+import { BaseConfirmationStrategy } from './BaseConfirmationStrategy'; // ★ 基底クラスをインポート
+import { ConfirmationOptions } from './IConfirmationStrategy';
 
-// ★ 修正: TxResponse と TxParams を 'tendermint34' からインポート
-import { TxParams, TxResponse } from '@cosmjs/tendermint-rpc/build/tendermint34';
-// (注: ライブラリの内部構造に依存するパスですが、ご提示いただいたエクスポートリストに基づき 'tendermint34' を使用します)
-
-// ポーリング設定
 const DEFAULT_POLLING_INTERVAL_MS = 1000;
-const DEFAULT_POLLING_TIMEOUT_MS = 60000;
 
 /**
  * Hex文字列をUint8Arrayに変換するヘルパー関数
- * (Txハッシュの変換に必要)
  */
 function fromHex(hexString: string): Uint8Array {
 	const normalized = hexString.startsWith('0x') ? hexString.slice(2) : hexString;
@@ -26,62 +21,55 @@ function fromHex(hexString: string): Uint8Array {
 }
 
 /**
- * RPCエンドポイントへのポーリング（.tx() メソッド）によって、
- * トランザクションの完了を確認する戦略。
+ * RPCエンドポイントへのポーリングによって完了を確認する戦略。
+ * (★ BaseConfirmationStrategy を継承)
  */
-export class PollingConfirmationStrategy implements IConfirmationStrategy {
+export class PollingConfirmationStrategy extends BaseConfirmationStrategy {
+
+	private active = true; // ポーリングループ停止用フラグ
+
 	constructor() {
+		super(); // ★ 基底クラスのコンストラクタ
 		log.debug('PollingConfirmationStrategy がインスタンス化されました。');
 	}
 
-	public async confirmTransactions(
+	/**
+	 * 【実装】ポーリングループを開始します。
+	 * ★ 修正: totalTxCount を引数に追加
+	 */
+	protected async _startConfirmationProcess(
 		context: RunnerContext,
 		chainName: string,
-		txHashes: string[],
-		options: ConfirmationOptions
-	): Promise<Map<string, ConfirmationResult>> {
+		pendingHashes: Set<string>,
+		results: Map<string, ConfirmationResult>,
+		options: ConfirmationOptions,
+		totalTxCount: number // ★ 追加
+	): Promise<void> {
 
 		const { communicationStrategy, infraService } = context;
-		const timeout = options.timeoutMs ?? DEFAULT_POLLING_TIMEOUT_MS;
-		const startTime = Date.now();
+		this.active = true;
 
-		log.info(`[PollingConfirm] チェーン "${chainName}" で ${txHashes.length} 件のTxをポーリング確認開始 (Timeout: ${timeout}ms)`);
-
-		// 1. RPCエンドポイントを取得
+		// 1. RPCクライアントを取得
 		const rpcEndpoints = await infraService.getRpcEndpoints();
 		const rpcEndpoint = rpcEndpoints[chainName];
 		if (!rpcEndpoint) {
 			throw new Error(`[PollingConfirm] チェーン "${chainName}" のRPCエンドポイントが見つかりません。`);
 		}
-
-		// 2. RPCクライアントを 通信戦略 から取得
+		// ★ 修正: tmClient の型チェックを修正
 		const tmClient = communicationStrategy.getRpcClient(rpcEndpoint);
-
-		// 3. ★ 修正: tmClient の存在と 'tx' メソッドの存在をチェック (型ガード)
 		if (!tmClient || !('tx' in tmClient)) {
 			throw new Error(`[PollingConfirm] チェーン "${chainName}" (Endpoint: ${rpcEndpoint}) の通信クライアントが 'tx' メソッドをサポートしていません。`);
 		}
-		// この時点で tmClient は .tx() を持つ (Tendermint37Client | Comet38Client)
 
-		const pendingHashes = new Set<string>(txHashes);
-		const results = new Map<string, ConfirmationResult>();
-
-		// 4. タイムアウトまでポーリングをループ
-		while (Date.now() - startTime < timeout) {
-			if (pendingHashes.size === 0) {
-				log.debug(`[PollingConfirm] ${txHashes.length} 件すべてのTx確認が完了しました。`);
-				break;
-			}
-
+		// 2. ポーリングループ (基底クラスのタイムアウトに任せる)
+		while (this.active && pendingHashes.size > 0) {
 			log.debug(`[PollingConfirm] 残り ${pendingHashes.size} 件のTxをポーリング中...`);
 
 			const checks = Array.from(pendingHashes).map(async (hash) => {
 				try {
-					// ★ 修正: tmClient.tx() を使用。ハッシュを Uint8Array に変換
 					const hashBytes = fromHex(hash);
-					const txParams: TxParams = { hash: hashBytes, prove: false }; // prove は不要
-
-					// tx() は TxResponse を返す (null は返さない。見つからない場合はエラーをスローする)
+					const txParams: TxParams = { hash: hashBytes, prove: false };
+					// ★ 修正: as TxResponse を追加
 					const txInfo: TxResponse = await tmClient.tx(txParams) as TxResponse;
 
 					// Txが見つかった
@@ -92,22 +80,21 @@ export class PollingConfirmationStrategy implements IConfirmationStrategy {
 						success: txInfo.result.code === 0,
 						height: txInfo.height,
 						gasUsed: BigInt(txInfo.result.gasUsed ?? 0),
-						feeAmount: this.extractFee(txInfo), // 手数料を txInfo から抽出
+						feeAmount: this.extractFee(txInfo),
 						error: txInfo.result.code !== 0 ? txInfo.result.log : undefined,
 					};
 					results.set(hash, result);
 
 					log.debug(`[PollingConfirm] Tx確認完了 (Hash: ${hash.substring(0, 10)}..., Success: ${result.success})`);
-					options.onProgress?.(results.size, txHashes.length);
+					// ★ 修正: txHashes.length -> totalTxCount
+					options.onProgress?.(results.size, totalTxCount);
 
 				} catch (error: any) {
-					// ★ 修正: "not found" エラーはポーリング継続対象、それ以外は警告
+					// ★ 修正: "not found" エラーの判定を改善
 					const errorMessage = String(error.message || error);
 					if (errorMessage.includes('not found') || errorMessage.includes('not in mempool')) {
-						// Txがまだ見つからない (ポーリング継続)
 						log.debug(`[PollingConfirm] Tx ${hash.substring(0, 10)}... はまだ見つかりません。`);
 					} else {
-						// 永続的なエラーの可能性 (例: RPCノードダウン)
 						log.warn(`[PollingConfirm] tx(${hash}) 実行中に予期せぬエラーが発生しました。`, error);
 					}
 				}
@@ -118,26 +105,15 @@ export class PollingConfirmationStrategy implements IConfirmationStrategy {
 			if (pendingHashes.size > 0) {
 				await sleep(DEFAULT_POLLING_INTERVAL_MS);
 			}
-		} // while ループ終了
-
-		// 5. タイムアウト処理
-		if (pendingHashes.size > 0) {
-			log.warn(`[PollingConfirm] タイムアウト (${timeout}ms) しました。 ${pendingHashes.size} 件のTxが未確認です。`);
-			for (const hash of pendingHashes) {
-				results.set(hash, {
-					success: false,
-					error: '確認タイムアウト',
-					height: undefined,
-					gasUsed: undefined,
-					feeAmount: undefined,
-				});
-			}
 		}
+	}
 
-		// --- ★ ログレベルは info のまま (成功/失敗のサマリーのため) ---
-		log.info(`[PollingConfirm] ポーリング確認終了。 (成功: ${Array.from(results.values()).filter(r => r.success).length}, 失敗: ${Array.from(results.values()).filter(r => !r.success).length})`);
-
-		return results;
+	/**
+	 * 【実装】ポーリングループを停止します。
+	 */
+	protected _cleanup(context: RunnerContext, chainName: string): void {
+		log.debug(`[PollingConfirm] クリーンアップ: ポーリングループを停止します。`);
+		this.active = false;
 	}
 
 	/**
@@ -146,6 +122,7 @@ export class PollingConfirmationStrategy implements IConfirmationStrategy {
 	 */
 	private extractFee(txInfo: TxResponse): bigint {
 		try {
+			// ★ 修正: txInfo.tx は Uint8Array
 			const txRawBytes: Uint8Array = txInfo.tx;
 
 			if (!txRawBytes) {
