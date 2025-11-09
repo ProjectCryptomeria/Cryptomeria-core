@@ -32,7 +32,7 @@ async function runInteractive() {
 		const { logLevel } = await prompt<{ logLevel: string }>({
 			type: 'select',
 			name: 'logLevel',
-			message: 'ログレベルを選択してください (左右キーで選択):',
+			message: 'ログレベルを選択してください:',
 			choices: [
 				// name が --logLevel 引数として渡される値
 				{ name: 'debug', message: 'DEBUG   (水色: すべて表示)' },

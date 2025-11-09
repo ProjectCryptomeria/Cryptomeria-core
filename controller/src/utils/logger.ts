@@ -23,7 +23,7 @@ const customLevels = {
 	levels: {
 		error: 0,
 		warn: 1,
-		success: 2,
+		success: 2, // ★ 追加
 		info: 3,
 		debug: 4,
 	},
@@ -31,17 +31,16 @@ const customLevels = {
 		error: 'red',
 		warn: 'yellow',
 		success: 'green',
-		info: 'magenta', // ピンクの代用
-		debug: 'cyan',
+		info: 'magenta', // (ピンク)
+		debug: 'cyan',   // (水色)
 	},
 };
 
-// winston にカスタムカラーを登録
+// winston にカスタム色を登録
 winston.addColors(customLevels.colors);
 
 // ログレベル (デフォルトは 'info')
-let logLevel = process.env.LOG_LEVEL || 'info';
-// --- ★ isDebugMode は不要になったため削除 ---
+let currentLogLevel = 'info'; // ★ 修正: setLogLevel で変更するため let に
 
 // ログフォーマット
 const fileLogFormat = winston.format.combine(
@@ -50,17 +49,27 @@ const fileLogFormat = winston.format.combine(
 	winston.format.splat(),
 	winston.format.printf((info: Logform.TransformableInfo) => {
 		const stackInfo = info.stack ? `\n${info.stack}` : '';
-		return `[${info.timestamp}] [${info.level.toUpperCase()}] - ${info.message}${stackInfo}`;
+		// ★ 修正: レベルを大文字に + 右パディングで揃える
+		const level = info.level.toUpperCase().padEnd(7); // 7文字幅 (SUCCESS) で揃える
+		return `[${info.timestamp}] [${level}] - ${info.message}${stackInfo}`;
 	})
 );
 
-// --- ★ コンソールフォーマットの変更 (色付けとレベルの大文字化) ---
+// ★★★ コンソール用フォーマット (修正) ★★★
+
+// 1. レベル文字列を大文字にし、パディングするカスタムフォーマット
+const levelAlign = winston.format((info) => {
+	info.level = info.level.toUpperCase().padEnd(7);
+	return info;
+});
+
 const consoleLogFormat = winston.format.combine(
-	winston.format.timestamp({ format: 'HH:mm:ss' }),
-	winston.format.colorize(), // ★ colorize() を呼び出す
-	winston.format.printf((info: Logform.TransformableInfo) => {
-		// colorize() がレベルに色を付けてくれる
-		return `[${info.timestamp}] [${info.level.toUpperCase()}] - ${info.message}`;
+	winston.format.timestamp({ format: 'HH:mm:ss' }), // 1. タイムスタンプ
+	levelAlign(), // 2. 'success' -> 'SUCCESS  '
+	winston.format.colorize(), // 3. 'SUCCESS  ' -> '\x1B[32mSUCCESS  \x1B[39m'
+	winston.format.printf((info: Logform.TransformableInfo) => { // 4. 組み立て
+		// この時点で info.level は完全にフォーマット済み
+		return `[${info.timestamp}] [${info.level}] - ${info.message}`;
 	})
 );
 
@@ -78,15 +87,14 @@ class MemoryTransport extends Transport {
 
 // Winston ロガーインスタンスの作成
 const logger = winston.createLogger({
-	// --- ★ カスタムレベルとデフォルトレベルを設定 ---
-	levels: customLevels.levels,
-	level: logLevel,
+	level: currentLogLevel, // デフォルトレベル (setLogLevelで上書きされる)
+	levels: customLevels.levels, // ★ カスタムレベルを設定
 	format: fileLogFormat, // ファイル出力の基本フォーマット
 	transports: [
 		// 1. 全ログファイル (デバッグレベル以上)
 		new winston.transports.File({
 			filename: ALL_LOG_FILE,
-			level: 'debug', // ファイルには常に 'debug' 以上を書き込む
+			level: 'debug', // デバッグレベル以上の全ログを書き込む
 			options: { flags: 'w' } // 実行のたびに上書き
 		}),
 		// 2. エラーログファイル (警告レベル以上)
@@ -97,8 +105,8 @@ const logger = winston.createLogger({
 		}),
 		// 3. コンソール出力 (設定されたログレベルに基づく)
 		new winston.transports.Console({
-			format: consoleLogFormat,
-			level: logLevel, // コンソールに出力するレベル (setLogLevelで変更可能)
+			format: consoleLogFormat, // ★ 修正されたコンソール用フォーマット
+			level: currentLogLevel, // コンソールに出力するレベル (setLogLevelで上書き)
 		}),
 		// 4. メモリバッファ (エラー/警告のみ)
 		new MemoryTransport({ level: 'warn' }),
@@ -106,28 +114,22 @@ const logger = winston.createLogger({
 	exitOnError: false, // エラー発生時にプロセスを終了しない
 });
 
-// --- ★ デバッグモード切り替え関数を setLogLevel に変更 ---
-/**
- * ロガーの表示レベルを動的に変更します。
- * @param newLevel 設定する新しいレベル (error, warn, success, info, debug)
- */
+// ★ 修正: ログレベル変更関数 (setDebugMode から変更)
 const setLogLevel = (newLevel: string): void => {
-	const validLevels = Object.keys(customLevels.levels);
-	if (!validLevels.includes(newLevel)) {
-		console.warn(`[Logger] 無効なログレベル: ${newLevel}。 'info' を使用します。`);
+	if (customLevels.levels[newLevel as keyof typeof customLevels.levels] === undefined) {
+		logger.warn(`無効なログレベル: "${newLevel}"。 'info' を使用します。`);
 		newLevel = 'info';
 	}
 
-	logLevel = newLevel;
-	logger.level = logLevel;
+	currentLogLevel = newLevel;
+	logger.level = currentLogLevel;
 
 	// コンソールトランスポートのレベルも更新
 	const consoleTransport = logger.transports.find(t => t instanceof winston.transports.Console);
 	if (consoleTransport) {
-		consoleTransport.level = logLevel;
+		consoleTransport.level = currentLogLevel;
 	}
-	// 新しいレベルでログ出力 (このログ自体がレベル設定によって表示されない可能性あり)
-	logger.log('info', `ログレベルが '${logLevel}' に設定されました。`);
+	logger.info(`ログレベルが "${currentLogLevel}" に設定されました。`); // このログは設定後に表示される
 };
 
 // 終了時にエラーログを要約して表示する関数
@@ -135,30 +137,23 @@ const flushErrorLogs = async (): Promise<void> => {
 	if (memoryTransportBuffer.length > 0) {
 		console.error(`\n--- 🚨 エラー/警告 (${memoryTransportBuffer.length}件) ---`);
 		memoryTransportBuffer.forEach(info => {
-			// コンソール用にシンプルなフォーマットで出力
-			// この出力は winston のフォーマットを経由しないため、手動で色付け
-			const levelUpper = info.level.toUpperCase();
-			let coloredLevel: string;
-			switch (info.level) {
-				case 'error': coloredLevel = `\x1b[31m${levelUpper}\x1b[0m`; break; // red
-				case 'warn': coloredLevel = `\x1b[33m${levelUpper}\x1b[0m`; break; // yellow
-				default: coloredLevel = levelUpper;
+			const transformed = logger.format.transform(info, {});
+			if (transformed && (transformed as Logform.TransformableInfo).message) {
+				// コンソール用にシンプルなフォーマットで出力
+				// (この時点では colorize は適用されないため、レベル文字列をそのまま使用)
+				console.error(`[${info.level.toUpperCase()}] ${info.message}${info.stack ? '\n' + info.stack : ''}`);
 			}
-			console.error(`[${coloredLevel}] ${info.message}${info.stack ? '\n' + info.stack : ''}`);
 		});
 		console.error(`--- 全てのログは ${ALL_LOG_FILE} を参照してください ---`);
 		console.error(`--- エラー/警告ログは ${ERROR_LOG_FILE} を参照してください ---`);
 	} else {
-		// 正常終了時は logger.success を使いたいが、プロセス終了間際なので console.log を使う
-		console.log(`\n\x1b[32m✅ エラーや警告は記録されませんでした。\x1b[0m`); // 手動で緑色
+		console.log(`\n✅ エラーや警告は記録されませんでした。`);
 		console.log(`--- 全てのログは ${ALL_LOG_FILE} を参照してください ---`);
 	}
 };
 
 // ログ出力用の便利なメソッドを追加
 const log = {
-	info: (message: string, ...meta: any[]) => logger.info(message, ...meta),
-	warn: (message: string, ...meta: any[]) => logger.warn(message, ...meta),
 	error: (message: string, error?: Error | any, ...meta: any[]) => {
 		if (error instanceof Error) {
 			logger.error(message, { stack: error.stack, ...meta });
@@ -166,24 +161,21 @@ const log = {
 			logger.error(message, error, ...meta); // errorがErrorオブジェクトでない場合
 		}
 	},
+	warn: (message: string, ...meta: any[]) => logger.warn(message, ...meta),
+	success: (message: string, ...meta: any[]) => logger.log('success', message, ...meta), // ★ 追加
+	info: (message: string, ...meta: any[]) => logger.info(message, ...meta),
 	debug: (message: string, ...meta: any[]) => logger.debug(message, ...meta),
-	// --- ★ `success` メソッドを追加 ---
-	success: (message: string, ...meta: any[]) => logger.log('success', message, ...meta),
-
-	// --- ★ `step` メソッドは変更なし (内部で logger.info を呼ぶ) ---
-	step: (message: string) => logger.info(`\n--- STEP: ${message} ---`),
-
-	// --- ★ `setDebugMode` を `setLogLevel` に変更 ---
-	setLogLevel,
+	step: (message: string) => logger.info(`\n--- STEP: ${message} ---`), // INFOレベルで出力
+	setLogLevel, // ★ setDebugMode から変更
 	flushErrorLogs,
-	// --- ★ `isDebug` を修正 ---
-	isDebug: () => logLevel === 'debug',
-	getLogLevel: () => logLevel,
+	isDebug: () => currentLogLevel === 'debug',
 };
 
-// 初期ログ出力
-log.info(`ロガーが初期化されました。ログレベル: ${logLevel}`);
-log.info(`全ログファイル: ${ALL_LOG_FILE}`);
-log.info(`エラーログファイル: ${ERROR_LOG_FILE}`);
+// 初期ログ出力 (★ 修正: info -> debug)
+// これらは main() で setLogLevel が呼ばれる前に実行されるため、
+// デフォルト('info')で表示されてしまうのを防ぐ
+log.debug(`ロガーが初期化されました。デフォルトログレベル: ${currentLogLevel}`);
+log.debug(`全ログファイル: ${ALL_LOG_FILE}`);
+log.debug(`エラーログファイル: ${ERROR_LOG_FILE}`);
 
 export { log }; // log オブジェクトをエクスポート

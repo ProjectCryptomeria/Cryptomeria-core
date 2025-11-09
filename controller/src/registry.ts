@@ -122,4 +122,4 @@ const customTypes: ReadonlyArray<[string, GeneratedType]> = [
 export const customRegistry = new Registry([...defaultRegistryTypes, ...customTypes]);
 
 // --- ★ ログレベル変更 (console.log -> log.info) ---
-log.info('[Registry] カスタム Protobuf 型が登録されました。');
+log.success('[Registry] カスタム Protobuf 型が登録されました。');
