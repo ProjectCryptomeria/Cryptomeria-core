@@ -1,6 +1,6 @@
 // controller/src/strategies/upload/SequentialUploadStrategy.ts
-import { RunnerContext } from '../../types/index';
-import { log } from '../../utils/logger';
+import { RunnerContext } from '../../../types/index';
+import { log } from '../../../utils/logger';
 import { BaseOneByOneStrategy } from './BaseOneByOneStrategy'; // ★ 修正
 import { ChunkInfo } from './BaseUploadStrategy';
 import { IUploadStrategy } from './IUploadStrategy';

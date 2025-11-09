@@ -4,15 +4,15 @@ import { toHex } from '@cosmjs/encoding';
 import { EncodeObject } from '@cosmjs/proto-signing';
 import { calculateFee, GasPrice, SignerData, StdFee } from '@cosmjs/stargate';
 import { TxRaw } from 'cosmjs-types/cosmos/tx/v1beta1/tx';
-import { DEFAULT_GAS_PRICE } from '../../core/ChainManager';
+import { DEFAULT_GAS_PRICE } from '../../../core/ChainManager';
 import {
 	MsgCreateStoredChunk,
 	RunnerContext,
 	TransactionInfo,
-} from '../../types/index';
-import { log } from '../../utils/logger';
-import { IProgressBar } from '../../utils/ProgressManager/IProgressManager';
-import { ConfirmationOptions } from '../confirmation';
+} from '../../../types/index';
+import { log } from '../../../utils/logger';
+import { IProgressBar } from '../../../utils/ProgressManager/IProgressManager';
+import { ConfirmationOptions } from '../../confirmation';
 import { BaseUploadStrategy, ChunkBatch, ChunkInfo, ChunkLocation } from './BaseUploadStrategy';
 
 const DEFAULT_BATCH_SIZE_PER_CHAIN = 100;

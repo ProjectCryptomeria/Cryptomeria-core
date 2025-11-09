@@ -1,9 +1,9 @@
 // controller/src/strategies/upload/DistributeUploadStrategy.ts
 import { CometClient } from '@cosmjs/tendermint-rpc';
-import { ChainInfo, RunnerContext } from '../../types';
-import { log } from '../../utils/logger';
-import { IProgressBar } from '../../utils/ProgressManager/IProgressManager';
-import { sleep } from '../../utils/retry';
+import { ChainInfo, RunnerContext } from '../../../types';
+import { log } from '../../../utils/logger';
+import { IProgressBar } from '../../../utils/ProgressManager/IProgressManager';
+import { sleep } from '../../../utils/retry';
 import { BaseMultiBurstStrategy } from './BaseMultiBurstStrategy';
 import { ChunkInfo, ChunkLocation } from './BaseUploadStrategy';
 import { IUploadStrategy } from './IUploadStrategy';

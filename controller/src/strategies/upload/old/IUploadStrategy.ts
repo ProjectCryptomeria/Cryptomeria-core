@@ -1,6 +1,6 @@
 // controller/src/strategies/upload/IUploadStrategy.ts
-import type { RunnerContext } from '../../types';
-import type { UploadResult } from '../../types/experiment';
+import type { RunnerContext } from '../../../types';
+import type { UploadResult } from '../../../types/experiment';
 
 /**
  * データのアップロード戦略（分割方法、チェーンへの割り当て方、送信手順）を抽象化するインターフェース。

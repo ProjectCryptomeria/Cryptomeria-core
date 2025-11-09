@@ -12,8 +12,8 @@ import {
 	RunnerContext,
 	UploadResult,
 	UrlParts,
-} from '../../types/index';
-import { log } from '../../utils/logger';
+} from '../../../types/index';
+import { log } from '../../../utils/logger';
 import { IUploadStrategy } from './IUploadStrategy';
 
 // デフォルト値

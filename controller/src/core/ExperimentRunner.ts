@@ -22,7 +22,7 @@ import { ICommunicationStrategy } from '../strategies/communication/ICommunicati
 import { IConfirmationStrategy } from '../strategies/confirmation/IConfirmationStrategy';
 import { IDownloadStrategy } from '../strategies/download/IDownloadStrategy';
 import { IGasEstimationStrategy } from '../strategies/gas';
-import { IUploadStrategy } from '../strategies/upload/IUploadStrategy';
+import { IUploadStrategy } from '../strategies/upload/old/IUploadStrategy';
 import { IVerificationStrategy } from '../strategies/verification/IVerificationStrategy';
 
 // --- 戦略モジュールの型定義 ---

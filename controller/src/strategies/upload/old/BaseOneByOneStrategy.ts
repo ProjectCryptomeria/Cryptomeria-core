@@ -1,10 +1,10 @@
 // controller/src/strategies/upload/BaseOneByOneStrategy.ts
 import { DeliverTxResponse } from '@cosmjs/stargate';
 // ★ 修正: IProgressBar をインポート
-import { IProgressBar } from '../../utils/ProgressManager/IProgressManager';
+import { IProgressBar } from '../../../utils/ProgressManager/IProgressManager';
 // ★ 修正: ConfirmationResult をインポート
-import { ConfirmationResult, MsgCreateStoredChunk, RunnerContext } from '../../types/index';
-import { log } from '../../utils/logger';
+import { ConfirmationResult, MsgCreateStoredChunk, RunnerContext } from '../../../types/index';
+import { log } from '../../../utils/logger';
 import { BaseUploadStrategy, ChunkInfo, ChunkLocation } from './BaseUploadStrategy';
 
 /**

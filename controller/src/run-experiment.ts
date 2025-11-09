@@ -29,7 +29,7 @@ import {
 	DistributeUploadStrategy,
 	IUploadStrategy,
 	SequentialUploadStrategy
-} from './strategies/upload';
+} from './strategies/upload/old';
 import {
 	BufferVerificationStrategy,
 	IVerificationStrategy
