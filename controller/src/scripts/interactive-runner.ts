@@ -28,7 +28,7 @@ async function runInteractive() {
 			choices: configFiles,
 		});
 
-		// --- ★ ステップ2: デバッグモードの有無をログレベル選択に変更 ---
+		// --- ★ ステップ2: ログレベル選択 (修正) ---
 		const { logLevel } = await prompt<{ logLevel: string }>({
 			type: 'select',
 			name: 'logLevel',
@@ -37,7 +37,9 @@ async function runInteractive() {
 				// name が --logLevel 引数として渡される値
 				{ name: 'debug', message: 'DEBUG   (水色: すべて表示)' },
 				{ name: 'info', message: 'INFO    (ピンク: 標準の進捗状況)' },
-				{ name: 'success', message: 'SUCCESS (緑色: 主要な成功ログのみ)' }
+				{ name: 'success', message: 'SUCCESS (緑色: 主要な成功ログのみ)' },
+				// ★ 修正: 'none' レベルを追加
+				{ name: 'none', message: 'NONE    (無音: すべてのログを無効化)' }
 			],
 			initial: 1, // デフォルトを 'info' (インデックス 1) に設定
 		});

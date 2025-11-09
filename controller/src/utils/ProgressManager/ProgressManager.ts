@@ -69,10 +69,7 @@ class RealProgressManager implements IProgressManager {
 
 		this.multiBar = new cliProgress.MultiBar({
 			stream: process.stdout,
-			clearOnComplete: false,
 			hideCursor: true,
-			// ★ 修正: バーが完了しても消えないようにする
-			stopOnComplete: false,
 			format: ' {bar} | {name} | {percentage}% ({value}/{total}) | ETA: {eta_formatted} | {status}',
 		}, cliProgress.Presets.shades_classic);
 	}
@@ -81,7 +78,6 @@ class RealProgressManager implements IProgressManager {
 		if (this.multiBar) {
 			this.multiBar.stop();
 			this.multiBar = null;
-			this.bars.clear();
 		}
 	}
 

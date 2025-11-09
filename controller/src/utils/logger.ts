@@ -4,7 +4,8 @@ import * as path from 'path';
 import winston, { Logform } from 'winston';
 import Transport from 'winston-transport';
 
-export type LogLevel = 'error' | 'warn' | 'success' | 'info' | 'debug';
+// ★ 修正 1: LogLevel に 'none' を追加
+export type LogLevel = 'error' | 'warn' | 'success' | 'info' | 'debug' | 'none';
 
 // ログディレクトリを src/experiments/results/logs に変更
 const LOG_DIR = path.join(__dirname, '..', 'experiments', 'results', 'logs');
@@ -22,7 +23,9 @@ try {
 
 // --- カスタムレベルと色の定義 ---
 const customLevels = {
+	// ★ 修正 2: levels に 'none' を追加 (error より小さい値)
 	levels: {
+		none: -1, // このレベル自体は使わないが、設定用に定義
 		error: 0,
 		warn: 1,
 		success: 2,
@@ -35,6 +38,7 @@ const customLevels = {
 		success: 'green',
 		info: 'magenta',
 		debug: 'cyan',
+		none: 'grey', // 使われないが定義
 	},
 };
 
@@ -42,7 +46,7 @@ const customLevels = {
 winston.addColors(customLevels.colors);
 
 // ログレベル (デフォルトは 'info')
-let currentLogLevel = 'info';
+let currentLogLevel: LogLevel = 'info';
 
 // ログフォーマット
 const fileLogFormat = winston.format.combine(
@@ -127,8 +131,27 @@ const logger = winston.createLogger({
 	exitOnError: false,
 });
 
-// ★ 修正: ログレベル変更関数
+// ★ 修正 3: ログレベル変更関数
 const setLogLevel = (newLevel: LogLevel): void => {
+	// 'none' の場合の特別処理
+	if (newLevel === 'none') {
+		currentLogLevel = 'none';
+		// すべてのトランスポートを silent (無効化) にする
+		logger.transports.forEach(transport => {
+			transport.silent = true;
+		});
+		logger.level = 'none';
+		// 'none' に設定したことを唯一 console.log (stderr ではない) で通知
+		console.log(`[Logger] LogLevel set to 'none'. All logging disabled.`);
+		return;
+	}
+
+	// 'none' 以外の場合、すべてのトランスポートを silent = false (有効化) に戻す
+	logger.transports.forEach(transport => {
+		transport.silent = false;
+	});
+
+	// レベルが存在するかチェック (none 以外)
 	if (customLevels.levels[newLevel as keyof typeof customLevels.levels] === undefined) {
 		logger.warn(`無効なログレベル: "${newLevel}"。 'info' を使用します。`);
 		newLevel = 'info';
@@ -154,8 +177,13 @@ const setLogLevel = (newLevel: LogLevel): void => {
 	logger.info(`ファイルログレベルが "${currentLogLevel}" に設定されました。 (コンソールは "${consoleTransport?.level ?? 'success'}" レベル以上のみ表示)`);
 };
 
-// 終了時にエラーログを要約して表示する関数
+// ★ 修正 4: 終了時にエラーログを要約して表示する関数
 const flushErrorLogs = async (): Promise<void> => {
+	// ログレベルが 'none' の場合はサマリーも表示しない
+	if (currentLogLevel === 'none') {
+		return;
+	}
+
 	// ★ 修正: エラー/警告のサマリーも console.error (stderr) に出力
 	if (memoryTransportBuffer.length > 0) {
 		console.error(`\n--- 🚨 エラー/警告 (${memoryTransportBuffer.length}件) ---`);
@@ -188,7 +216,7 @@ const log = {
 	step: (message: string) => logger.info(`\n--- STEP: ${message} ---`),
 	setLogLevel,
 	flushErrorLogs,
-	isDebug: () => currentLogLevel === 'debug',
+	isDebug: () => currentLogLevel === 'debug', // ★ 修正 5: 変更なし
 };
 
 log.debug(`ロガーが初期化されました。デフォルトログレベル: ${currentLogLevel}`);

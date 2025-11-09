@@ -74,7 +74,6 @@ export abstract class BaseUploadStrategy implements IUploadStrategy {
 		tracker.setChunkSizeUsed(chunkSize);
 		const allChunks = this.createChunks(data, chunkSize);
 		log.info(`[${this.constructor.name}] データは ${allChunks.length} 個のチャンクに分割されました。`);
-		// ★★★ 変更点 (ここまで) ★★★
 
 		if (allChunks.length === 0) {
 			log.warn(`[${this.constructor.name}] チャンクが0個です。マニフェストのみ登録します。`);
