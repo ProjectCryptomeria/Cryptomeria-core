@@ -9,7 +9,7 @@ import { ExperimentConfig } from '../../types';
  */
 const config: ExperimentConfig = {
 	description: 'Case 1: Sequential (OneByOne) + Polling',
-	iterations: 3,
+	iterations: 1,
 
 	// アップロード対象: 1MB
 	target: {

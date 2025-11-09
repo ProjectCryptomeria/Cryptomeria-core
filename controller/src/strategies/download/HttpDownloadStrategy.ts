@@ -82,7 +82,7 @@ export class HttpDownloadStrategy implements IDownloadStrategy {
 			}
 
 			// 4. マニフェストからチャンクインデックスを取得
-			const chunkIndexes = manifest[urlParts.filePathRaw];
+			const chunkIndexes = manifest[urlParts.filePathEncoded];
 			if (!chunkIndexes || chunkIndexes.length === 0) {
 				throw new Error(`マニフェスト内にファイルパス "${urlParts.filePathRaw}" のチャンク情報が見つかりません。`);
 			}
