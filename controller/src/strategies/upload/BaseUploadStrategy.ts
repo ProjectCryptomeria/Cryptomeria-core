@@ -63,12 +63,18 @@ export abstract class BaseUploadStrategy implements IUploadStrategy {
 		// 1. URL解析 (共通)
 		const urlParts = context.urlPathCodec.parseTargetUrl(targetUrl);
 
-		// 2. チャンク化 (共通)
-		const options = config.uploadStrategyOptions ?? {};
-		const chunkSize = options.chunkSize === 'auto' || !options.chunkSize ? DEFAULT_CHUNK_SIZE : options.chunkSize;
+		// ★★★ 2. チャンク化 (変更点) ★★★
+		// config.uploadStrategyOptions ではなく context.currentTask から chunkSize を取得
+		const task = context.currentTask;
+		if (!task) {
+			throw new Error('BaseUploadStrategy.execute: context.currentTask が設定されていません。');
+		}
+
+		const chunkSize = task.chunkSize === 'auto' || !task.chunkSize ? DEFAULT_CHUNK_SIZE : task.chunkSize;
 		tracker.setChunkSizeUsed(chunkSize);
 		const allChunks = this.createChunks(data, chunkSize);
 		log.info(`[${this.constructor.name}] データは ${allChunks.length} 個のチャンクに分割されました。`);
+		// ★★★ 変更点 (ここまで) ★★★
 
 		if (allChunks.length === 0) {
 			log.warn(`[${this.constructor.name}] チャンクが0個です。マニフェストのみ登録します。`);

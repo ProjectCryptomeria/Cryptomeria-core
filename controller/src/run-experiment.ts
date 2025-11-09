@@ -162,15 +162,20 @@ function parseArgs(): { configPath: string, logLevel: string | undefined } {
 
 
 /**
- * 実験結果をCSV形式の文字列に変換します (簡易版)
- * (変更なし)
+ * 実験結果をCSV形式の文字列に変換します
+ * ★★★ 修正箇所 ★★★
  */
 async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
 	const header = [
 		'Timestamp',
-		'Description',
+		'ExperimentDescription', // 'Description' -> 'ExperimentDescription'
 		'Iteration',
-		'ChainCount',
+		'TaskDescription', // ★ 追加
+		'TaskChainCount', // ★ 'ChainCount' -> 'TaskChainCount'
+		'TaskTargetKB', // ★ 追加
+		'TaskChunkSizeBytes', // ★ 'Chunk_Size_Bytes' -> 'TaskChunkSizeBytes'
+		'TaskTargetChain', // ★ 追加
+		'TaskPipelineDepth', // ★ 追加
 		'Upload_ms',
 		'Download_ms',
 		'Total_Tx',
@@ -178,12 +183,11 @@ async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
 		'Failed_Tx',
 		'Total_Gas',
 		'Avg_Gas_Per_Tx',
-		'Data_Size_Bytes',
+		'Data_Size_Bytes', // (実測ダウンロードサイズ)
 		'Verification_Success',
 		'Strategy_Comm',
 		'Strategy_Upload',
 		'Strategy_Confirm',
-		'Chunk_Size_Bytes',
 	].join(',');
 
 	const now = new Date().toISOString();
@@ -191,15 +195,23 @@ async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
 
 	const rows = result.iterationResults.map(iter => {
 		const upload = iter.uploadResult;
+		const task = iter.task; // ★ iter.task を取得
+
+		// ★ 変更: task.target を参照
 		const dataSize = iter.downloadResult.downloadedData.length > 0
 			? iter.downloadResult.downloadedData.length
-			: (config.target.type === 'sizeKB' ? config.target.value * 1024 : 0);
+			: (task.target.type === 'sizeKB' ? task.target.value * 1024 : 0);
 
 		return [
 			now,
-			`"${config.description}"`,
+			`"${config.description}"`, // 実験全体の説明
 			iter.iteration,
-			iter.chainCount,
+			`"${task.description ?? 'N/A'}"`, // ★ タスクの説明
+			task.chainCount, // ★ task.chainCount
+			task.target.type === 'sizeKB' ? task.target.value : 'N/A (File)', // ★ task.target.value
+			task.chunkSize, // ★ task.chunkSize
+			task.targetChain ?? 'N/A', // ★ 追加
+			task.pipelineDepth ?? 'N/A', // ★ 追加
 			upload.durationMs,
 			iter.downloadResult.durationMs,
 			upload.totalTx,
@@ -212,7 +224,6 @@ async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
 			config.strategies.communication,
 			config.strategies.upload,
 			config.strategies.confirmation,
-			upload.chunkSizeUsedBytes ?? 'N/A',
 		].join(',');
 	});
 
@@ -259,11 +270,12 @@ async function main() {
 		// 5. 結果の表示
 		log.step('--- 実験結果サマリー ---');
 		console.log(JSON.stringify(result.summary ?? { message: 'サマリーなし' }, null, 2));
-		log.step('--- イテレーション詳細 ---');
+		log.step('--- イテレーション詳細 (タスク別) ---'); // ★ ログメッセージ変更
 		console.log(
 			result.iterationResults.map(r => ({
 				iter: r.iteration,
-				chains: r.chainCount,
+				// ★ 修正: task の表示内容を拡充
+				task: r.task.description ?? `size=${r.task.target.value}KB, chunk=${r.task.chunkSize}, chains=${r.task.chainCount}, target=${r.task.targetChain ?? 'N/A'}`,
 				uploadMs: Number(r.uploadResult.durationMs),
 				downloadMs: Number(r.downloadResult.durationMs),
 				successTx: r.uploadResult.successTx,

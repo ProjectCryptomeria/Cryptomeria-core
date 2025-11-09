@@ -8,25 +8,51 @@ import { IConfirmationStrategy } from "../strategies/confirmation/IConfirmationS
 import { IGasEstimationStrategy } from "../strategies/gas/IGasEstimationStrategy";
 import { UrlPathCodec } from "../utils/UrlPathCodec";
 
+// ★★★ 変更点 (ここから) ★★★
+
+/**
+ * アップロード対象のデータソース (TaskOption用)
+ */
+export type TaskTarget = {
+	type: 'sizeKB'; // ダミーデータを生成
+	value: number;  // エンコード後の目標KBサイズ
+} | {
+	type: 'filePath'; // 実ファイルを使用
+	value: string;    // ファイルへのパス
+};
+
+/**
+ * 1回のイテレーション内で実行される個別の実験タスク設定
+ */
+export interface TaskOption {
+	/** (任意) CSV出力やログ用の説明 */
+	description?: string;
+	/** アップロード対象のデータ */
+	target: TaskTarget;
+	/** このタスクで使用する datachain の数 */
+	chainCount: number;
+	/** このタスクで使用するチャンクサイズ (バイト単位 or 'auto') */
+	chunkSize: number | 'auto';
+
+	// ★ 追加: uploadStrategyOptions から移動
+	/** SequentialUploadStrategy で使用する対象チェーン名 */
+	targetChain?: string;
+	/** PipelinedAutoDistributeUploadStrategy などで使用するパイプライン深度 */
+	pipelineDepth?: number;
+}
+
 /**
  * 実験設定ファイル (experiments/configs/*.config.ts) の型
  */
 export interface ExperimentConfig {
 	description: string; // 実験の説明
-	iterations: number;  // 繰り返し回数
+	iterations: number;  // 繰り返し回数 (全タスクをこの回数繰り返す)
 
-	// アップロード対象のデータソース
-	target: {
-		type: 'sizeKB'; // ダミーデータを生成
-		value: number;  // エンコード後の目標KBサイズ
-	} | {
-		type: 'filePath'; // 実ファイルを使用
-		value: string;    // ファイルへのパス
-	};
-
-	// 実験に使用するチェーンの数 (datachain の数)
-	// undefined の場合は InfrastructureService が検出した全てを使用
-	chainCount?: number | number[]; // 単一指定 or スケーラビリティテスト用の複数指定
+	/**
+	 * ★ 追加: 実行するタスクのリスト
+	 * iterations ループごとに、このリスト内のタスクが順次実行されます。
+	 */
+	tasks: TaskOption[];
 
 	// 使用する戦略モジュールの名前 (文字列)
 	strategies: {
@@ -40,9 +66,7 @@ export interface ExperimentConfig {
 	// 各戦略に渡すオプション (オプション)
 	communicationStrategyOptions?: any;
 	uploadStrategyOptions?: {
-		chunkSize?: number | 'auto'; // アップロード時のチャンクサイズ (バイト単位 or 'auto')
-		targetChain?: string; // SequentialUploadStrategy で使用
-		pipelineDepth?: number; // PipelinedAutoDistribute で使用
+		// ★ 変更: chunkSize, targetChain, pipelineDepth を削除 (TaskOption に移動)
 	};
 	confirmationStrategyOptions?: {
 		timeoutMs?: number; // 完了確認のタイムアウト (ミリ秒)
@@ -66,14 +90,17 @@ export interface ExperimentResult {
 }
 
 /**
- * 1回のイテレーションの結果
+ * 1回のイテレーションの結果 (1タスクの実行結果に対応)
  */
 export interface IterationResult {
 	iteration: number;
+	/** ★ 追加: 実行されたタスク設定 */
+	task: TaskOption;
+	/** ★ 変更: (冗長だが集計用に保持) task.chainCount と同じ */
+	chainCount: number;
 	uploadResult: UploadResult;
 	downloadResult: DownloadResult;
 	verificationResult: VerificationResult;
-	chainCount: number; // このイテレーションで使用した datachain 数
 }
 
 /**
@@ -176,6 +203,9 @@ export interface RunnerContext {
 	/** 現在実行中の実験設定 */
 	config: ExperimentConfig;
 
+	/** ★ 追加: 現在実行中のタスク設定 (ExperimentRunnerが設定) */
+	currentTask?: TaskOption;
+
 	/** チェーン接続や低レベル操作を管理するマネージャー */
 	chainManager: ChainManager;
 
@@ -200,3 +230,4 @@ export interface RunnerContext {
 	/** URL/パスのエンコード・デコード・分割を行うユーティリティ */
 	urlPathCodec: UrlPathCodec;
 }
+// ★★★ 変更点 (ここまで) ★★★

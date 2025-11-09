@@ -37,12 +37,20 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 
 		const { chainManager, config } = context;
 
-		// 1. 対象チェーンを決定 (Distribute 固有)
+		// ★★★ 1. 対象チェーンを決定 (変更点) ★★★
+		// config.chainCount ではなく context.currentTask.chainCount を参照
 		const allDatachains = chainManager.getDatachainInfos();
-		const chainCount = config.chainCount && typeof config.chainCount === 'number'
-			? config.chainCount
+
+		const task = context.currentTask;
+		if (!task) {
+			throw new Error('DistributeUploadStrategy: context.currentTask が設定されていません。');
+		}
+
+		const chainCount = task.chainCount && typeof task.chainCount === 'number'
+			? task.chainCount
 			: allDatachains.length;
 		const targetDatachains = allDatachains.slice(0, chainCount);
+		// ★★★ 変更点 (ここまで) ★★★
 
 		if (targetDatachains.length === 0) {
 			log.error('[DistributeUpload] 利用可能な datachain が0件です。');

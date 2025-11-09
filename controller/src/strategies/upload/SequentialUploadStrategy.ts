@@ -19,20 +19,27 @@ export class SequentialUploadStrategy extends BaseOneByOneStrategy implements IU
 	/**
 	 * 【戦略固有ロジック】
 	 * すべてのチャンクを、設定で指定された単一のチェーンに割り当てます。
+	 * ★★★ 変更点 ★★★
 	 */
 	protected distributeJobs(
 		context: RunnerContext,
 		allChunks: ChunkInfo[]
 	): { chainName: string, chunk: ChunkInfo }[] {
 
-		const { config, chainManager } = context;
+		// ★ 変更: config.uploadStrategyOptions ではなく context.currentTask を参照
+		const { chainManager, currentTask } = context;
+
+		if (!currentTask) {
+			throw new Error('[SequentialUpload] context.currentTask が設定されていません。');
+		}
 
 		// 1. 設定から対象チェーンを特定 (Sequential 固有)
-		const options = config.uploadStrategyOptions ?? {};
-		const targetChainName = options.targetChain;
+		const targetChainName = currentTask.targetChain;
 		if (!targetChainName) {
-			throw new Error('[SequentialUpload] 設定 (uploadStrategyOptions.targetChain) で対象の datachain 名を指定する必要があります。');
+			throw new Error('[SequentialUpload] TaskOption に "targetChain" を指定する必要があります。');
 		}
+		// ★★★ 変更点 (ここまで) ★★★
+
 		// 存在確認
 		chainManager.getChainAccount(targetChainName);
 		log.info(`[SequentialUpload] 戦略実行。対象チェーン: ${targetChainName}, 総チャンク数: ${allChunks.length}`);

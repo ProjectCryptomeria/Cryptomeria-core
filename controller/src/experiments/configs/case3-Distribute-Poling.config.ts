@@ -2,23 +2,26 @@ import { ExperimentConfig } from '../../types';
 
 /**
  * Test Case 3: Distribute (MultiBurst) + Polling
- * - 5MB のダミーデータを生成
- * - 4 datachain を使用
- * - Distribute (マルチバースト) アップロード戦略
- * - Polling (完了確認)
+ * (★ 新フォーマットに対応)
  */
 const config: ExperimentConfig = {
 	description: 'Case 3: Distribute (MultiBurst) + Polling',
 	iterations: 3,
 
-	// アップロード対象: 5MB
-	target: {
-		type: 'sizeKB',
-		value: 5 * 1024,
-	},
+	// ★ 変更: tasks にタスクを定義
+	tasks: [
+		{
+			description: '5MB, 4 chains, 256KB chunk',
+			target: {
+				type: 'sizeKB',
+				value: 5 * 1024, // 5MB
+			},
+			chainCount: 4,
+			chunkSize: 256 * 1024, // 256KB
+		}
+	],
 
-	// 使用する datachain の数 (4つ)
-	chainCount: 4,
+	// ★ 変更: target, chainCount は削除
 
 	// 使用する戦略モジュール
 	strategies: {
@@ -29,10 +32,9 @@ const config: ExperimentConfig = {
 		verification: 'BufferFull',
 	},
 
-	// アップロード戦略 (Distribute) 固有のオプション
+	// ★ 変更: uploadStrategyOptions から関連オプションを削除
 	uploadStrategyOptions: {
-		// チャンクサイズ: 256KB
-		chunkSize: 256 * 1024,
+		// (Distribute 戦略に固有のオプションがあればここに残す)
 	},
 
 	confirmationStrategyOptions: {

@@ -6,10 +6,13 @@ import {
 	ExperimentConfig,
 	ExperimentResult,
 	IterationResult,
-	RunnerContext
+	RunnerContext,
+	// ★ 修正: TaskOption, TaskTarget をインポート
+	TaskOption,
+	TaskTarget
 } from '../types';
 import { log } from '../utils/logger';
-import { UrlPathCodec } from '../utils/UrlPathCodec'; // ★ 追加
+import { UrlPathCodec } from '../utils/UrlPathCodec';
 import { ChainManager } from './ChainManager';
 import { PerformanceTracker } from './PerformanceTracker';
 
@@ -37,7 +40,7 @@ interface ExperimentStrategies {
 export class ExperimentRunner {
 	private config: ExperimentConfig;
 	private strategies: ExperimentStrategies;
-	private urlPathCodec: UrlPathCodec; // ★ 追加
+	private urlPathCodec: UrlPathCodec;
 
 	private infraService: InfrastructureService;
 	private chainManager: ChainManager;
@@ -48,11 +51,11 @@ export class ExperimentRunner {
 	constructor(
 		config: ExperimentConfig,
 		strategies: ExperimentStrategies,
-		urlPathCodec: UrlPathCodec // ★ 追加
+		urlPathCodec: UrlPathCodec
 	) {
 		this.config = config;
 		this.strategies = strategies;
-		this.urlPathCodec = urlPathCodec; // ★ 追加
+		this.urlPathCodec = urlPathCodec;
 
 		this.infraService = new InfrastructureService();
 		this.chainManager = new ChainManager();
@@ -69,11 +72,12 @@ export class ExperimentRunner {
 
 		const iterationResults: IterationResult[] = [];
 
-		const allDatachains = (await this.infraService.getChainInfo()).filter(c => c.type === 'datachain');
-
-		const chainCounts = Array.isArray(this.config.chainCount)
-			? this.config.chainCount
-			: [this.config.chainCount ?? allDatachains.length];
+		// ★ 修正: config.tasks を使用
+		const tasks = this.config.tasks;
+		if (!tasks || tasks.length === 0) {
+			log.error('ExperimentConfig に "tasks" が定義されていないか、空です。');
+			throw new Error('実験タスクが定義されていません。');
+		}
 
 		try {
 			// --- 1. グローバル初期化 (ChainManager) ---
@@ -88,39 +92,46 @@ export class ExperimentRunner {
 				communicationStrategy: this.strategies.commStrategy,
 				confirmationStrategy: this.strategies.confirmStrategy,
 				gasEstimationStrategy: this.strategies.gasEstimationStrategy,
-				urlPathCodec: this.urlPathCodec, // ★ 追加: Context にコーデックを設定
+				urlPathCodec: this.urlPathCodec,
+				// currentTask は runIteration のループ内で設定
 			};
 
-			// --- 3. イテレーション実行 ---
-			for (const chainCount of chainCounts) {
-				log.info(`--- チェーン数 ${chainCount} でイテレーションを開始 ---`);
+			// ★★★ 3. イテレーション実行 (ループ構造を変更) ★★★
+			for (let i = 0; i < this.config.iterations; i++) {
+				const iteration = i + 1;
+				log.info(`--- イテレーション ${iteration}/${this.config.iterations} を開始 ---`);
 
-				for (let i = 0; i < this.config.iterations; i++) {
-					const iteration = i + 1;
-					log.step(`イテレーション ${iteration}/${this.config.iterations} (チェーン数: ${chainCount}) 開始...`);
+				for (let j = 0; j < tasks.length; j++) {
+					const task = tasks[j]!;
+					// ★ 修正: タスクラベルのデフォルト表示を改善
+					const taskLabel = `(Task ${j + 1}/${tasks.length}: ${task.description ?? `size=${task.target.value}KB, chunk=${task.chunkSize}, chains=${task.chainCount}`})`;
+
+					log.step(`タスク ${taskLabel} (イテレーション ${iteration}) 開始...`);
 					this.tracker.reset();
 
 					try {
-						const result = await this.runIteration(chainCount, iteration);
+						// ★ 変更: runIteration に task を渡す
+						const result = await this.runIteration(task, iteration, taskLabel);
 						iterationResults.push(result);
-						// --- ★ ログレベル変更 (info -> success) ---
-						log.success(`イテレーション ${iteration} 完了。検証: ${result.verificationResult.verified ? '✅ 成功' : '❌ 失敗'}`);
+						log.success(`タスク ${taskLabel} (イテレーション ${iteration}) 完了。検証: ${result.verificationResult.verified ? '✅ 成功' : '❌ 失敗'}`);
 
 					} catch (iterError: unknown) {
 						const errorMessage = (iterError instanceof Error) ? iterError.message : String(iterError);
-						log.error(`イテレーション ${iteration} がエラーで失敗しました。`, iterError);
+						log.error(`タスク ${taskLabel} (イテレーション ${iteration}) がエラーで失敗しました。`, iterError);
 
 						iterationResults.push({
 							iteration: iteration,
-							chainCount: chainCount,
+							task: task, // ★ 変更: task を記録
+							chainCount: task.chainCount, // ★ 変更: task から chainCount を記録
 							uploadResult: this.tracker.getUploadResult(),
 							downloadResult: { startTime: 0n, endTime: 0n, durationMs: 0n, downloadedData: Buffer.alloc(0) },
-							verificationResult: { verified: false, message: `イテレーション失敗: ${errorMessage}` },
+							verificationResult: { verified: false, message: `タスク失敗: ${errorMessage}` },
 						});
 					}
-					await new Promise(resolve => setTimeout(resolve, 1000));
+					await new Promise(resolve => setTimeout(resolve, 1000)); // タスク間のクールダウン
 				}
 			}
+			// ★★★ ループ構造の変更 (ここまで) ★★★
 
 		} catch (globalError: unknown) {
 			const errorMessage = (globalError instanceof Error) ? globalError.message : String(globalError);
@@ -128,7 +139,6 @@ export class ExperimentRunner {
 		} finally {
 			// --- 4. グローバル後処理 ---
 			await this.chainManager.disconnectAll();
-			// --- ★ ログレベル変更 (step -> success) ---
 			log.success('実験終了。');
 		}
 
@@ -144,35 +154,34 @@ export class ExperimentRunner {
 
 	/**
 	 * 1回のイテレーション（準備→アップロード→ダウンロード→検証）を実行します。
+	 * ★ 変更: シグネチャを (TaskOption, number, string) に変更
 	 */
-	private async runIteration(chainCount: number, iteration: number): Promise<IterationResult> {
+	private async runIteration(task: TaskOption, iteration: number, taskLabel: string): Promise<IterationResult> {
 
-		// 1. データ準備
-		const originalData = await this.prepareData();
+		// ★ 追加: Context に現在のタスクを設定
+		this.context.currentTask = task;
+
+		// 1. データ準備 (★ 変更: task.target を渡す)
+		const originalData = await this.prepareData(task.target);
 		const dataHash = crypto.createHash('sha256').update(originalData).digest('hex');
 		this.tracker.setOriginalDataHash(dataHash);
 		log.info(`データ準備完了。サイズ: ${originalData.length} bytes, SHA256: ${dataHash.substring(0, 12)}...`);
 
 		// 2. アップロード実行
-		// targetUrl を生成
 		let base = this.config.targetUrlBase
-			? this.config.targetUrlBase.replace(/\/+$/, '') // 末尾のスラッシュを削除
+			? this.config.targetUrlBase.replace(/\/+$/, '')
 			: `raidchain.test`;
-		base += `@${Date.now().toString()}`; // タイムスタンプを追加
-
-		// ★ 修正: ファイル名を固定 (data.bin) ではなく、より一般的に (例: /file)
-		//   ファイル名は UrlPathCodec で分離されるため、ここでは単純なファイル名を付加
+		base += `@${Date.now().toString()}`;
 		const targetUrl = `${base}/data`;
 		log.info(`アップロード開始... Target URL (Raw): ${targetUrl}`);
 
-		// UploadStrategy に context (urlPathCodec を含む) を渡す
+		// UploadStrategy に context (urlPathCodec と currentTask を含む) を渡す
 		const uploadResult = await this.strategies.uploadStrategy.execute(this.context, originalData, targetUrl);
 
-		// --- ★ ログレベル変更 (info -> success) ---
 		log.success(`アップロード完了。所要時間: ${uploadResult.durationMs} ms, 成功Tx: ${uploadResult.successTx}/${uploadResult.totalTx}`);
 
 		// 3. ダウンロード実行
-		const manifestUrlRaw = uploadResult.manifestUrl; // tracker に記録された元の URL
+		const manifestUrlRaw = uploadResult.manifestUrl;
 		if (!manifestUrlRaw) {
 			throw new Error('アップロード結果に manifestUrl が含まれていません。ダウンロードをスキップします。');
 		}
@@ -180,7 +189,6 @@ export class ExperimentRunner {
 		// DownloadStrategy に context (urlPathCodec を含む) と元の URL を渡す
 		const downloadResult = await this.strategies.downloadStrategy.execute(this.context, manifestUrlRaw);
 
-		// --- ★ ログレベル変更 (info -> success) ---
 		log.success(`ダウンロード完了。所要時間: ${downloadResult.durationMs} ms, サイズ: ${downloadResult.downloadedData.length} bytes`);
 
 		// 4. 検証実行
@@ -195,13 +203,13 @@ export class ExperimentRunner {
 			verificationOptions
 		);
 		this.tracker.setVerificationResult(verificationResult);
-		// --- ★ ログレベル変更 (info -> success) ---
 		log.success(`検証完了: ${verificationResult.verified ? '✅ 成功' : '❌ 失敗'}`);
 
 		// 5. イテレーション結果を返す
 		return {
 			iteration: iteration,
-			chainCount: chainCount,
+			task: task, // ★ 追加
+			chainCount: task.chainCount, // ★ task から取得
 			uploadResult: uploadResult,
 			downloadResult: downloadResult,
 			verificationResult: verificationResult,
@@ -210,13 +218,14 @@ export class ExperimentRunner {
 
 	/**
 	 * 設定に基づいてアップロード対象のデータを準備します。
+	 * ★ 変更: シグネチャを (TaskTarget) に変更
 	 */
-	private async prepareData(): Promise<Buffer> {
-		if (this.config.target.type === 'filePath') {
-			log.debug(`ファイルからデータを読み込み中: ${this.config.target.value}`);
-			return fs.readFile(this.config.target.value);
+	private async prepareData(target: TaskTarget): Promise<Buffer> {
+		if (target.type === 'filePath') {
+			log.debug(`ファイルからデータを読み込み中: ${target.value}`);
+			return fs.readFile(target.value);
 		} else {
-			const targetBytes = this.config.target.value * 1024;
+			const targetBytes = target.value * 1024;
 			log.debug(`ダミーデータを生成中: ${targetBytes} bytes`);
 			return crypto.randomBytes(targetBytes);
 		}
@@ -234,7 +243,7 @@ export class ExperimentRunner {
 		const verificationSuccesses = results.filter(r => r.verificationResult.verified).length;
 
 		return {
-			totalIterations: totalIterations,
+			totalTasksRun: totalIterations, // totalIterations -> totalTasksRun
 			avgUploadMs: avgUploadMs.toFixed(2),
 			avgDownloadMs: avgDownloadMs.toFixed(2),
 			verificationSuccessRate: (verificationSuccesses / totalIterations) * 100,
