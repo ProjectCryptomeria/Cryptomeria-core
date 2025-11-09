@@ -88,6 +88,7 @@ export abstract class BaseUploadStrategy implements IUploadStrategy {
 		// 4. 【抽象メソッド】チャンクのアップロード処理 (戦略固有)
 		// ★ 修正: 戻り値を boolean から ChunkLocation[] | null に変更
 		let chunkLocations: ChunkLocation[] | null = null;
+
 		if (allChunks.length > 0) {
 			chunkLocations = await this.processUpload(
 				context,
@@ -103,11 +104,18 @@ export abstract class BaseUploadStrategy implements IUploadStrategy {
 		if (chunkLocations === null) {
 			log.error(`[${this.constructor.name}] チャンクのアップロードに失敗しました。マニフェスト登録をスキップします。`);
 		} else {
-			// --- ★ ログレベル変更 (step -> info) ---
-			log.info(`[${this.constructor.name}] 全チャンクのアップロード完了。マニフェストを登録中...`);
+
+			// ★★★ 修正: 競合するためこのログを削除 ★★★
+			// log.success(`[${this.constructor.name}] 全チャンクのアップロード完了`);
+
+			log.info(`[${this.constructor.name}] マニフェストを登録中...`);
 			try {
 				// ★ 修正: 実績リスト (chunkLocations) を渡す
 				await this.registerManifest(context, urlParts, chunkLocations);
+
+				// ★★★ 修正: 競合するため console.log() を削除 ★★★
+
+				log.success(`[${this.constructor.name}] マニフェスト登録成功 (BaseURL: ${urlParts.baseUrlRaw})`);
 			} catch (error) {
 				log.error(`[${this.constructor.name}] マニフェストの登録に失敗しました。`, error);
 			}
@@ -246,7 +254,7 @@ export abstract class BaseUploadStrategy implements IUploadStrategy {
 			);
 
 		// --- ★ ログレベル変更 (info -> success) ---
-		log.success(`[${this.constructor.name}] マニフェスト登録成功 (BaseURL: ${urlParts.baseUrlRaw})。TxHash: ${transactionHash}`);
+		// (log.success は registerManifest 呼び出し元で行う)
 		log.debug(`[${this.constructor.name}] 登録Manifest (圧縮): ${manifestContent}`);
 
 		tracker.recordTransaction({

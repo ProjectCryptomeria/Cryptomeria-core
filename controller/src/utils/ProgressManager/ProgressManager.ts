@@ -13,7 +13,12 @@ class SilentProgressBar implements IProgressBar {
 }
 const silentProgressBar = new SilentProgressBar();
 
-class SilentProgressManager implements IProgressManager {
+/**
+ * プログレスバーを一切表示しない、何もしない IProgressManager の実装。
+ * TTYでない環境や、--no-progress フラグ指定時に使用されます。
+ * (★ 修正: export を追加)
+ */
+export class SilentProgressManager implements IProgressManager {
 	start(): void { }
 	stop(): void { }
 	addBar(name: string, total: number, startValue?: number, payload?: object): IProgressBar {

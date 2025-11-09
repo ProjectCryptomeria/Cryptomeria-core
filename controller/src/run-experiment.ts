@@ -2,15 +2,14 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { ExperimentRunner } from './core/ExperimentRunner';
-// ★ 修正: IProgressManager のインポートパス
-import { IProgressManager } from './utils/ProgressManager/IProgressManager';
-// ★ 修正: ProgressManager のインポートパス
 import { ExperimentConfig, ExperimentResult } from './types';
 import { log, LogLevel } from './utils/logger';
-import { ProgressManager } from './utils/ProgressManager/ProgressManager';
+import { IProgressManager } from './utils/ProgressManager/IProgressManager';
+// ★ 修正: SilentProgressManager もインポート
+import { ProgressManager, SilentProgressManager } from './utils/ProgressManager/ProgressManager';
 import { UrlPathCodec } from './utils/UrlPathCodec';
 
-// --- すべての具象戦略クラスをインポート ---
+// --- (すべての具象戦略クラスのインポートは変更なし) ---
 import {
 	HttpCommunicationStrategy,
 	ICommunicationStrategy,
@@ -36,7 +35,7 @@ import {
 	IVerificationStrategy
 } from './strategies/verification';
 
-// ★ 修正: progressManager を追加
+
 interface ExperimentStrategies {
 	commStrategy: ICommunicationStrategy;
 	uploadStrategy: IUploadStrategy;
@@ -48,13 +47,12 @@ interface ExperimentStrategies {
 }
 
 /**
- * 設定オブジェクト（文字列）に基づき、
- * 戦略クラスの具象インスタンスを生成します。
- * (★ 修正: progressManager を返すように変更)
+ * ★ 修正: logLevel と noProgress を引数に追加
  */
-function instantiateStrategies(config: ExperimentConfig): ExperimentStrategies {
+function instantiateStrategies(config: ExperimentConfig, logLevel: LogLevel, noProgress: boolean): ExperimentStrategies {
 	log.info('戦略モジュールをインスタンス化しています...'); // (ファイルログ用)
 
+	// --- (他の戦略のインスタンス化は変更なし) ---
 	let commStrategy: ICommunicationStrategy;
 	switch (config.strategies.communication) {
 		case 'Http':
@@ -119,8 +117,16 @@ function instantiateStrategies(config: ExperimentConfig): ExperimentStrategies {
 
 	const gasEstimationStrategy = new SimulationGasEstimationStrategy();
 
-	// ★ 追加: ProgressManager をインスタンス化
-	const progressManager = new ProgressManager();
+	// ★ 修正: ログレベル 'none' または --no-progress フラグで SilentManager を使用
+	const useSilentProgress = (logLevel === 'none') || noProgress;
+	const progressManager = useSilentProgress
+		? new SilentProgressManager()
+		: new ProgressManager();
+
+	if (useSilentProgress && logLevel !== 'none') {
+		log.info('[ProgressManager] --no-progress フラグが指定されたため、プログレスバーを無効化します (Silent Mode)。');
+	}
+
 
 	log.info('すべての戦略モジュールのインスタンス化が完了しました。'); // (ファイルログ用)
 	return {
@@ -136,13 +142,13 @@ function instantiateStrategies(config: ExperimentConfig): ExperimentStrategies {
 
 /**
  * コマンドライン引数を解析します。
+ * ★ 修正: --no-progress フラグを認識
  */
-function parseArgs(): { configPath: string, logLevel: string | undefined } {
+function parseArgs(): { configPath: string, logLevel: string | undefined, noProgress: boolean } {
 	const args = process.argv.slice(2);
 
 	const configIndex = args.indexOf('--config');
 	if (configIndex === -1 || !args[configIndex + 1]) {
-		// ★ 修正: log.error は stderr に出力される
 		log.error('引数エラー: --config <path/to/config.ts> が必要です。');
 		log.error('例: yarn ts-node src/run-experiment.ts --config experiments/configs/case1-Sequential-Polling.config.ts');
 		process.exit(1);
@@ -154,14 +160,18 @@ function parseArgs(): { configPath: string, logLevel: string | undefined } {
 		? args[logLevelIndex + 1]
 		: undefined;
 
-	return { configPath, logLevel };
+	// ★ 修正: --no-progress フラグの存在を確認
+	const noProgress = args.includes('--no-progress');
+
+	return { configPath, logLevel, noProgress };
 }
 
 
 /**
- * 実験結果をCSV形式の文字列に変換します
+ * 実験結果をCSV形式の文字列に変換します (変更なし)
  */
 async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
+	// ... (変更なし) ...
 	const header = [
 		'Timestamp',
 		'ExperimentDescription',
@@ -230,21 +240,20 @@ async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
  */
 async function main() {
 	let runner: ExperimentRunner | undefined;
-	// ★ 追加: strategies を try ブロックの外で宣言 (finally で使うため)
 	let strategies: ExperimentStrategies | undefined;
 
 	try {
-		// 1. 引数解析
-		const { configPath, logLevel } = parseArgs();
+		// 1. 引数解析 (★ 修正: noProgress を受け取る)
+		const { configPath, logLevel: logLevelArg, noProgress } = parseArgs();
+		const logLevel: LogLevel = (logLevelArg as LogLevel) ?? 'info';
 
-		// ★ 修正: これ以降、log.info/debug はファイルにのみ書き込まれる
-		if (logLevel) {
-			log.setLogLevel(logLevel as LogLevel);
+		if (logLevelArg) {
+			log.setLogLevel(logLevel);
 		}
 
 		log.info(`設定ファイル ${configPath} を読み込んでいます...`);
 
-		// 2. 設定ファイルの動的インポート
+		// 2. 設定ファイルの動的インポート (変更なし)
 		const absoluteConfigPath = path.resolve(__dirname, configPath);
 		const configModule = await import(absoluteConfigPath);
 		const config: ExperimentConfig = configModule.default;
@@ -253,16 +262,16 @@ async function main() {
 			throw new Error(`設定ファイル ${configPath} が 'export default' していません。`);
 		}
 
-		// 3. 戦略のインスタンス化
-		strategies = instantiateStrategies(config); // ★ strategies に代入
+		// 3. 戦略のインスタンス化 (★ 修正: logLevel と noProgress を渡す)
+		strategies = instantiateStrategies(config, logLevel, noProgress);
 		const urlPathCodec = new UrlPathCodec();
 
-		// 4. ExperimentRunner の初期化と実行
+		// 4. ExperimentRunner の初期化と実行 (変更なし)
 		runner = new ExperimentRunner(config, strategies, urlPathCodec);
 		const result = await runner.run();
 
-		// 5. 結果の表示 (★ 修正: console.error で stderr に出力)
-		log.step('--- 実験結果サマリー ---'); // (これは 'success' レベルなので stderr に出る)
+		// 5. 結果の表示 (変更なし)
+		log.step('--- 実験結果サマリー ---');
 		console.error(JSON.stringify(result.summary ?? { message: 'サマリーなし' }, null, 2));
 		log.step('--- イテレーション詳細 (タスク別) ---');
 		console.error(
@@ -277,7 +286,7 @@ async function main() {
 			}))
 		);
 
-		// 6. CSVファイルへの保存
+		// 6. CSVファイルへの保存 (変更なし)
 		const csvData = await formatResultsAsCSV(result);
 		const resultsDir = path.join(__dirname, 'experiments', 'results');
 
@@ -296,7 +305,7 @@ async function main() {
 		log.error('実験の実行中に致命的なエラーが発生しました。', error);
 		process.exitCode = 1;
 	} finally {
-		// ★ 追加: エラー発生時でもプログレスバーが起動していれば停止する
+		// 7. 終了処理 (変更なし)
 		if (strategies && strategies.progressManager) {
 			strategies.progressManager.stop();
 		}

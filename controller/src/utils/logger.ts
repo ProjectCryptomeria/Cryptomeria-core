@@ -48,6 +48,10 @@ winston.addColors(customLevels.colors);
 // ログレベル (デフォルトは 'info')
 let currentLogLevel: LogLevel = 'info';
 
+// ★★★ 新規: ファイルログ書き込みフラグ ★★★
+let isFileLoggingEnabled: boolean = true;
+
+
 // ログフォーマット
 const fileLogFormat = winston.format.combine(
 	winston.format.timestamp({ format: 'YYYY-MM-DDTHH:mm:ss.SSSZ' }),
@@ -107,13 +111,15 @@ const logger = winston.createLogger({
 		new winston.transports.File({
 			filename: ALL_LOG_FILE,
 			level: 'debug', // ★ 修正: ファイルは常に debug 以上を書き込む
-			options: { flags: 'w' }
+			options: { flags: 'w' },
+			silent: !isFileLoggingEnabled // ★ 初期状態をフラグに連動
 		}),
 		// 2. エラーログファイル (警告レベル以上)
 		new winston.transports.File({
 			filename: ERROR_LOG_FILE,
 			level: 'warn',
-			options: { flags: 'w' }
+			options: { flags: 'w' },
+			silent: !isFileLoggingEnabled // ★ 初期状態をフラグに連動
 		}),
 
 		// ★★★ 3. コンソール出力 (修正) ★★★
@@ -131,7 +137,30 @@ const logger = winston.createLogger({
 	exitOnError: false,
 });
 
-// ★ 修正 3: ログレベル変更関数
+// ★★★ 新規: ファイルログ制御関数 ★★★
+/**
+ * ファイルログトランスポート（'all' と 'error'）の有効/無効を切り替えます。
+ * @param enabled true の場合ファイル書き込みを有効化、false の場合無効化
+ */
+const setFileLogging = (enabled: boolean): void => {
+	isFileLoggingEnabled = enabled;
+
+	// 現在のログレベルが 'none' の場合は、強制的に silent = true のままにする
+	if (currentLogLevel === 'none') {
+		logger.info(`(ファイルログ設定変更: ${enabled ? 'ON' : 'OFF'}。ただし現在LogLevel 'none' のため全ログ無効中)`);
+		return;
+	}
+
+	logger.transports.forEach(transport => {
+		if (transport instanceof winston.transports.File) {
+			transport.silent = !enabled;
+		}
+	});
+
+	logger.info(`ファイルログ書き込みが ${enabled ? '有効' : '無効'} に設定されました。`);
+};
+
+// ★ 修正 3: ログレベル変更関数 (setFileLogging と連動)
 const setLogLevel = (newLevel: LogLevel): void => {
 	// 'none' の場合の特別処理
 	if (newLevel === 'none') {
@@ -146,34 +175,38 @@ const setLogLevel = (newLevel: LogLevel): void => {
 		return;
 	}
 
-	// 'none' 以外の場合、すべてのトランスポートを silent = false (有効化) に戻す
-	logger.transports.forEach(transport => {
-		transport.silent = false;
-	});
+	// 'none' 以外の場合
+	currentLogLevel = newLevel; // 先にレベルを更新
 
 	// レベルが存在するかチェック (none 以外)
 	if (customLevels.levels[newLevel as keyof typeof customLevels.levels] === undefined) {
 		logger.warn(`無効なログレベル: "${newLevel}"。 'info' を使用します。`);
 		newLevel = 'info';
+		currentLogLevel = 'info';
 	}
 
-	currentLogLevel = newLevel;
-	// ★ 修正: logger.level (ファイル/メモリ用) はユーザー指定に従う
+	// logger.level (ファイル/メモリ用) はユーザー指定に従う
 	logger.level = currentLogLevel;
 
-	// ★ 修正: コンソールトランスポートのレベルは 'success' で固定
-	const consoleTransport = logger.transports.find(t => t instanceof winston.transports.Console);
-	if (consoleTransport) {
-		// ユーザーが 'debug' (4) に設定しても、コンソールは 'success' (2) のまま
-		// ただし、ユーザーが 'error' (0) など 'success' より重要度が高いレベルに設定した場合、
-		// コンソールはそのレベルに追従する (success は表示されなくなる)
-		const consoleLevel = (customLevels.levels[newLevel] < customLevels.levels.success)
-			? newLevel
-			: 'success';
-		consoleTransport.level = consoleLevel;
-	}
+	// 各トランスポートの silent 状態を再適用
+	logger.transports.forEach(transport => {
+		if (transport instanceof winston.transports.File) {
+			// ファイルトランスポートは isFileLoggingEnabled フラグに従う
+			transport.silent = !isFileLoggingEnabled;
+		} else if (transport instanceof winston.transports.Console) {
+			// コンソールは silent = false に戻し、レベルを調整
+			transport.silent = false;
+			const consoleLevel = (customLevels.levels[newLevel] < customLevels.levels.success)
+				? newLevel
+				: 'success';
+			transport.level = consoleLevel;
+		} else {
+			// MemoryTransport など
+			transport.silent = false;
+		}
+	});
 
-	// ★ 修正: ログレベル設定の通知は 'info' レベルで行う (ファイルに記録される)
+	const consoleTransport = logger.transports.find(t => t instanceof winston.transports.Console);
 	logger.info(`ファイルログレベルが "${currentLogLevel}" に設定されました。 (コンソールは "${consoleTransport?.level ?? 'success'}" レベル以上のみ表示)`);
 };
 
@@ -213,8 +246,10 @@ const log = {
 	success: (message: string, ...meta: any[]) => logger.log('success', message, ...meta),
 	info: (message: string, ...meta: any[]) => logger.info(message, ...meta),
 	debug: (message: string, ...meta: any[]) => logger.debug(message, ...meta),
-	step: (message: string) => logger.info(`\n--- STEP: ${message} ---`),
+	// ★★★ 修正: `\n` を削除 ★★★
+	step: (message: string) => logger.info(`--- STEP: ${message} ---`),
 	setLogLevel,
+	setFileLogging, // ★ 新規追加
 	flushErrorLogs,
 	isDebug: () => currentLogLevel === 'debug', // ★ 修正 5: 変更なし
 };

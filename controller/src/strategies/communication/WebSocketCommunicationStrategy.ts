@@ -243,7 +243,7 @@ export class WebSocketCommunicationStrategy implements ICommunicationStrategy {
 	 */
 	public subscribe(query: string): Stream<any> {
 		if (this.subscriptions.has(query)) {
-			log.warn(`[WS] クエリ "${query}" は既に購読済みです。既存のストリームを返します。`);
+			log.info(`[WS] クエリ "${query}" は既に購読済みです。既存のストリームを返します。`);
 			// TODO: 既存のストリームを返す方法 (xstream は難しい)
 			// -> TxEventConfirmationStrategy 側で多重購読を管理する必要がある
 		}

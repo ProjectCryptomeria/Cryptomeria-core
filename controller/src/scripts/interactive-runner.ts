@@ -11,7 +11,7 @@ const EXPERIMENT_RUNNER_SCRIPT = path.join(__dirname, '..', 'run-experiment.ts')
 
 async function runInteractive() {
 	try {
-		// 1. 設定ファイル一覧を取得
+		// 1. 設定ファイル一覧を取得 (変更なし)
 		const files = await fs.readdir(CONFIG_DIR);
 		const configFiles = files.filter(f => f.endsWith('.config.ts'));
 
@@ -20,7 +20,7 @@ async function runInteractive() {
 			process.exit(1);
 		}
 
-		// 2. ユーザーにテストケースを選択させる
+		// 2. ユーザーにテストケースを選択させる (変更なし)
 		const { selectedConfig } = await prompt<{ selectedConfig: string }>({
 			type: 'select',
 			name: 'selectedConfig',
@@ -28,32 +28,49 @@ async function runInteractive() {
 			choices: configFiles,
 		});
 
-		// --- ★ ステップ2: ログレベル選択 (修正) ---
+		// 3. ログレベル選択 (変更なし)
 		const { logLevel } = await prompt<{ logLevel: string }>({
 			type: 'select',
 			name: 'logLevel',
 			message: 'ログレベルを選択してください:',
 			choices: [
-				// name が --logLevel 引数として渡される値
 				{ name: 'debug', message: 'DEBUG   (水色: すべて表示)' },
 				{ name: 'info', message: 'INFO    (ピンク: 標準の進捗状況)' },
 				{ name: 'success', message: 'SUCCESS (緑色: 主要な成功ログのみ)' },
-				// ★ 修正: 'none' レベルを追加
 				{ name: 'none', message: 'NONE    (無音: すべてのログを無効化)' }
 			],
 			initial: 1, // デフォルトを 'info' (インデックス 1) に設定
 		});
 
-		// 4. run-experiment.ts に渡す引数を構築
+		// ★★★ 4. (新規) プログレスバー表示確認 ★★★
+		let showProgressBar = true;
+		if (logLevel !== 'none' && process.stdout.isTTY) {
+			const { confirmProgress } = await prompt<{ confirmProgress: boolean }>({
+				type: 'confirm',
+				name: 'confirmProgress',
+				message: '📈 プログレスバーを表示しますか？ (TTYが検出されました)',
+				initial: true,
+			});
+			showProgressBar = confirmProgress;
+		} else if (logLevel === 'none') {
+			showProgressBar = false; // logLevel 'none' なら無条件で非表示
+		}
+
+		// 5. run-experiment.ts に渡す引数を構築
 		const configPath = path.join('experiments', 'configs', selectedConfig); // 相対パス
 		const args: string[] = ['--config', configPath];
 
-		// --- ★ '--debug' の代わりに '--logLevel' を渡す ---
+		// '--logLevel' を渡す (変更なし)
 		args.push('--logLevel', logLevel);
+
+		// ★★★ (新規) '--no-progress' フラグを追加 ★★★
+		if (!showProgressBar) {
+			args.push('--no-progress');
+		}
 
 		console.log(`\n🚀 実験を実行します: ts-node ${path.basename(EXPERIMENT_RUNNER_SCRIPT)} ${args.join(' ')}\n`);
 
-		// 5. ts-node を使って run-experiment.ts を実行
+		// 6. ts-node を使って run-experiment.ts を実行 (変更なし)
 		const tsNodePath = path.resolve(__dirname, '../../node_modules/.bin/ts-node'); // ts-node のパスを取得
 
 		const child = spawn(

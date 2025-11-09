@@ -38,7 +38,7 @@ export class SimulationGasEstimationStrategy implements IGasEstimationStrategy {
 
 			const gasLimit = Math.ceil(gasUsed * GAS_SIMULATION_MARGIN);
 			estimatedGasLimit = gasLimit.toString();
-			// --- ★ ログレベル変更 (info -> success) ---
+
 			log.success(`[GasSim] ガスシミュレーション結果: gasUsed=${gasUsed}, 推定ガスリミット (x${GAS_SIMULATION_MARGIN}): ${estimatedGasLimit}`);
 
 		} catch (simError: any) {

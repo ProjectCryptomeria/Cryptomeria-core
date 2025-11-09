@@ -71,7 +71,8 @@ export class ExperimentRunner {
 	 * (★ 修正: start/stop の呼び出し位置を変更)
 	 */
 	public async run(): Promise<ExperimentResult> {
-		log.step(`実験開始: ${this.config.description}`);
+		// ★★★ 修正: \n を追加 ★★★
+		log.step(`\n実験開始: ${this.config.description}`);
 
 		const iterationResults: IterationResult[] = [];
 
@@ -104,13 +105,15 @@ export class ExperimentRunner {
 			// --- 3. イテレーション実行 ---
 			for (let i = 0; i < this.config.iterations; i++) {
 				const iteration = i + 1;
-				log.info(`--- イテレーション ${iteration}/${this.config.iterations} を開始 ---`);
+				// ★★★ 修正: \n を追加 ★★★
+				log.info(`\n--- イテレーション ${iteration}/${this.config.iterations} を開始 ---`);
 
 				for (let j = 0; j < tasks.length; j++) {
 					const task = tasks[j]!;
 					const taskLabel = `(Task ${j + 1}/${tasks.length}: ${task.description ?? `size=${task.target.value}KB, chunk=${task.chunkSize}, chains=${task.chainCount}`})`;
 
-					log.step(`タスク ${taskLabel} (イテレーション ${iteration}) 開始...`);
+					// ★★★ 修正: \n を追加 ★★★
+					log.step(`\nタスク ${taskLabel} (イテレーション ${iteration}) 開始...`);
 					this.tracker.reset();
 
 					// ★ 削除: progressManager.start()
