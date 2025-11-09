@@ -38,7 +38,6 @@ export class SequentialUploadStrategy extends BaseOneByOneStrategy implements IU
 		if (!targetChainName) {
 			throw new Error('[SequentialUpload] TaskOption に "targetChain" を指定する必要があります。');
 		}
-		// ★★★ 変更点 (ここまで) ★★★
 
 		// 存在確認
 		chainManager.getChainAccount(targetChainName);
