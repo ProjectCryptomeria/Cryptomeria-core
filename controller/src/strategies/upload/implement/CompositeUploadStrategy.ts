@@ -130,6 +130,7 @@ export class CompositeUploadStrategy implements IUploadStrategy {
 		if (processingFailed) {
 			log.error(`[CompositeUpload] チャンクのアップロードに失敗しました。マニフェスト登録をスキップします。`);
 		} else {
+			console.log();
 			log.success(`[CompositeUpload] 全チャンクのアップロード完了`);
 			log.info(`[CompositeUpload] マニフェストを登録中...`);
 			try {
@@ -141,6 +142,7 @@ export class CompositeUploadStrategy implements IUploadStrategy {
 				});
 
 				await this.coreLogic.registerManifest(context, urlParts, sortedLocations);
+				console.log();
 				log.success(`[CompositeUpload] マニフェスト登録成功 (BaseURL: ${urlParts.baseUrlRaw})`);
 			} catch (error) {
 				log.error(`[CompositeUpload] マニフェストの登録に失敗しました。`, error);
