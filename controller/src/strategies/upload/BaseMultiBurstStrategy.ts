@@ -11,7 +11,8 @@ import {
 	TransactionInfo,
 } from '../../types/index';
 import { log } from '../../utils/logger';
-import { BaseUploadStrategy, ChunkBatch, ChunkInfo } from './BaseUploadStrategy';
+// ★ 修正: ChunkLocation をインポート
+import { BaseUploadStrategy, ChunkBatch, ChunkInfo, ChunkLocation } from './BaseUploadStrategy';
 
 // 各チェーンが一度に送信するバッチサイズ (Tx数) のデフォルト
 const DEFAULT_BATCH_SIZE_PER_CHAIN = 100;
@@ -33,47 +34,56 @@ export abstract class BaseMultiBurstStrategy extends BaseUploadStrategy {
 	/**
 	 * 【Template Method】マルチバースト方式のアップロード処理を実行します。
 	 * 派生クラスは、スケジューリングロジック (distributeAndProcessMultiBurst) のみを実装します。
+	 * ★ 修正: 戻り値を ChunkLocation[] | null に変更
 	 */
 	protected async processUpload(
 		context: RunnerContext,
 		allChunks: ChunkInfo[],
 		estimatedGasLimit: string
-	): Promise<boolean> {
+	): Promise<ChunkLocation[] | null> { // ★ 修正: 戻り値の型
 
 		log.step(`[${this.constructor.name}] ${allChunks.length} チャンクをマルチバースト方式で処理開始... (GasLimit: ${estimatedGasLimit})`);
 
 		// 【抽象メソッド】派生クラス（具象戦略）がスケジューリングを実行
-		const success = await this.distributeAndProcessMultiBurst(
+		// ★ 修正: 戻り値 (実績リスト or null) を受け取る
+		const locations = await this.distributeAndProcessMultiBurst(
 			context,
 			allChunks,
 			estimatedGasLimit
 		);
 
-		log.info(`[${this.constructor.name}] マルチバースト処理が完了しました。 (Success: ${success})`);
-		return success;
+		if (locations === null) {
+			log.error(`[${this.constructor.name}] マルチバースト処理が失敗しました。`);
+			return null;
+		}
+
+		log.info(`[${this.constructor.name}] マルチバースト処理が正常に完了しました。 (処理チャンク数: ${locations.length})`);
+		return locations;
 	}
 
 	/**
 	 * 【抽象メソッド】スケジューリングロジック。
 	 * 派生クラスは、全チャンクをどのようにバッチ化し、
 	 * どのチェーンに割り当てて処理 (processBatchWorker) するかを定義します。
+	 * ★ 修正: 戻り値の型
 	 */
 	protected abstract distributeAndProcessMultiBurst(
 		context: RunnerContext,
 		allChunks: ChunkInfo[],
 		estimatedGasLimit: string
-	): Promise<boolean>;
+	): Promise<ChunkLocation[] | null>; // ★ 修正: 戻り値の型
 
 
 	/**
 	 * 1バッチ分のTxを送信し、完了確認まで行うワーカー処理 (共通)
+	 * ★ 修正: 戻り値を ChunkLocation[] | null に変更
 	 */
 	protected async processBatchWorker(
 		context: RunnerContext,
 		chainName: string,
 		batch: ChunkBatch,
 		estimatedGasLimit: string
-	): Promise<boolean> {
+	): Promise<ChunkLocation[] | null> { // ★ 修正: 戻り値の型
 		const { tracker, confirmationStrategy, config } = context;
 
 		try {
@@ -89,10 +99,12 @@ export abstract class BaseMultiBurstStrategy extends BaseUploadStrategy {
 			const confirmOptions = { timeoutMs: config.confirmationStrategyOptions?.timeoutMs };
 			const results = await confirmationStrategy.confirmTransactions(context, chainName, batchTxHashes, confirmOptions);
 
-			// 3. 結果記録
-			const txInfos: TransactionInfo[] = batchTxHashes.map(hash => ({
+			// 3. 結果記録 (PerformanceTracker 用)
+			// ★ 修正: txInfos に chunkIndex を含める
+			const txInfos: TransactionInfo[] = batchTxHashes.map((hash, i) => ({
 				hash: hash,
 				chainName: chainName,
+				chunkIndex: batch.chunks[i]?.index, // ★ 修正: PerformanceTracker 用
 				...results.get(hash)!
 			}));
 			tracker.recordTransactions(txInfos);
@@ -101,15 +113,21 @@ export abstract class BaseMultiBurstStrategy extends BaseUploadStrategy {
 			const failedTxs = txInfos.filter(info => !info.success);
 			if (failedTxs.length > 0) {
 				log.error(`[MultiBurstWorker ${chainName}] バッチ処理で ${failedTxs.length} 件のTxが失敗しました (例: ${failedTxs[0]?.error})。`);
-				return false;
+				return null; // ★ 修正: 失敗時は null
 			}
 
 			log.info(`[MultiBurstWorker ${chainName}] バッチ (${batch.chunks.length} Tx) の処理が正常に完了しました。`);
-			return true;
+
+			// ★ 修正: 成功時は、このバッチの実績リストを返す
+			const batchLocations: ChunkLocation[] = batch.chunks.map(chunk => ({
+				index: chunk.index,
+				chainName: chainName,
+			}));
+			return batchLocations;
 
 		} catch (error) {
 			log.error(`[MultiBurstWorker ${chainName}] バッチ処理中にエラーが発生しました。`, error);
-			return false;
+			return null; // ★ 修正: 失敗時は null
 		}
 	}
 

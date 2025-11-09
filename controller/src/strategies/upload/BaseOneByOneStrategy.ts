@@ -2,7 +2,8 @@
 import { DeliverTxResponse } from '@cosmjs/stargate';
 import { MsgCreateStoredChunk, RunnerContext } from '../../types/index';
 import { log } from '../../utils/logger';
-import { BaseUploadStrategy, ChunkInfo } from './BaseUploadStrategy';
+// ★ 修正: ChunkLocation をインポート
+import { BaseUploadStrategy, ChunkInfo, ChunkLocation } from './BaseUploadStrategy';
 
 /**
  * 「ワンバイワン」方式（1 Tx ずつ signAndBroadcast）の共通ロジックを提供する抽象基底クラス。
@@ -15,13 +16,14 @@ export abstract class BaseOneByOneStrategy extends BaseUploadStrategy {
 
 	/**
 	 * 【Template Method】ワンバイワン方式のアップロード処理を実行します。
-	 * 派生クラスは、スケジューリングロジック (distributeAndProcessOneByOne) のみを実装します。
+	 * 派生クラスは、スケジューリングロジック (distributeJobs) のみを実装します。
+	 * ★ 修正: 戻り値を ChunkLocation[] | null に変更
 	 */
 	protected async processUpload(
 		context: RunnerContext,
 		allChunks: ChunkInfo[],
 		estimatedGasLimit: string // この方式では 'auto' を使うため不要だが、I/F合わせ
-	): Promise<boolean> {
+	): Promise<ChunkLocation[] | null> {
 
 		// 【抽象メソッド】派生クラス（具象戦略）がスケジューリングを実行
 		// どのチェーンにどのチャンクを割り当てるかのリストを作成
@@ -30,20 +32,25 @@ export abstract class BaseOneByOneStrategy extends BaseUploadStrategy {
 		// 逐次または並列で実行 (この基底クラスでは最もシンプルな逐次実行を実装)
 		log.step(`[${this.constructor.name}] ${allChunks.length} チャンクをワンバイワン方式で逐次処理開始...`);
 
+		const successfulLocations: ChunkLocation[] = []; // ★ 修正: 実績リスト
+
 		for (let i = 0; i < jobs.length; i++) {
 			const job = jobs[i]!;
 			log.info(`[${this.constructor.name}] チャンク ${i + 1}/${jobs.length} (Index: ${job.chunk.index}) を ${job.chainName} に送信中...`);
 
-			const success = await this.processChunkOneByOne(context, job.chainName, job.chunk);
+			// ★ 修正: 戻り値 (実績) を受け取る
+			const location = await this.processChunkOneByOne(context, job.chainName, job.chunk);
 
-			if (!success) {
+			if (location === null) {
 				log.error(`[${this.constructor.name}] チャンク ${job.chunk.index} の処理に失敗。アップロードを中断します。`);
-				return false;
+				return null; // ★ 修正: 失敗時は null を返す
 			}
+
+			successfulLocations.push(location); // ★ 修正: 成功した実績を追加
 		}
 
 		log.info(`[${this.constructor.name}] 全 ${jobs.length} チャンクの処理が完了しました。`);
-		return true;
+		return successfulLocations; // ★ 修正: 成功した実績リストを返す
 	}
 
 	/**
@@ -58,12 +65,13 @@ export abstract class BaseOneByOneStrategy extends BaseUploadStrategy {
 
 	/**
 	 * 1件のチャンクを「ワンバイワン」方式で送信・確認します。
+	 * ★ 修正: 戻り値を ChunkLocation | null に変更
 	 */
 	protected async processChunkOneByOne(
 		context: RunnerContext,
 		chainName: string,
 		chunk: ChunkInfo
-	): Promise<boolean> {
+	): Promise<ChunkLocation | null> { // ★ 修正: 戻り値の型
 
 		const { chainManager, tracker } = context;
 		const account = chainManager.getChainAccount(chainName);
@@ -97,9 +105,11 @@ export abstract class BaseOneByOneStrategy extends BaseUploadStrategy {
 
 			if (!success) {
 				log.warn(`[OneByOne] Tx失敗 (Chain: ${chainName}, Hash: ${transactionHash}): ${rawLog}`);
+				return null; // ★ 修正: 失敗時は null
 			}
 
-			return success;
+			// ★ 修正: 成功時は実績を返す
+			return { index: chunk.index, chainName: chainName };
 
 		} catch (error: any) {
 			log.error(`[OneByOne] signAndBroadcast 中に例外発生 (Chain: ${chainName})。`, error);
@@ -109,7 +119,7 @@ export abstract class BaseOneByOneStrategy extends BaseUploadStrategy {
 				success: false,
 				error: error.message || 'Broadcast Error',
 			});
-			return false;
+			return null; // ★ 修正: 失敗時は null
 		}
 	}
 }

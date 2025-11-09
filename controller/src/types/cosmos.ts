@@ -16,8 +16,8 @@ export interface MsgCreateStoredChunk {
  */
 export interface MsgCreateStoredManifest {
 	creator: string;
-	index: string; 
-	domain: string; 
+	index: string;
+	domain: string;
 	manifest: string;
 }
 
@@ -44,13 +44,35 @@ export interface StoredManifestResponse {
 		creator: string;
 	};
 }
+
+// ★★★ 修正箇所 (ここから) ★★★
+
 /**
- * マニフェストJSON文字列をパースした後のオブジェクト型
- * (要件定義書 3.3. データ要件 metachain 構造を参照)
+ * チャンクの保存場所を示すタプル
+ * 形式: [ チャンクインデックス (e.g., "hash-0"), chainMapインデックス (e.g., 0) ]
+ */
+export type ChunkLocationTuple = [string, number];
+
+/**
+ * マニフェストJSON文字列をパースした後のオブジェクト型 (圧縮形式)
  */
 export interface Manifest {
-	[filePath: string]: string[]; // 例: { "/index.html": ["idx1", "idx2"], "/style.css": ["idx3"] }
+	/**
+	 * datachain名 と マッピング番号 の辞書
+	 * (例: { "data-0": 0, "data-1": 1, "data-2": 2 })
+	 */
+	chainMap: { [chainName: string]: number };
+
+	/**
+	 * ファイルパスごとのチャンク情報
+	 * (例: { "/index.html": [ ["idx1", 0], ["idx2", 1] ] })
+	 */
+	files: {
+		[filePath: string]: ChunkLocationTuple[];
+	};
 }
+// ★★★ 修正箇所 (ここまで) ★★★
+
 
 /**
  * InfrastructureServiceが返すチェーン情報の型

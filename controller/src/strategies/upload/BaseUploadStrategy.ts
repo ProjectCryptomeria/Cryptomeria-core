@@ -4,6 +4,8 @@ import { toHex } from '@cosmjs/encoding';
 import { EncodeObject } from '@cosmjs/proto-signing';
 import { DeliverTxResponse } from '@cosmjs/stargate';
 import {
+	// ★ 修正: ChunkLocationTuple をインポート
+	ChunkLocationTuple,
 	Manifest,
 	MsgCreateStoredChunk,
 	MsgCreateStoredManifest,
@@ -31,6 +33,12 @@ export interface ChunkInfo {
  */
 export interface ChunkBatch {
 	chunks: ChunkInfo[];
+}
+
+// ★ 修正: アップロード実績（中間形式）
+export interface ChunkLocation {
+	index: string;
+	chainName: string;
 }
 
 /**
@@ -73,23 +81,27 @@ export abstract class BaseUploadStrategy implements IUploadStrategy {
 		}
 
 		// 4. 【抽象メソッド】チャンクのアップロード処理 (戦略固有)
-		let totalSuccess = true;
+		// ★ 修正: 戻り値を boolean から ChunkLocation[] | null に変更
+		let chunkLocations: ChunkLocation[] | null = null;
 		if (allChunks.length > 0) {
-			totalSuccess = await this.processUpload(
+			chunkLocations = await this.processUpload(
 				context,
 				allChunks,
 				estimatedGasLimit
 			);
+		} else {
+			chunkLocations = []; // チャンクが0件の場合は空のリスト
 		}
 
 		// 5. マニフェスト登録 (共通)
-		if (!totalSuccess) {
+		// ★ 修正: chunkLocations が null (失敗) の場合はスキップ
+		if (chunkLocations === null) {
 			log.error(`[${this.constructor.name}] チャンクのアップロードに失敗しました。マニフェスト登録をスキップします。`);
 		} else {
 			log.step(`[${this.constructor.name}] 全チャンクのアップロード完了。マニフェストを登録中...`);
 			try {
-				const chunkIndexes = allChunks.map(c => c.index);
-				await this.registerManifest(context, urlParts, chunkIndexes);
+				// ★ 修正: 実績リスト (chunkLocations) を渡す
+				await this.registerManifest(context, urlParts, chunkLocations);
 			} catch (error) {
 				log.error(`[${this.constructor.name}] マニフェストの登録に失敗しました。`, error);
 			}
@@ -109,13 +121,13 @@ export abstract class BaseUploadStrategy implements IUploadStrategy {
 	 * @param context 実行コンテキスト
 	 * @param allChunks 処理対象の全チャンクのリスト
 	 * @param estimatedGasLimit 1 Tx あたりのガスリミット (マルチバースト用)
-	 * @returns すべての処理が成功したか
+	 * @returns 成功した場合は { index, chainName } のリスト、失敗した場合は null
 	 */
 	protected abstract processUpload(
 		context: RunnerContext,
 		allChunks: ChunkInfo[],
 		estimatedGasLimit: string
-	): Promise<boolean>;
+	): Promise<ChunkLocation[] | null>; // ★ 修正: 戻り値の型
 
 
 	// --- 以下、共通ヘルパーメソッド ---
@@ -178,19 +190,38 @@ export abstract class BaseUploadStrategy implements IUploadStrategy {
 
 	/**
 	 * マニフェストを metachain に登録します (共通)
+	 * ★ 修正: 圧縮マニフェストを構築するロジックに変更
 	 */
 	protected async registerManifest(
 		context: RunnerContext,
 		urlParts: UrlParts,
-		chunkIndexes: string[]
+		chunkLocations: ChunkLocation[] // ★ 修正: 中間形式 { index, chainName }[] を受け取る
 	): Promise<void> {
 		const { chainManager, tracker } = context;
 		const metachain = chainManager.getMetachainInfo();
 		const metachainAccount = chainManager.getChainAccount(metachain.name);
 
+		// --- 圧縮マニフェスト構築ロジック ---
+		const chainMap: { [chainName: string]: number } = {};
+		let chainIndexCounter = 0;
+		const locationTuples: ChunkLocationTuple[] = [];
+
+		for (const loc of chunkLocations) {
+			if (chainMap[loc.chainName] === undefined) {
+				chainMap[loc.chainName] = chainIndexCounter++;
+			}
+			const chainMapIndex = chainMap[loc.chainName]!;
+			locationTuples.push([loc.index, chainMapIndex]);
+		}
+
 		const manifest: Manifest = {
-			[urlParts.filePathEncoded]: chunkIndexes, // エンコード済みのパスをキーにする
+			chainMap: chainMap,
+			files: {
+				[urlParts.filePathEncoded]: locationTuples, // エンコード済みのパスをキーにする
+			}
 		};
+		// --- ここまで ---
+
 		const manifestContent = JSON.stringify(manifest);
 
 		const msg: MsgCreateStoredManifest = {
@@ -208,6 +239,7 @@ export abstract class BaseUploadStrategy implements IUploadStrategy {
 			);
 
 		log.info(`[${this.constructor.name}] マニフェスト登録成功 (BaseURL: ${urlParts.baseUrlRaw})。TxHash: ${transactionHash}`);
+		log.debug(`[${this.constructor.name}] 登録Manifest (圧縮): ${manifestContent}`);
 
 		tracker.recordTransaction({
 			hash: transactionHash,

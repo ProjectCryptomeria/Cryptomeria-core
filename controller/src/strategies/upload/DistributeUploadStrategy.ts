@@ -3,8 +3,9 @@ import { CometClient } from '@cosmjs/tendermint-rpc';
 import { ChainInfo, RunnerContext } from '../../types';
 import { log } from '../../utils/logger';
 import { sleep } from '../../utils/retry';
-import { BaseMultiBurstStrategy } from './BaseMultiBurstStrategy'; // ★ 修正
-import { ChunkInfo } from './BaseUploadStrategy';
+import { BaseMultiBurstStrategy } from './BaseMultiBurstStrategy';
+// ★ 修正: ChunkLocation をインポート
+import { ChunkInfo, ChunkLocation } from './BaseUploadStrategy';
 import { IUploadStrategy } from './IUploadStrategy';
 
 // Mempool 監視設定
@@ -16,22 +17,23 @@ const MEMPOOL_WAIT_TIMEOUT_MS = 30000; // 30秒
  * 各 datachain の Mempool 状況を監視し、
  * 「マルチバースト」方式で動的に（最も空いているチェーンに）チャンクバッチを割り当てる戦略。
  */
-export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements IUploadStrategy { // ★ 修正
+export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements IUploadStrategy {
 
 	constructor() {
-		super(); // ★ 修正
+		super();
 		log.debug('DistributeUploadStrategy (MultiBurst) がインスタンス化されました。');
 	}
 
 	/**
 	 * 【戦略固有ロジック】
 	 * Mempoolを監視し、空いているチェーンにバッチを動的に割り当てて並列処理します。
+	 * ★ 修正: 戻り値を ChunkLocation[] | null に変更
 	 */
 	protected async distributeAndProcessMultiBurst(
 		context: RunnerContext,
-		allChunks: ChunkInfo[], // ★ 全チャンクを受け取る
+		allChunks: ChunkInfo[],
 		estimatedGasLimit: string
-	): Promise<boolean> {
+	): Promise<ChunkLocation[] | null> { // ★ 修正: 戻り値の型
 
 		const { chainManager, config } = context;
 
@@ -54,7 +56,7 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 				chainClients.set(chain.name, client);
 			} catch (error) {
 				log.error(`[DistributeUpload] Mempool監視クライアント (${chain.name}) の取得に失敗しました。`, error);
-				return false;
+				return null; // ★ 修正: 失敗
 			}
 		}
 
@@ -66,16 +68,24 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 		// 4. バッチキューとワーカープールによる動的割り当て (Distribute 固有)
 		log.info(`[DistributeUpload] ${batches.length} バッチを ${targetDatachains.length} チェーン（ワーカー）で処理開始...`);
 
-		let totalSuccess = true;
+		// ★ 修正: 実績リストと処理中フラグ
+		const allSuccessfulLocations: ChunkLocation[] = [];
+		let processingFailed = false; // 1つでも失敗したら true
 		const processingPromises = new Set<Promise<void>>();
 
 		while (batchQueue.length > 0) {
+			// ★ 修正: 既に失敗が検出されたら、新しいバッチの割り当てを停止
+			if (processingFailed) {
+				log.warn('[DistributeUpload] 他のバッチ処理が失敗したため、新規バッチの割り当てを停止します。');
+				break;
+			}
+
 			// 4a. 空いているチェーンを探す
 			const availableChain = await this.findAvailableChain(chainClients);
 
 			if (!availableChain) {
 				log.error('[DistributeUpload] 空いているチェーンが見つかりませんでした (タイムアウト)。アップロードを中断します。');
-				totalSuccess = false;
+				processingFailed = true; // ★ 修正
 				break; // while ループを抜ける
 			}
 
@@ -94,9 +104,14 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 				nextBatch,
 				estimatedGasLimit
 			)
-				.then(success => {
-					if (!success) {
-						totalSuccess = false; // 1つでも失敗したら全体を失敗とする
+				.then(batchLocations => {
+					// ★ 修正: 戻り値 (実績リスト or null) でハンドリング
+					if (batchLocations === null) {
+						log.error(`[DistributeUpload] ワーカー処理失敗 (Chain: ${availableChain.name}, Batch: ${batches.length - batchQueue.length})`);
+						processingFailed = true; // 1つでも失敗したら全体を失敗とする
+					} else {
+						// 成功した実績を（順序不同で）追加
+						allSuccessfulLocations.push(...batchLocations);
 					}
 				})
 				.finally(() => {
@@ -109,7 +124,20 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 		// 5. すべての処理が完了するのを待つ
 		await Promise.all(Array.from(processingPromises));
 
-		return totalSuccess;
+		// ★ 修正: 最終結果の判定
+		if (processingFailed) {
+			log.error('[DistributeUpload] アップロード処理中に1つ以上のバッチが失敗しました。');
+			return null;
+		}
+
+		// 順序がバラバラになっているため、インデックス番号でソートして返す
+		const sortedLocations = allSuccessfulLocations.sort((a, b) => {
+			const numA = parseInt(a.index.split('-').pop() ?? '0', 10);
+			const numB = parseInt(b.index.split('-').pop() ?? '0', 10);
+			return numA - numB;
+		});
+
+		return sortedLocations;
 	}
 
 
