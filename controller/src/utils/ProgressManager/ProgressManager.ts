@@ -79,9 +79,9 @@ class RealProgressManager implements IProgressManager {
 
 		this.multiBar = new cliProgress.MultiBar({
 			stream: process.stdout,
-			hideCursor: true,
+			hideCursor: false,
 			// ★ Note: format が {status} を使用しているため、Payload は { status: string } を想定
-			format: '{name} | {bar} | {percentage}% ({value}/{total}) | ETA: {eta_formatted} | {status}',
+			format: '{name} {bar} | {percentage}% ({value}/{total}) | ETA: {eta_formatted} | {status}',
 		}, cliProgress.Presets.shades_classic);
 	}
 
@@ -100,6 +100,7 @@ class RealProgressManager implements IProgressManager {
 
 		const bar = this.multiBar!.create(total, startValue, {
 			name: name.padEnd(8),
+			dynamicInfo: '',
 			...payload
 		});
 

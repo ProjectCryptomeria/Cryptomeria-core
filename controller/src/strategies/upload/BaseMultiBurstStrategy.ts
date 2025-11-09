@@ -91,7 +91,7 @@ export abstract class BaseMultiBurstStrategy extends BaseUploadStrategy {
 			);
 
 			// 2. 完了確認 (TxEvent または Polling)
-			bar.updatePayload({ status: 'Confirming (0%)' });
+			bar.updatePayload({ status: 'Confirming...' });
 
 			// ★★★ 修正点 2 ★★★
 			let confirmedCountInBatch = 0;
@@ -147,7 +147,7 @@ export abstract class BaseMultiBurstStrategy extends BaseUploadStrategy {
 
 		} catch (error) {
 			log.error(`[MultiBurstWorker ${chainName}] バッチ処理中にエラーが発生しました。`, error);
-			bar.updatePayload({ status: 'Error!' });
+			bar.updatePayload({ status: 'Error' });
 			return null;
 		}
 	}

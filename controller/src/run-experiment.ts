@@ -117,15 +117,17 @@ function instantiateStrategies(config: ExperimentConfig, logLevel: LogLevel, noP
 
 	const gasEstimationStrategy = new SimulationGasEstimationStrategy();
 
-	// ★ 修正: ログレベル 'none' または --no-progress フラグで SilentManager を使用
-	const useSilentProgress = (logLevel === 'none') || noProgress;
+	// ★★★ 修正箇所: ログレベル 'none' とプログレスバーの制御を分離 ★★★
+	// プログレスバーは --no-progress フラグのみで SilentManager を使用
+	const useSilentProgress = noProgress;
 	const progressManager = useSilentProgress
 		? new SilentProgressManager()
 		: new ProgressManager();
 
-	if (useSilentProgress && logLevel !== 'none') {
+	if (useSilentProgress) {
 		log.info('[ProgressManager] --no-progress フラグが指定されたため、プログレスバーを無効化します (Silent Mode)。');
 	}
+	// ★★★ 修正箇所 ここまで ★★★
 
 
 	log.info('すべての戦略モジュールのインスタンス化が完了しました。'); // (ファイルログ用)

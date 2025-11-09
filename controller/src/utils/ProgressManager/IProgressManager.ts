@@ -1,12 +1,36 @@
 // controller/src/utils/ProgressManager/IProgressManager.ts
 
 /**
+ * プログレスバーのステータスとして許可される文字列のユニオン型。
+ * これ以外の文字列は型エラーとなります。
+ */
+export type ProgressBarStatus =
+	| 'Initializing...'
+	| 'Waiting...'
+	| 'Mempool Ready'
+	| 'Mempool Full'
+	| 'Mempool Error'
+	| 'Uploading...'
+	| 'Broadcasting...'
+	| 'Confirming...'
+	| 'Tx Failed!'
+	| 'Batch Failed!'
+	| 'Batch Done'
+	| 'Batch Assigned'
+	| 'Broadcast Error'
+	| 'Error'
+	| 'Done'
+	| 'Failed';
+
+/**
  * プログレスバーのペイロード（表示テキスト）の型定義
  * RealProgressManager の format 文字列 '{status}' に対応
  */
 export interface ProgressPayload {
-	status?: string;
-	// ※ 他のカスタムフィールドを format で使用する場合はここに追加
+	// ★ 修正: status をユニオン型に制限
+	status?: ProgressBarStatus;
+	// ★ 新規: 動的な情報（MB数など）を表示するためのフィールドを追加
+	dynamicInfo?: string;
 }
 
 /**

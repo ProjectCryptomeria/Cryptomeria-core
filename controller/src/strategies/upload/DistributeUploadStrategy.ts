@@ -161,14 +161,14 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 					// 失敗時は、現在の進捗のままステータスを Failed にする
 					// (ただし、onProgress で 'Batch Failed!' になっている可能性もある)
 					if (bar.getTotal() > 0) {
-						bar.updatePayload({ status: 'Failed!' });
+						bar.updatePayload({ status: 'Failed' });
 					} else {
-						bar.update(0, { status: 'Failed (0 Tx)' });
+						bar.update(0, { status: 'Failed' });
 					}
 				} else if (totalAssigned === 0) {
 					// 正常終了したが、何も割り当てられなかった場合
 					// total: 0 のまま value: 0 をセットし、100% (0/0) にする
-					bar.update(0, { status: 'Done (0 Tx)' });
+					bar.update(0, { status: 'Done' });
 				} else {
 					// 正常終了し、割り当てがあった場合
 					// (onProgress で 'Batch Done' になっているはずだが、
@@ -216,7 +216,7 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 					return { name, bytes };
 				} catch (error: any) {
 					log.warn(`[Mempool] ${name} の Mempool 監視中にエラー: ${error.message}`);
-					chainBars.get(name)?.updatePayload({ status: 'Mempool Error!' });
+					chainBars.get(name)?.updatePayload({ status: 'Mempool Error' });
 					return { name, bytes: Infinity };
 				}
 			});
@@ -226,7 +226,10 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 
 			if (bestChain && bestChain.bytes < MEMPOOL_BYTES_LIMIT) {
 				log.debug(`[Mempool] 空きチェーン発見: ${bestChain.name} (Bytes: ${bestChain.bytes})`);
-				chainBars.get(bestChain.name)?.updatePayload({ status: 'Mempool Ready' });
+				chainBars.get(bestChain.name)?.updatePayload({
+					status: 'Mempool Ready',
+					dynamicInfo: '' // ★ Ready になったら動的情報をクリア
+				});
 				return { name: bestChain.name, type: 'datachain' };
 			}
 
@@ -240,7 +243,15 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 
 				if (status.bytes >= MEMPOOL_BYTES_LIMIT) {
 					const bytesMB = (status.bytes / 1024 / 1024).toFixed(1);
-					bar.updatePayload({ status: `Mempool Full (${bytesMB}MB)` });
+					// ★ 修正: status を静的な 'Mempool Full' にし、動的な情報を dynamicInfo に設定
+					bar.updatePayload({
+						status: 'Mempool Full', // ★ 静的な型に修正
+						dynamicInfo: `(${bytesMB}MB)` // ★ 動的な情報を新しいペイロードとして渡す
+					});
+					log.debug(`[Mempool] ${status.name} Mempool Full: ${bytesMB}MB`);
+				} else {
+					// Mempool Full 状態が解除されたら、dynamicInfo をクリア
+					bar.updatePayload({ dynamicInfo: '' });
 				}
 			});
 

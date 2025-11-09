@@ -37,7 +37,7 @@ export abstract class BaseOneByOneStrategy extends BaseUploadStrategy {
 		// ★ プログレスバーを作成 (チェーンごとではなく、全ジョブで1本)
 		const chainName = jobs[0]?.chainName ?? 'sequential';
 		const totalChunks = allChunks.length;
-		const bar = progressManager.addBar(chainName.padEnd(8), totalChunks, 0, { status: 'Sequential Uploading...' });
+		const bar = progressManager.addBar(chainName.padEnd(8), totalChunks, 0, { status: 'Uploading...' });
 
 		for (let i = 0; i < jobs.length; i++) {
 			const job = jobs[i]!;
@@ -54,7 +54,6 @@ export abstract class BaseOneByOneStrategy extends BaseUploadStrategy {
 			successfulLocations.push(location);
 		}
 
-		// ★ 削除: log.success(`[...] 全 ${jobs.length} チャンクの処理が完了しました。`);
 		bar.updatePayload({ status: 'Done' }); // 完了ステータス
 		return successfulLocations;
 	}
@@ -141,7 +140,7 @@ export abstract class BaseOneByOneStrategy extends BaseUploadStrategy {
 			});
 
 			// ★ バーの進捗は進めるが、ペイロードを更新
-			bar.increment(1, { status: 'Broadcast Error!' });
+			bar.increment(1, { status: 'Broadcast Error' });
 			return null;
 		}
 	}
