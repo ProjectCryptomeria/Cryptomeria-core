@@ -157,6 +157,9 @@ ctl-exec *args:
 ctl-exp:
     @{{RUN_SCRIPT}} bash -c "cd controller && yarn ts-node src/scripts/interactive-runner.ts"
 
+ctl-monitor:
+    @{{RUN_SCRIPT}} bash -c "cd controller && yarn ts-node src/scripts/monitor-chain.ts"
+
 # --- Runtime Tasks ---
 # ランタイム用コンテナに入る
 runtime-shell:
