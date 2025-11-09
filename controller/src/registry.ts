@@ -3,6 +3,8 @@ import { GeneratedType, Registry } from '@cosmjs/proto-signing';
 import { defaultRegistryTypes } from '@cosmjs/stargate';
 import { Reader, Writer } from 'protobufjs/minimal';
 import { MsgCreateStoredChunk, MsgCreateStoredManifest } from './types'; // types/index.ts 経由でインポート
+// --- ★ logger をインポート ---
+import { log } from './utils/logger';
 
 // --- MsgCreateStoredChunk のエンコード/デコード実装 ---
 
@@ -119,4 +121,5 @@ const customTypes: ReadonlyArray<[string, GeneratedType]> = [
 
 export const customRegistry = new Registry([...defaultRegistryTypes, ...customTypes]);
 
-console.log('[Registry] カスタム Protobuf 型が登録されました。');
+// --- ★ ログレベル変更 (console.log -> log.info) ---
+log.info('[Registry] カスタム Protobuf 型が登録されました。');

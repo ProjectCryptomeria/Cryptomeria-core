@@ -61,7 +61,8 @@ export class WebSocketCommunicationStrategy implements ICommunicationStrategy {
 			this.wsClients.set(endpoint, wsClient);
 			this.rpcClients.set(endpoint, tmClient);
 			this.isConnectedFlag = true;
-			log.info(`[WS] エンドポイント ${endpoint} への接続が確立し、ヘルスチェックも成功しました。`);
+			// --- ★ ログレベル変更 (info -> success) ---
+			log.success(`[WS] エンドポイント ${endpoint} への接続が確立し、ヘルスチェックも成功しました。`);
 
 		} catch (error: any) {
 			log.error(`[WS] エンドポイント ${endpoint} への接続に最終的に失敗しました。`, error);

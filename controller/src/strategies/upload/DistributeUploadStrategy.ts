@@ -45,7 +45,8 @@ export class DistributeUploadStrategy extends BaseMultiBurstStrategy implements 
 		const targetDatachains = allDatachains.slice(0, chainCount);
 
 		if (targetDatachains.length === 0) {
-			throw new Error('[DistributeUpload] 利用可能な datachain が0件です。');
+			log.error('[DistributeUpload] 利用可能な datachain が0件です。');
+			return null; // ★ 修正: 失敗
 		}
 
 		// 2. Mempool監視用のクライアントを準備 (Distribute 固有)

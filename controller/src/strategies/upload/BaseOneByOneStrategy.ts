@@ -30,7 +30,8 @@ export abstract class BaseOneByOneStrategy extends BaseUploadStrategy {
 		const jobs = this.distributeJobs(context, allChunks);
 
 		// 逐次または並列で実行 (この基底クラスでは最もシンプルな逐次実行を実装)
-		log.step(`[${this.constructor.name}] ${allChunks.length} チャンクをワンバイワン方式で逐次処理開始...`);
+		// --- ★ ログレベル変更 (step -> info) ---
+		log.info(`[${this.constructor.name}] ${allChunks.length} チャンクをワンバイワン方式で逐次処理開始...`);
 
 		const successfulLocations: ChunkLocation[] = []; // ★ 修正: 実績リスト
 
@@ -49,7 +50,8 @@ export abstract class BaseOneByOneStrategy extends BaseUploadStrategy {
 			successfulLocations.push(location); // ★ 修正: 成功した実績を追加
 		}
 
-		log.info(`[${this.constructor.name}] 全 ${jobs.length} チャンクの処理が完了しました。`);
+		// --- ★ ログレベル変更 (info -> success) ---
+		log.success(`[${this.constructor.name}] 全 ${jobs.length} チャンクの処理が完了しました。`);
 		return successfulLocations; // ★ 修正: 成功した実績リストを返す
 	}
 

@@ -30,11 +30,11 @@ import {
 } from './strategies/upload';
 // (RoundRobinUploadStrategy と AutoDistributeUploadStrategy は削除)
 
+import { IGasEstimationStrategy, SimulationGasEstimationStrategy } from './strategies/gas';
 import {
 	BufferVerificationStrategy,
 	IVerificationStrategy
 } from './strategies/verification';
-import { IGasEstimationStrategy, SimulationGasEstimationStrategy } from './strategies/gas';
 
 interface ExperimentStrategies {
 	commStrategy: ICommunicationStrategy;
@@ -136,26 +136,30 @@ function instantiateStrategies(config: ExperimentConfig): ExperimentStrategies {
 
 /**
  * コマンドライン引数を解析します。
- * (変更なし)
+ * (★ ステップ3: 修正)
  */
-function parseArgs(): { configPath: string } {
+function parseArgs(): { configPath: string, logLevel: string | undefined } {
 	const args = process.argv.slice(2);
-	const configIndex = args.indexOf('--config');
 
+	// Config Path
+	const configIndex = args.indexOf('--config');
 	if (configIndex === -1 || !args[configIndex + 1]) {
+		// このエラーログは logger.ts のデフォルトレベル('info')で出力される
 		log.error('引数エラー: --config <path/to/config.ts> が必要です。');
-		log.error('例: yarn start --config experiments/configs/case1-limit-test.config.ts');
+		log.error('例: yarn ts-node src/run-experiment.ts --config experiments/configs/case1-Sequential-Polling.config.ts');
 		process.exit(1);
 	}
+	const configPath = args[configIndex + 1]!; // 上でチェック済み
 
-	const configPath = args[configIndex + 1] ?? "error";
+	// Log Level
+	const logLevelIndex = args.indexOf('--logLevel');
+	const logLevel = (logLevelIndex !== -1 && args[logLevelIndex + 1])
+		? args[logLevelIndex + 1]
+		: undefined; // デフォルトは logger.ts 側で 'info' になる
 
-	if (args.includes('--debug')) {
-		log.setDebugMode(true);
-	}
-
-	return { configPath };
+	return { configPath, logLevel };
 }
+
 
 /**
  * 実験結果をCSV形式の文字列に変換します (簡易版)
@@ -217,14 +221,21 @@ async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
 
 /**
  * メイン実行関数
- * (変更なし)
+ * (★ ステップ3: 修正)
  */
 async function main() {
 	let runner: ExperimentRunner | undefined;
 
 	try {
 		// 1. 引数解析
-		const { configPath } = parseArgs();
+		const { configPath, logLevel } = parseArgs();
+
+		// ★★★ ログレベルを早期に設定 ★★★
+		// これ以降のログは指定されたレベルで出力される
+		if (logLevel) {
+			log.setLogLevel(logLevel);
+		}
+
 		log.info(`設定ファイル ${configPath} を読み込んでいます...`);
 
 		// 2. 設定ファイルの動的インポート

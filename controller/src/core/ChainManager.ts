@@ -129,7 +129,8 @@ export class ChainManager {
 			}
 
 			this.initialized = true;
-			log.step('ChainManager 初期化完了。');
+			// --- ★ ログレベル変更 (info -> success) ---
+			log.success('ChainManager 初期化完了。');
 
 		} catch (error) {
 			log.error('ChainManager の初期化に失敗しました。', error);
@@ -139,7 +140,6 @@ export class ChainManager {
 
 	/**
 	 * アカウント情報をチェーンから取得します (リトライ付き)
-	 * (変更なし)
 	 */
 	private async fetchAccount(client: StargateClient, address: string, chainName: string): Promise<Account> {
 		const maxRetries = 5;
@@ -149,6 +149,7 @@ export class ChainManager {
 				if (!account) {
 					throw new Error('アカウントが見つかりません (null)。');
 				}
+				// --- ★ ログレベル変更 (info -> debug) ---
 				log.debug(`[${chainName}] アカウント情報取得 (試行 ${i + 1}): AccNum: ${account.accountNumber}, Seq: ${account.sequence}`);
 				return account;
 			} catch (error: any) { // ★ 修正: error: any
@@ -282,6 +283,7 @@ export class ChainManager {
 
 		this.initialized = false;
 		this.accounts.clear();
-		log.info('すべての接続が切断されました。');
+		// --- ★ ログレベル変更 (info -> success) ---
+		log.success('すべての接続が切断されました。');
 	}
 }

@@ -134,6 +134,7 @@ export class PollingConfirmationStrategy implements IConfirmationStrategy {
 			}
 		}
 
+		// --- ★ ログレベルは info のまま (成功/失敗のサマリーのため) ---
 		log.info(`[PollingConfirm] ポーリング確認終了。 (成功: ${Array.from(results.values()).filter(r => r.success).length}, 失敗: ${Array.from(results.values()).filter(r => !r.success).length})`);
 
 		return results;

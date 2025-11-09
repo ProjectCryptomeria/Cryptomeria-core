@@ -116,7 +116,8 @@ export class TxEventConfirmationStrategy implements IConfirmationStrategy {
 
 							// すべてのTxが確認されたら Promise を resolve
 							if (pendingHashes.size === 0) {
-								log.info(`[TxEventConfirm] 全 ${txHashes.length} 件のTx確認が完了しました。`);
+								// --- ★ ログレベル変更 (info -> success) ---
+								log.success(`[TxEventConfirm] 全 ${txHashes.length} 件のTx確認が完了しました。`);
 								resolve();
 							}
 						} else {

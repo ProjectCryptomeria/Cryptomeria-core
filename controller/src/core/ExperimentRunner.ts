@@ -103,7 +103,8 @@ export class ExperimentRunner {
 					try {
 						const result = await this.runIteration(chainCount, iteration);
 						iterationResults.push(result);
-						log.info(`イテレーション ${iteration} 完了。検証: ${result.verificationResult.verified ? '成功' : '失敗'}`);
+						// --- ★ ログレベル変更 (info -> success) ---
+						log.success(`イテレーション ${iteration} 完了。検証: ${result.verificationResult.verified ? '✅ 成功' : '❌ 失敗'}`);
 
 					} catch (iterError: unknown) {
 						const errorMessage = (iterError instanceof Error) ? iterError.message : String(iterError);
@@ -127,7 +128,8 @@ export class ExperimentRunner {
 		} finally {
 			// --- 4. グローバル後処理 ---
 			await this.chainManager.disconnectAll();
-			log.step('実験終了。');
+			// --- ★ ログレベル変更 (step -> success) ---
+			log.success('実験終了。');
 		}
 
 		// --- 5. 結果集計 (簡易版) ---
@@ -166,7 +168,8 @@ export class ExperimentRunner {
 		// UploadStrategy に context (urlPathCodec を含む) を渡す
 		const uploadResult = await this.strategies.uploadStrategy.execute(this.context, originalData, targetUrl);
 
-		log.info(`アップロード完了。所要時間: ${uploadResult.durationMs} ms, 成功Tx: ${uploadResult.successTx}/${uploadResult.totalTx}`);
+		// --- ★ ログレベル変更 (info -> success) ---
+		log.success(`アップロード完了。所要時間: ${uploadResult.durationMs} ms, 成功Tx: ${uploadResult.successTx}/${uploadResult.totalTx}`);
 
 		// 3. ダウンロード実行
 		const manifestUrlRaw = uploadResult.manifestUrl; // tracker に記録された元の URL
@@ -177,7 +180,8 @@ export class ExperimentRunner {
 		// DownloadStrategy に context (urlPathCodec を含む) と元の URL を渡す
 		const downloadResult = await this.strategies.downloadStrategy.execute(this.context, manifestUrlRaw);
 
-		log.info(`ダウンロード完了。所要時間: ${downloadResult.durationMs} ms, サイズ: ${downloadResult.downloadedData.length} bytes`);
+		// --- ★ ログレベル変更 (info -> success) ---
+		log.success(`ダウンロード完了。所要時間: ${downloadResult.durationMs} ms, サイズ: ${downloadResult.downloadedData.length} bytes`);
 
 		// 4. 検証実行
 		log.info('データ検証開始...');
@@ -191,7 +195,8 @@ export class ExperimentRunner {
 			verificationOptions
 		);
 		this.tracker.setVerificationResult(verificationResult);
-		log.info(`検証完了: ${verificationResult.verified ? '✅ 成功' : '❌ 失敗'}`);
+		// --- ★ ログレベル変更 (info -> success) ---
+		log.success(`検証完了: ${verificationResult.verified ? '✅ 成功' : '❌ 失敗'}`);
 
 		// 5. イテレーション結果を返す
 		return {

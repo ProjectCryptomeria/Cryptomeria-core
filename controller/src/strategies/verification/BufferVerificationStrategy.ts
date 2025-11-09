@@ -49,7 +49,12 @@ export class BufferVerificationStrategy implements IVerificationStrategy {
 				? `部分検証 (先頭 ${compareBytes} バイト) に成功しました。`
 				: `部分検証 (先頭 ${compareBytes} バイト) に失敗しました。`;
 
-			log.info(message);
+			// --- ★ ログレベル変更 (info -> success/warn) ---
+			if (verified) {
+				log.success(message);
+			} else {
+				log.warn(message);
+			}
 			return { verified, message };
 
 		} else {
@@ -68,7 +73,12 @@ export class BufferVerificationStrategy implements IVerificationStrategy {
 				? `全体検証に成功しました。`
 				: `全体検証に失敗しました。`;
 
-			log.info(message);
+			// --- ★ ログレベル変更 (info -> success/warn) ---
+			if (verified) {
+				log.success(message);
+			} else {
+				log.warn(message);
+			}
 			return { verified, message };
 		}
 	}

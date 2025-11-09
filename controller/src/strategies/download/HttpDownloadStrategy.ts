@@ -114,7 +114,8 @@ export class HttpDownloadStrategy implements IDownloadStrategy {
 			const endTime = process.hrtime.bigint() / 1_000_000n;
 			const durationMs = endTime - startTime;
 
-			log.info(`[Download] 完了。所要時間: ${durationMs} ms, サイズ: ${downloadedData.length} bytes`);
+			// --- ★ ログレベル変更 (info -> success) ---
+			log.success(`[Download] 完了。所要時間: ${durationMs} ms, サイズ: ${downloadedData.length} bytes`);
 
 			return {
 				startTime,

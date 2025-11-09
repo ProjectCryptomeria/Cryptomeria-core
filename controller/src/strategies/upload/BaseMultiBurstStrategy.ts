@@ -57,7 +57,8 @@ export abstract class BaseMultiBurstStrategy extends BaseUploadStrategy {
 			return null;
 		}
 
-		log.info(`[${this.constructor.name}] マルチバースト処理が正常に完了しました。 (処理チャンク数: ${locations.length})`);
+		// --- ★ ログレベル変更 (info -> success) ---
+		log.success(`[${this.constructor.name}] マルチバースト処理が正常に完了しました。 (処理チャンク数: ${locations.length})`);
 		return locations;
 	}
 
@@ -104,6 +105,7 @@ export abstract class BaseMultiBurstStrategy extends BaseUploadStrategy {
 			const txInfos: TransactionInfo[] = batchTxHashes.map((hash, i) => ({
 				hash: hash,
 				chainName: chainName,
+				// @ts-ignore (BaseUploadStrategy で chunkIndex を追加したが、型定義に反映されていない可能性)
 				chunkIndex: batch.chunks[i]?.index, // ★ 修正: PerformanceTracker 用
 				...results.get(hash)!
 			}));
@@ -116,7 +118,8 @@ export abstract class BaseMultiBurstStrategy extends BaseUploadStrategy {
 				return null; // ★ 修正: 失敗時は null
 			}
 
-			log.info(`[MultiBurstWorker ${chainName}] バッチ (${batch.chunks.length} Tx) の処理が正常に完了しました。`);
+			// --- ★ ログレベル変更 (info -> success) ---
+			log.success(`[MultiBurstWorker ${chainName}] バッチ (${batch.chunks.length} Tx) の処理が正常に完了しました。`);
 
 			// ★ 修正: 成功時は、このバッチの実績リストを返す
 			const batchLocations: ChunkLocation[] = batch.chunks.map(chunk => ({

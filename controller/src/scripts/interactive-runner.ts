@@ -28,20 +28,26 @@ async function runInteractive() {
 			choices: configFiles,
 		});
 
-		// 3. デバッグモードの有無を選択させる
-		const { debugMode } = await prompt<{ debugMode: boolean }>({
-			type: 'confirm',
-			name: 'debugMode',
-			message: '🐞 デバッグモードを有効にしますか?',
-			initial: false, // デフォルトは無効
+		// --- ★ ステップ2: デバッグモードの有無をログレベル選択に変更 ---
+		const { logLevel } = await prompt<{ logLevel: string }>({
+			type: 'select',
+			name: 'logLevel',
+			message: 'ログレベルを選択してください (左右キーで選択):',
+			choices: [
+				// name が --logLevel 引数として渡される値
+				{ name: 'debug', message: 'DEBUG   (水色: すべて表示)' },
+				{ name: 'info', message: 'INFO    (ピンク: 標準の進捗状況)' },
+				{ name: 'success', message: 'SUCCESS (緑色: 主要な成功ログのみ)' }
+			],
+			initial: 1, // デフォルトを 'info' (インデックス 1) に設定
 		});
 
 		// 4. run-experiment.ts に渡す引数を構築
 		const configPath = path.join('experiments', 'configs', selectedConfig); // 相対パス
 		const args: string[] = ['--config', configPath];
-		if (debugMode) {
-			args.push('--debug');
-		}
+
+		// --- ★ '--debug' の代わりに '--logLevel' を渡す ---
+		args.push('--logLevel', logLevel);
 
 		console.log(`\n🚀 実験を実行します: ts-node ${path.basename(EXPERIMENT_RUNNER_SCRIPT)} ${args.join(' ')}\n`);
 
