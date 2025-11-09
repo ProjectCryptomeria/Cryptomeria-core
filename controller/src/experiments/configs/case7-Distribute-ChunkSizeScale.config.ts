@@ -1,16 +1,15 @@
-// controller/src/experiments/configs/case6-chunksize-256kb.config.ts
-// (ファイル名を変更して case6-chunksize.config.ts としても良い)
 import { ExperimentConfig } from '../../types';
 
 /**
- * Test Case 6: チャンクサイズ比較テスト (256KB 編)
+ * Test Case 7: Distribute (MultiBurst) Chunk Size Test (256KB)
  * - 10MB のダミーデータを生成
  * - 4 datachain を使用
- * - AutoDistribute 戦略
+ * - Distribute (マルチバースト) 戦略
  * - ★ チャンクサイズ: 256KB
+ * (※ 512KB, 1MB など、このファイルをコピーしてチャンクサイズを変更し、比較テストを行います)
  */
 const config: ExperimentConfig = {
-	description: 'Case 6: Chunk Size Test (256KB)',
+	description: 'Case 7: Distribute (MultiBurst) Chunk Size Test (256KB)',
 	iterations: 3,
 
 	// アップロード対象: 10MB
@@ -25,13 +24,13 @@ const config: ExperimentConfig = {
 	// 使用する戦略モジュール
 	strategies: {
 		communication: 'WebSocket',
-		upload: 'AutoDistribute',
+		upload: 'Distribute', // DistributeUploadStrategy (マルチバースト)
 		confirmation: 'TxEvent',
 		download: 'Http',
 		verification: 'BufferFull',
 	},
 
-	// アップロード戦略 (AutoDistribute) 固有のオプション
+	// アップロード戦略 (Distribute) 固有のオプション
 	uploadStrategyOptions: {
 		// ★ 比較対象のチャンクサイズ
 		chunkSize: 256 * 1024,

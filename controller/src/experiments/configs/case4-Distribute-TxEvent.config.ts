@@ -1,15 +1,14 @@
-// controller/src/experiments/configs/case3-roundrobin.config.ts
 import { ExperimentConfig } from '../../types';
 
 /**
- * Test Case 3: RoundRobin (均等分散) 戦略の基本テスト
+ * Test Case 4: Distribute (MultiBurst) + TxEvent
  * - 5MB のダミーデータを生成
  * - 4 datachain を使用
- * - RoundRobin (均等分散) アップロード戦略
- * - WebSocket + TxEvent
+ * - Distribute (マルチバースト) アップロード戦略
+ * - TxEvent (完了確認)
  */
 const config: ExperimentConfig = {
-	description: 'Case 3: RoundRobin Strategy Base Test',
+	description: 'Case 4: Distribute (MultiBurst) + TxEvent',
 	iterations: 3,
 
 	// アップロード対象: 5MB (5 * 1024 KB)
@@ -23,16 +22,16 @@ const config: ExperimentConfig = {
 
 	// 使用する戦略モジュール
 	strategies: {
-		communication: 'WebSocket',
-		upload: 'RoundRobin', // ★ ラウンドロビン戦略
-		confirmation: 'TxEvent',
+		communication: 'WebSocket', // Distribute 戦略 (Mempool監視) のため WS 必須
+		upload: 'Distribute',     // DistributeUploadStrategy (マルチバースト)
+		confirmation: 'TxEvent',      // ★ TxEvent
 		download: 'Http',
 		verification: 'BufferFull',
 	},
 
-	// アップロード戦略 (RoundRobin) 固有のオプション
+	// アップロード戦略 (Distribute) 固有のオプション
 	uploadStrategyOptions: {
-		// チャンクサイズ: 256KB (分散のため小さめ)
+		// チャンクサイズ: 256KB
 		chunkSize: 256 * 1024,
 	},
 

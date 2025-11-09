@@ -4,7 +4,7 @@ import * as path from 'path';
 import { ExperimentRunner } from './core/ExperimentRunner';
 import { ExperimentConfig, ExperimentResult } from './types';
 import { log } from './utils/logger';
-import { UrlPathCodec } from './utils/UrlPathCodec'; // ★ 追加
+import { UrlPathCodec } from './utils/UrlPathCodec';
 
 // --- すべての具象戦略クラスをインポート ---
 import {
@@ -21,17 +21,19 @@ import {
 	HttpDownloadStrategy,
 	IDownloadStrategy
 } from './strategies/download';
+
+// ★ 修正: インポートする具象戦略クラスを変更
 import {
-	AutoDistributeUploadStrategy,
+	DistributeUploadStrategy, // ★ 修正
 	IUploadStrategy,
-	RoundRobinUploadStrategy,
-	SequentialUploadStrategy
+	SequentialUploadStrategy // ★ 修正
 } from './strategies/upload';
+// (RoundRobinUploadStrategy と AutoDistributeUploadStrategy は削除)
+
 import {
 	BufferVerificationStrategy,
 	IVerificationStrategy
 } from './strategies/verification';
-
 import { IGasEstimationStrategy, SimulationGasEstimationStrategy } from './strategies/gas';
 
 interface ExperimentStrategies {
@@ -46,8 +48,6 @@ interface ExperimentStrategies {
 /**
  * 設定オブジェクト（文字列）に基づき、
  * 戦略クラスの具象インスタンスを生成します。
- * @param config ExperimentConfig
- * @returns ExperimentStrategies (インスタンス化された戦略オブジェクト)
  */
 function instantiateStrategies(config: ExperimentConfig): ExperimentStrategies {
 	log.info('戦略モジュールをインスタンス化しています...');
@@ -70,7 +70,6 @@ function instantiateStrategies(config: ExperimentConfig): ExperimentStrategies {
 			confirmStrategy = new PollingConfirmationStrategy();
 			break;
 		case 'TxEvent':
-			// TxEvent 戦略は WebSocket が必須
 			if (config.strategies.communication !== 'WebSocket') {
 				throw new Error('TxEventConfirmationStrategy は WebSocketCommunicationStrategy が必要です。');
 			}
@@ -80,30 +79,32 @@ function instantiateStrategies(config: ExperimentConfig): ExperimentStrategies {
 			throw new Error(`不明な完了確認戦略: ${config.strategies.confirmation}`);
 	}
 
+	// ★★★ 修正箇所: アップロード戦略のインスタンス化 ★★★
 	let uploadStrategy: IUploadStrategy;
 	switch (config.strategies.upload) {
+
+		// 方式1: シーケンシャル（ワンバイワン）
 		case 'Sequential':
 			uploadStrategy = new SequentialUploadStrategy();
 			break;
-		case 'RoundRobin':
-			uploadStrategy = new RoundRobinUploadStrategy();
-			break;
-		case 'AutoDistribute':
-			// AutoDistribute 戦略は Mempool 監視のため WebSocket (RPC Client) が推奨
+
+		// 方式2: ディストリビュート（マルチバースト）
+		case 'Distribute': // ★ ご要望の「ディストリビュート戦略」
+			// この戦略は Mempool 監視のため WebSocket (RPC Client) が必須
 			if (config.strategies.communication !== 'WebSocket') {
-				log.warn('AutoDistributeUploadStrategy は WebSocketCommunicationStrategy を推奨します (Mempool 監視のため)。');
+				throw new Error('DistributeUploadStrategy は WebSocketCommunicationStrategy が必要です (Mempool 監視のため)。');
 			}
-			uploadStrategy = new AutoDistributeUploadStrategy();
+			uploadStrategy = new DistributeUploadStrategy();
 			break;
 		default:
-			throw new Error(`不明なアップロード戦略: ${config.strategies.upload}`);
+			// @ts-ignore (型チェックで 'RoundRobin' や 'AutoDistribute' がエラーになるが、実行時エラーとして捕捉)
+			throw new Error(`不明なアップロード戦略: ${config.strategies.upload}。Sequential または Distribute を指定してください。`);
 	}
+	// ★★★ 修正箇所ここまで ★★★
 
 	let downloadStrategy: IDownloadStrategy;
 	switch (config.strategies.download) {
 		case 'Http':
-			// HttpDownloadStrategy は内部で HttpCommunicationStrategy を使う想定だが、
-			// 汎用性のために ICommunicationStrategy (の sendRestRequest) を使う
 			downloadStrategy = new HttpDownloadStrategy();
 			break;
 		default:
@@ -113,7 +114,7 @@ function instantiateStrategies(config: ExperimentConfig): ExperimentStrategies {
 	let verifyStrategy: IVerificationStrategy;
 	switch (config.strategies.verification) {
 		case 'BufferFull':
-		case 'BufferPartial': // 同じクラスでオプションで制御
+		case 'BufferPartial':
 			verifyStrategy = new BufferVerificationStrategy();
 			break;
 		default:
@@ -135,7 +136,7 @@ function instantiateStrategies(config: ExperimentConfig): ExperimentStrategies {
 
 /**
  * コマンドライン引数を解析します。
- * @returns { configPath: string }
+ * (変更なし)
  */
 function parseArgs(): { configPath: string } {
 	const args = process.argv.slice(2);
@@ -149,7 +150,6 @@ function parseArgs(): { configPath: string } {
 
 	const configPath = args[configIndex + 1] ?? "error";
 
-	// デバッグモードのチェック (オプション)
 	if (args.includes('--debug')) {
 		log.setDebugMode(true);
 	}
@@ -159,8 +159,7 @@ function parseArgs(): { configPath: string } {
 
 /**
  * 実験結果をCSV形式の文字列に変換します (簡易版)
- * @param result ExperimentResult
- * @returns CSV文字列
+ * (変更なし)
  */
 async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
 	const header = [
@@ -218,6 +217,7 @@ async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
 
 /**
  * メイン実行関数
+ * (変更なし)
  */
 async function main() {
 	let runner: ExperimentRunner | undefined;
@@ -228,7 +228,6 @@ async function main() {
 		log.info(`設定ファイル ${configPath} を読み込んでいます...`);
 
 		// 2. 設定ファイルの動的インポート
-		// (注: ts-node や tsc-watch は .ts の動的インポートをサポートしている)
 		const absoluteConfigPath = path.resolve(__dirname, configPath);
 		const configModule = await import(absoluteConfigPath);
 		const config: ExperimentConfig = configModule.default;
@@ -240,11 +239,9 @@ async function main() {
 		// 3. 戦略のインスタンス化
 		const strategies = instantiateStrategies(config);
 
-		// ★ 追加: UrlPathCodec のインスタンス化
 		const urlPathCodec = new UrlPathCodec();
 
 		// 4. ExperimentRunner の初期化と実行
-		// ★ 修正: urlPathCodec をコンストラクタに渡す
 		runner = new ExperimentRunner(config, strategies, urlPathCodec);
 		const result = await runner.run();
 
@@ -256,10 +253,10 @@ async function main() {
 			result.iterationResults.map(r => ({
 				iter: r.iteration,
 				chains: r.chainCount,
-				uploadMs: Number(r.uploadResult.durationMs), // コンソール表示用に Number に
+				uploadMs: Number(r.uploadResult.durationMs),
 				downloadMs: Number(r.downloadResult.durationMs),
 				successTx: r.uploadResult.successTx,
-				totalGas: String(r.uploadResult.totalGasUsed), // コンソール表示用に String に
+				totalGas: String(r.uploadResult.totalGasUsed),
 				verified: r.verificationResult.verified,
 			}))
 		);
@@ -268,10 +265,9 @@ async function main() {
 		const csvData = await formatResultsAsCSV(result);
 		const resultsDir = path.join(__dirname, 'experiments', 'results');
 
-		// ★ 修正: config.description からファイル名を作成
 		const safeDescription = config.description
-			.replace(/\s+/g, '_')           // スペースをアンダースコアに
-			.replace(/[^a-zA-Z0-9_-]/g, '') // 英数字、アンダースコア、ハイフン以外を削除
+			.replace(/\s+/g, '_')
+			.replace(/[^a-zA-Z0-9_-]/g, '')
 			.toLowerCase();
 		const csvFileName = `${safeDescription}_${Date.now()}.csv`;
 		const csvFilePath = path.join(resultsDir, csvFileName);
@@ -282,7 +278,7 @@ async function main() {
 
 	} catch (error: any) {
 		log.error('実験の実行中に致命的なエラーが発生しました。', error);
-		process.exitCode = 1; // エラーコードを設定
+		process.exitCode = 1;
 	} finally {
 		// ログバッファをフラッシュ
 		await log.flushErrorLogs();

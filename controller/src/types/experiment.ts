@@ -31,7 +31,7 @@ export interface ExperimentConfig {
 	// 使用する戦略モジュールの名前 (文字列)
 	strategies: {
 		communication: 'Http' | 'WebSocket';
-		upload: 'Sequential' | 'RoundRobin' | 'AutoDistribute'; // | 'PipelinedAutoDistribute';
+		upload: 'Sequential' | 'Distribute'; // | 'PipelinedAutoDistribute';
 		confirmation: 'Polling' | 'TxEvent';
 		download: 'Http'; // 現状は Http のみ
 		verification: 'BufferFull' | 'BufferPartial';
