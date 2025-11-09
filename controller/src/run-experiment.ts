@@ -5,11 +5,10 @@ import { ExperimentRunner } from './core/ExperimentRunner';
 import { ExperimentConfig, ExperimentResult } from './types';
 import { log, LogLevel } from './utils/logger';
 import { IProgressManager } from './utils/ProgressManager/IProgressManager';
-// ★ 修正: SilentProgressManager もインポート
 import { ProgressManager, SilentProgressManager } from './utils/ProgressManager/ProgressManager';
 import { UrlPathCodec } from './utils/UrlPathCodec';
 
-// --- (すべての具象戦略クラスのインポートは変更なし) ---
+// --- (通信、完了確認、ダウンロード、検証、ガスのインポートは変更なし) ---
 import {
 	HttpCommunicationStrategy,
 	ICommunicationStrategy,
@@ -26,14 +25,30 @@ import {
 } from './strategies/download';
 import { IGasEstimationStrategy, SimulationGasEstimationStrategy } from './strategies/gas';
 import {
-	DistributeUploadStrategy,
-	IUploadStrategy,
-	SequentialUploadStrategy
-} from './strategies/upload/old';
-import {
 	BufferVerificationStrategy,
 	IVerificationStrategy
 } from './strategies/verification';
+
+// ★★★ 修正箇所: アップロード戦略のインポート ★★★
+import {
+	CompositeUploadStrategy,
+	IUploadStrategy
+} from './strategies/upload';
+
+// (新しい Allocator と Transmitter のインポート)
+import {
+	AvailableAllocator,
+	RandomAllocator,
+	RoundRobinAllocator,
+	StaticMultiAllocator
+} from './strategies/upload/implement/allocator';
+import {
+	MultiBurstTransmitter,
+	OneByOneTransmitter
+} from './strategies/upload/implement/transmitter';
+import { IChunkAllocator } from './strategies/upload/interfaces/IChunkAllocator';
+import { IUploadTransmitter } from './strategies/upload/interfaces/IUploadTransmitter';
+// ★★★ 修正箇所 ここまで ★★★
 
 
 interface ExperimentStrategies {
@@ -47,12 +62,12 @@ interface ExperimentStrategies {
 }
 
 /**
- * ★ 修正: logLevel と noProgress を引数に追加
+ * ★ 修正: instantiateStrategies をリファクタリング後の戦略に対応
  */
 function instantiateStrategies(config: ExperimentConfig, logLevel: LogLevel, noProgress: boolean): ExperimentStrategies {
-	log.info('戦略モジュールをインスタンス化しています...'); // (ファイルログ用)
+	log.info('戦略モジュールをインスタンス化しています...');
 
-	// --- (他の戦略のインスタンス化は変更なし) ---
+	// --- 1. 通信戦略 (変更なし) ---
 	let commStrategy: ICommunicationStrategy;
 	switch (config.strategies.communication) {
 		case 'Http':
@@ -65,6 +80,7 @@ function instantiateStrategies(config: ExperimentConfig, logLevel: LogLevel, noP
 			throw new Error(`不明な通信戦略: ${config.strategies.communication}`);
 	}
 
+	// --- 2. 完了確認戦略 (変更なし) ---
 	let confirmStrategy: IConfirmationStrategy;
 	switch (config.strategies.confirmation) {
 		case 'Polling':
@@ -80,22 +96,7 @@ function instantiateStrategies(config: ExperimentConfig, logLevel: LogLevel, noP
 			throw new Error(`不明な完了確認戦略: ${config.strategies.confirmation}`);
 	}
 
-	let uploadStrategy: IUploadStrategy;
-	switch (config.strategies.upload) {
-		case 'Sequential':
-			uploadStrategy = new SequentialUploadStrategy();
-			break;
-		case 'Distribute':
-			if (config.strategies.communication !== 'WebSocket') {
-				throw new Error('DistributeUploadStrategy は WebSocketCommunicationStrategy が必要です (Mempool 監視のため)。');
-			}
-			uploadStrategy = new DistributeUploadStrategy();
-			break;
-		default:
-			// @ts-ignore
-			throw new Error(`不明なアップロード戦略: ${config.strategies.upload}。Sequential または Distribute を指定してください。`);
-	}
-
+	// --- 3. ダウンロード、検証、ガス (変更なし) ---
 	let downloadStrategy: IDownloadStrategy;
 	switch (config.strategies.download) {
 		case 'Http':
@@ -117,8 +118,7 @@ function instantiateStrategies(config: ExperimentConfig, logLevel: LogLevel, noP
 
 	const gasEstimationStrategy = new SimulationGasEstimationStrategy();
 
-	// ★★★ 修正箇所: ログレベル 'none' とプログレスバーの制御を分離 ★★★
-	// プログレスバーは --no-progress フラグのみで SilentManager を使用
+	// --- 4. プログレスバー (変更なし) ---
 	const useSilentProgress = noProgress;
 	const progressManager = useSilentProgress
 		? new SilentProgressManager()
@@ -127,10 +127,92 @@ function instantiateStrategies(config: ExperimentConfig, logLevel: LogLevel, noP
 	if (useSilentProgress) {
 		log.info('[ProgressManager] --no-progress フラグが指定されたため、プログレスバーを無効化します (Silent Mode)。');
 	}
-	// ★★★ 修正箇所 ここまで ★★★
 
+	// ★★★ 5. アップロード戦略 (Composite パターン) ★★★
+	// (config.strategies.upload には 'Sequential', 'Distribute' が入ってくる想定)
 
-	log.info('すべての戦略モジュールのインスタンス化が完了しました。'); // (ファイルログ用)
+	// 5a. 送信方式 (Transmitter) を決定
+	// (計画書 4-3: 'Sequential' -> OneByOne, 'Distribute' -> MultiBurst)
+	let transmitter: IUploadTransmitter;
+	let allocatorName: string; // Allocator を決定するための内部名
+
+	switch (config.strategies.upload) {
+		case 'Sequential':
+			// Sequential (S-1, S-2) は OneByOne 送信
+			transmitter = new OneByOneTransmitter();
+			// Allocator はタスクの chainCount や targetChain で決まる
+			// (ここでは単純化し、Sequential=StaticOneByOne と仮定)
+			// → config.strategies.upload の値が 'Sequential' や 'Distribute' のままでは
+			//   S-1 と S-2 を区別できない。
+			//   計画書 4-3「新しい戦略名（例: 'StaticOneByOne', 'AvailableBurst'など）を定義し」
+			//   とあるが、config ファイルは 'Sequential', 'Distribute' のまま。
+			//
+			//   仕様書「アップロード戦略仕様.md」のケース分類に基づき、
+			//   config の *組み合わせ* で Allocator を決定する必要がある。
+			//
+			//   config.strategies.upload == 'Sequential' (Transmitter: OneByOne)
+			//     -> S-1/M-1 (Mega_Chunk/Static) -> StaticMultiAllocator
+			//     -> S-2/M-3 (Common_Queue/Dynamic) -> RoundRobinAllocator (or Available/Random)
+			//   config.strategies.upload == 'Distribute' (Transmitter: MultiBurst)
+			//     -> S-3/M-2 (Mega_Chunk/Static) -> StaticMultiAllocator
+			//     -> S-4/M-4 (Common_Queue/Dynamic) -> RoundRobinAllocator or Available/Random
+			//
+			//   現状の config (case1-4.config.ts) は 'upload' 戦略しか指定しておらず、
+			//   Allocator (Mega_Chunk/Common_Queue) の区別ができない。
+			//
+			//   唯一の手がかり:
+			//   - case1/2 (Sequential) には `targetChain: 'data-0'` がある
+			//   - case3/4/5/7 (Distribute) には `targetChain` がない
+			//
+			//   この情報から、'Sequential' は「静的 (Static)」割当、
+			//   'Distribute' は「動的 (Available)」割当を意図していると推測する。
+			//
+			//   [推測]
+			//   - 'Sequential' -> OneByOneTransmitter + StaticMultiAllocator (S-1, M-1)
+			//   - 'Distribute' -> MultiBurstTransmitter + AvailableAllocator (M-3_D, M-4_D)
+			//
+			//   この推測で実装を進める。
+
+			transmitter = new OneByOneTransmitter();
+			allocatorName = 'StaticMulti'; // 'Sequential' は Static (Mega_Chunk) と推測
+			break;
+
+		case 'Distribute':
+			transmitter = new MultiBurstTransmitter();
+			allocatorName = 'Available'; // 'Distribute' は Available (Mempool監視) と推測
+			break;
+
+		default:
+			// @ts-ignore
+			throw new Error(`不明なアップロード戦略: ${config.strategies.upload}。Sequential または Distribute を指定してください。`);
+	}
+
+	// 5b. 割当方式 (Allocator) を決定
+	let allocator: IChunkAllocator;
+	switch (allocatorName) {
+		case 'StaticMulti':
+			allocator = new StaticMultiAllocator();
+			break;
+		case 'RoundRobin':
+			allocator = new RoundRobinAllocator();
+			break;
+		case 'Available':
+			if (config.strategies.communication !== 'WebSocket') {
+				throw new Error('AvailableAllocator は WebSocketCommunicationStrategy が必要です (Mempool 監視のため)。');
+			}
+			allocator = new AvailableAllocator();
+			break;
+		case 'Random':
+			allocator = new RandomAllocator();
+			break;
+		default:
+			throw new Error(`不明なアロケータ名: ${allocatorName}`);
+	}
+
+	// 5c. 2つを合成
+	const uploadStrategy = new CompositeUploadStrategy(allocator, transmitter);
+
+	log.info('すべての戦略モジュールのインスタンス化が完了しました。');
 	return {
 		commStrategy,
 		uploadStrategy,
@@ -138,13 +220,13 @@ function instantiateStrategies(config: ExperimentConfig, logLevel: LogLevel, noP
 		downloadStrategy,
 		verifyStrategy,
 		gasEstimationStrategy,
-		progressManager // ★ 返す
+		progressManager
 	};
 }
 
 /**
  * コマンドライン引数を解析します。
- * ★ 修正: --no-progress フラグを認識
+ * (変更なし)
  */
 function parseArgs(): { configPath: string, logLevel: string | undefined, noProgress: boolean } {
 	const args = process.argv.slice(2);
@@ -162,7 +244,6 @@ function parseArgs(): { configPath: string, logLevel: string | undefined, noProg
 		? args[logLevelIndex + 1]
 		: undefined;
 
-	// ★ 修正: --no-progress フラグの存在を確認
 	const noProgress = args.includes('--no-progress');
 
 	return { configPath, logLevel, noProgress };
@@ -239,13 +320,14 @@ async function formatResultsAsCSV(result: ExperimentResult): Promise<string> {
 
 /**
  * メイン実行関数
+ * (変更なし)
  */
 async function main() {
 	let runner: ExperimentRunner | undefined;
 	let strategies: ExperimentStrategies | undefined;
 
 	try {
-		// 1. 引数解析 (★ 修正: noProgress を受け取る)
+		// 1. 引数解析
 		const { configPath, logLevel: logLevelArg, noProgress } = parseArgs();
 		const logLevel: LogLevel = (logLevelArg as LogLevel) ?? 'info';
 
@@ -255,7 +337,7 @@ async function main() {
 
 		log.info(`設定ファイル ${configPath} を読み込んでいます...`);
 
-		// 2. 設定ファイルの動的インポート (変更なし)
+		// 2. 設定ファイルの動的インポート
 		const absoluteConfigPath = path.resolve(__dirname, configPath);
 		const configModule = await import(absoluteConfigPath);
 		const config: ExperimentConfig = configModule.default;
@@ -264,15 +346,15 @@ async function main() {
 			throw new Error(`設定ファイル ${configPath} が 'export default' していません。`);
 		}
 
-		// 3. 戦略のインスタンス化 (★ 修正: logLevel と noProgress を渡す)
+		// 3. 戦略のインスタンス化 (★ 修正済み)
 		strategies = instantiateStrategies(config, logLevel, noProgress);
 		const urlPathCodec = new UrlPathCodec();
 
-		// 4. ExperimentRunner の初期化と実行 (変更なし)
+		// 4. ExperimentRunner の初期化と実行
 		runner = new ExperimentRunner(config, strategies, urlPathCodec);
 		const result = await runner.run();
 
-		// 5. 結果の表示 (変更なし)
+		// 5. 結果の表示
 		log.step('--- 実験結果サマリー ---');
 		console.error(JSON.stringify(result.summary ?? { message: 'サマリーなし' }, null, 2));
 		log.step('--- イテレーション詳細 (タスク別) ---');
@@ -288,7 +370,7 @@ async function main() {
 			}))
 		);
 
-		// 6. CSVファイルへの保存 (変更なし)
+		// 6. CSVファイルへの保存
 		const csvData = await formatResultsAsCSV(result);
 		const resultsDir = path.join(__dirname, 'experiments', 'results');
 
@@ -307,11 +389,10 @@ async function main() {
 		log.error('実験の実行中に致命的なエラーが発生しました。', error);
 		process.exitCode = 1;
 	} finally {
-		// 7. 終了処理 (変更なし)
+		// 7. 終了処理
 		if (strategies && strategies.progressManager) {
 			strategies.progressManager.stop();
 		}
-		// ログバッファをフラッシュ
 		await log.flushErrorLogs();
 		process.exit();
 	}
