@@ -15,6 +15,8 @@ import { IProgressBar } from '../../../../utils/ProgressManager/IProgressManager
 import { ConfirmationOptions } from '../../../confirmation';
 import { ChunkBatch, ChunkInfo, ChunkLocation } from '../../base/BaseCoreLogic';
 import { IUploadTransmitter } from '../../interfaces/IUploadTransmitter';
+// CometClient のインポートは不要
+// import { CometClient } from '@cosmjs/tendermint-rpc';
 
 /**
  * 「マルチバースト」方式（ノンス手動管理によるバッチ送信＆非同期確認）で
@@ -124,6 +126,19 @@ export class MultiBurstTransmitter implements IUploadTransmitter {
 		const account = chainManager.getChainAccount(chainName);
 		const client = account.signingClient;
 
+		// ★★★ 修正 (ここから) ★★★
+		// Tx署名を開始する前に、ローカルのシーケンス番号を
+		// チェーンの最新状態に強制的に同期させる
+		try {
+			await chainManager.resyncSequence(chainName);
+		} catch (resyncError) {
+			log.error(`[MultiBurstTx ${chainName}] 署名開始前のシーケンス再同期に失敗しました。`, resyncError);
+			throw resyncError; // バッチ処理を失敗させる
+		}
+		// ★★★ 修正 (ここまで) ★★★
+
+		// client.getCometClient() の呼び出しは不要
+
 		let currentSequence = chainManager.getCurrentSequence(chainName);
 		const accountNumber = chainManager.getAccountNumber(chainName);
 		const chainId = await client.getChainId();
@@ -168,9 +183,10 @@ export class MultiBurstTransmitter implements IUploadTransmitter {
 			const hash = toHex(sha256(txBytes)).toUpperCase();
 			txHashes.push(hash);
 			try {
-				// broadcastTx (非同期) を呼び出し、完了を待たない
-				client.broadcastTx(txBytes).catch(broadcastError => {
-					log.warn(`[MultiBurstTx ${chainName}] Tx (Hash: ${hash}) のブロードキャストで非同期エラー発生。`, broadcastError);
+				// ★ 修正: client.broadcastTxSync(txBytes) を呼び出す
+				client.broadcastTxSync(txBytes).catch(broadcastError => {
+					// broadcastTxSync が失敗した場合 (CheckTx でエラーなど)
+					log.warn(`[MultiBurstTx ${chainName}] Tx (Hash: ${hash}) の broadcastTxSync で非同期エラー発生。`, broadcastError);
 				});
 				log.debug(`[MultiBurstTx ${chainName}] Txブロードキャスト送信: ${hash.substring(0, 10)}...`);
 			} catch (error: any) {

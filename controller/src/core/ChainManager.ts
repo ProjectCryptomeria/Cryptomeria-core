@@ -42,6 +42,9 @@ export class ChainManager {
 	private accounts = new Map<string, ChainAccount>();
 	private initialized = false;
 
+	// ★★★ 1. (追加) rpcEndpoints をキャッシュするプロパティ ★★★
+	private rpcEndpoints: { [key: string]: string } = {};
+
 	constructor() { }
 
 	/**
@@ -64,11 +67,13 @@ export class ChainManager {
 			this.chainInfos = await this.infraService.getChainInfo();
 			log.info(`検出されたチェーン (${this.chainInfos.length}件): ${this.chainInfos.map(c => c.name).join(', ')}`);
 
-			const rpcEndpoints = await this.infraService.getRpcEndpoints();
+			// ★★★ 2. (修正) const -> this.rpcEndpoints に変更 ★★★
+			this.rpcEndpoints = await this.infraService.getRpcEndpoints();
 
 			for (const chainInfo of this.chainInfos) {
 				const { name } = chainInfo;
-				const rpcEndpoint = rpcEndpoints[name];
+				// ★★★ 2. (修正) const rpcEndpoints -> this.rpcEndpoints に変更 ★★★
+				const rpcEndpoint = this.rpcEndpoints[name];
 				if (!rpcEndpoint) {
 					throw new Error(`チェーン "${name}" のRPCエンドポイントが見つかりません。`);
 				}
@@ -176,7 +181,21 @@ export class ChainManager {
 	}
 
 	// --- ゲッターメソッド ---
-	// (変更なし)
+
+	// ★★★ 3. (追加) RPCエンドポイント取得メソッド ★★★
+	/**
+	 * キャッシュされたRPCエンドポイントを同期的に取得します。
+	 */
+	public getRpcEndpoint(chainName: string): string {
+		this.assertInitialized();
+		const endpoint = this.rpcEndpoints[chainName];
+		if (!endpoint) {
+			throw new Error(`[ChainManager] チェーン "${chainName}" のRPCエンドポイントがキャッシュされていません。`);
+		}
+		return endpoint;
+	}
+
+	// (以降のゲッターメソッドは変更なし)
 	public getChainAccount(chainName: string): ChainAccount {
 		this.assertInitialized();
 		const account = this.accounts.get(chainName);
@@ -283,6 +302,8 @@ export class ChainManager {
 
 		this.initialized = false;
 		this.accounts.clear();
+		// ★★★ (追加) rpcEndpoints キャッシュをクリア ★★★
+		this.rpcEndpoints = {};
 		// --- ★ ログレベル変更 (info -> success) ---
 		log.success('すべての接続が切断されました。');
 	}

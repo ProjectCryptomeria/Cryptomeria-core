@@ -45,11 +45,14 @@ export interface ICommunicationStrategy {
 
 	/**
 	 * Tendermint イベントストリームを購読します (WebSocket戦略のみサポート)。
+	 * ★ 修正: endpoint を引数に追加
 	 */
-	subscribe(query: string): Stream<any>;
+	subscribe(endpoint: string, query: string): Stream<any>;
 
 	/**
 	 * イベント購読を解除します (WebSocket戦略のみサポート)。
+	 * ★ 修正: endpoint を引数に追加
 	 */
-	unsubscribe(query: string): void;
+	unsubscribe(endpoint: string, query: string): void;
+	
 }

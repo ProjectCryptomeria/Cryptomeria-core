@@ -82,25 +82,32 @@ export class CompositeUploadStrategy implements IUploadStrategy {
 
 				// 4b-3. Transmitter で Job を並列実行
 				const processingPromises = uploadJobs.map(job => {
-					const bar = bars.get(job.chainName);
-					if (!bar) {
-						// (AvailableAllocator がバーを管理している場合)
-						// (このロジックは AvailableAllocator の cleanupBars と競合する可能性があるため要改善)
-						log.warn(`[CompositeUpload] Job (${job.chainName}) に対応するプログレスバーが見つかりません。`);
-						// throw new Error(`バーが見つかりません: ${job.chainName}`);
+
+					// ★★★ 修正箇所 (ここから) ★★★
+					// Allocator の種類に応じて、正しいバーの取得元を参照する
+					let targetBar: IProgressBar | undefined;
+					if (this.allocator instanceof AvailableAllocator) {
+						// AvailableAllocator は public chainBars プロパティでバーを管理
+						targetBar = this.allocator.chainBars.get(job.chainName);
+					} else {
+						// 他の Allocator (StaticMulti など) は prepareProgressBars で生成
+						targetBar = bars.get(job.chainName);
 					}
 
-					// ※ AvailableAllocator がバーを管理する場合、bars.get(job.chainName) は undefined
-					// AvailableAllocator 側でバーのマップを保持・公開する必要がある
-					// → AvailableAllocator が内部でバーを保持し、cleanupBars を公開する
-					const targetBar = bar ?? (this.allocator as AvailableAllocator).chainBars.get(job.chainName)!;
+					if (!targetBar) {
+						// 致命的なエラー
+						log.error(`[CompositeUpload] Job (${job.chainName}) に対応するプログレスバーの取得に失敗しました。`);
+						// エラーをスローして Promise.all を失敗させる
+						throw new Error(`[CompositeUpload] プログレスバーの取得に失敗しました: ${job.chainName}`);
+					}
+					// ★★★ 修正箇所 (ここまで) ★★★
 
 					return this.transmitter.transmitBatch(
 						context,
 						job.batch,
 						job.chainName,
 						estimatedGasLimit,
-						targetBar
+						targetBar // ★ 修正: 確実に IProgressBar を渡す
 					);
 				});
 
@@ -130,7 +137,6 @@ export class CompositeUploadStrategy implements IUploadStrategy {
 		if (processingFailed) {
 			log.error(`[CompositeUpload] チャンクのアップロードに失敗しました。マニフェスト登録をスキップします。`);
 		} else {
-			console.log();
 			log.success(`[CompositeUpload] 全チャンクのアップロード完了`);
 			log.info(`[CompositeUpload] マニフェストを登録中...`);
 			try {
@@ -142,7 +148,6 @@ export class CompositeUploadStrategy implements IUploadStrategy {
 				});
 
 				await this.coreLogic.registerManifest(context, urlParts, sortedLocations);
-				console.log();
 				log.success(`[CompositeUpload] マニフェスト登録成功 (BaseURL: ${urlParts.baseUrlRaw})`);
 			} catch (error) {
 				log.error(`[CompositeUpload] マニフェストの登録に失敗しました。`, error);
