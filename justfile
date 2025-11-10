@@ -9,7 +9,7 @@ NAMESPACE         := "raidchain"
 IMAGE_DATACHAIN   := "raidchain/datachain:latest"
 IMAGE_METACHAIN   := "raidchain/metachain:latest"
 IMAGE_RELAYER     := "raidchain/relayer:latest"
-DEFAULT_CHAINS    := "4"
+DEFAULT_CHAINS    := "2"
 
 # justコマンドのデフォルトの挙動を設定。コマンド一覧を表示する。
 default:
