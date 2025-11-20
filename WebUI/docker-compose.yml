@@ -1,0 +1,83 @@
+services:
+  # -----------------------------------------------------------------------------
+  # Backend (Hono / Node.js)
+  # 役割: K8s操作、Dockerビルド、実験ロジック実行、DB管理
+  # -----------------------------------------------------------------------------
+  backend:
+    container_name: raidchain-webui-backend
+    # 既存の develop.Dockerfile には kubectl, helm, docker, node が揃っているため流用可能
+    # (または webui/backend/Dockerfile を新規作成してそれを指定)
+    build:
+      context: backend
+      dockerfile: Dockerfile
+      args:
+        - UID=${UID:-1000}
+        - GID=${GID:-1000}
+        # ホストのdockerグループIDを渡して権限エラーを防ぐ
+        - DOCKER_GID=${DOCKER_GID:-999}
+    
+    # Honoサーバーの作業ディレクトリ
+    working_dir: /workspace/webui/backend
+    
+    volumes:
+      # [重要1] ソースコード同期: 開発中のHonoコードだけでなく、
+      # プロジェクトルート(HelmチャートやチェーンのDockerfile)へのアクセスも必要
+      - ./:/workspace
+      
+      # [重要2] Docker操作: コンテナ内からホストのDockerデーモンを叩くため（イメージビルド用）
+      - /var/run/docker.sock:/var/run/docker.sock
+      
+      # [重要3] K8s操作: ホストのkubectl設定を共有し、クラスタを操作可能にする（デプロイ用）
+      - ${HOME}/.kube/config:/home/ubuntu/.kube/config:ro
+      
+      # [重要4] データ永続化: SQLiteのデータを保持
+      - backend-data:/workspace/webui/backend/prisma
+
+    ports:
+      - "3000:3000" # API Server Port
+    
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - DATABASE_URL=file:./dev.db
+      # フロントエンドからのCORS許可設定など
+      - ALLOWED_ORIGIN=http://localhost:5173
+
+    # サーバー起動コマンド (package.jsonのscriptsに合わせて調整)
+    command: ["yarn", "dev"]
+    
+    tty: true
+    stdin_open: true
+
+  # -----------------------------------------------------------------------------
+  # Frontend (Vite + React)
+  # 役割: ユーザーインターフェース
+  # -----------------------------------------------------------------------------
+  frontend:
+    container_name: raidchain-webui-frontend
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    
+    volumes:
+      # ホットリロードのためにソースコードをマウント
+      - ./webui/frontend:/app
+      # node_modulesはコンテナ内のものを使用（ホストと混ざらないように除外）
+      - /app/node_modules
+
+    ports:
+      - "5173:5173" # Vite Dev Server Port
+    
+    environment:
+      # バックエンドAPIのURL
+      - VITE_API_BASE_URL=http://localhost:3000/api/v1
+      - VITE_WS_URL=ws://localhost:3000/ws
+
+    depends_on:
+      - backend
+    
+    # ホスト(0.0.0.0)でリッスンしないとブラウザからアクセスできないため --host を付与
+    command: ["yarn", "dev", "--host"]
+
+volumes:
+  backend-data:
