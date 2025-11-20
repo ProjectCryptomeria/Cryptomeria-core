@@ -1,0 +1,61 @@
+// .devcontainer/devcontainer.json
+{
+  "name": "Raidchain Dev Container",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "remoteUser": "ubuntu",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "workspaceFolder": "/workspace",
+
+  // ✨ Features でツールを一括インストール
+  "features": {
+    // 1. Docker (HostのDockerを使う設定)
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+      "version": "latest",
+      "enableNonRootDocker": "true",
+      "moby": "true"
+    },
+    // 2. 基本ユーティリティ (zsh, git, sudoなど)
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": "true",
+      "username": "ubuntu"
+    },
+    // 3. Go (バージョン指定可能)
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.25"
+    },
+    // 4. Node.js (LTS)
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    },
+    // 5. Helm & Kubectl (セットで入ります)
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+      "version": "latest",
+      "helm": "latest",
+      "minikube": "none" // minikubeは不要ならnone
+    },
+  },
+
+  "postCreateCommand": "yarn install",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "golang.go",
+        "ms-azuretools.vscode-docker",
+        "ms-kubernetes-tools.vscode-kubernetes-tools",
+        "skellock.just",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "go.toolsManagement.checkForUpdates": "local",
+        "go.useLanguageServer": true,
+        "go.gopath": "/go"
+      }
+    }
+  }
+}
