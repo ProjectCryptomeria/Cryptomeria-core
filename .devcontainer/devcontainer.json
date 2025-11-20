@@ -34,11 +34,8 @@
       "version": "latest",
       "helm": "latest",
       "minikube": "none" // minikubeは不要ならnone
-    },
+    }
   },
-
-  "postCreateCommand": "yarn install",
-
   "customizations": {
     "vscode": {
       "extensions": [
