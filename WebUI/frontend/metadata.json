@@ -1,0 +1,5 @@
+{
+  "name": "RaidChain-WebUI",
+  "description": "Integrated management GUI for RaidChain distributed storage system. Handles monitoring, deployment, economy management, and experiment execution.",
+  "requestFramePermissions": []
+}
