@@ -819,6 +819,24 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@types/react-is@npm:^19":
+  version: 19.2.0
+  resolution: "@types/react-is@npm:19.2.0"
+  dependencies:
+    "@types/react": "npm:*"
+  checksum: 10c0/ff49ac8b8d439c3377e11d2f9f491ed4f8c8ee800225a40093c7941715ca8ccbde1b3833c5435354a8e39305fd0a163019d97f033c9402bc4b46f515851d2290
+  languageName: node
+  linkType: hard
+
+"@types/react@npm:*":
+  version: 19.2.6
+  resolution: "@types/react@npm:19.2.6"
+  dependencies:
+    csstype: "npm:^3.2.2"
+  checksum: 10c0/23b1100f88662ce9f9e4fcca3a2b4ef9fff1ecde24ede2b2dcbd07731e48d6946fd7fd156cd133f5b25321694b0569cd9b8dd30b22c4e076d1cf4c8cdd9a75cb
+  languageName: node
+  linkType: hard
+
 "@types/use-sync-external-store@npm:^0.0.6":
   version: 0.0.6
   resolution: "@types/use-sync-external-store@npm:0.0.6"
@@ -981,6 +999,13 @@ __metadata:
     shebang-command: "npm:^2.0.0"
     which: "npm:^2.0.1"
   checksum: 10c0/053ea8b2135caff68a9e81470e845613e374e7309a47731e81639de3eaeb90c3d01af0e0b44d2ab9d50b43467223b88567dfeb3262db942dc063b9976718ffc1
+  languageName: node
+  linkType: hard
+
+"csstype@npm:^3.2.2":
+  version: 3.2.3
+  resolution: "csstype@npm:3.2.3"
+  checksum: 10c0/cd29c51e70fa822f1cecd8641a1445bed7063697469d35633b516e60fe8c1bde04b08f6c5b6022136bb669b64c63d4173af54864510fbb4ee23281801841a3ce
   languageName: node
   linkType: hard
 
@@ -1736,10 +1761,12 @@ __metadata:
   resolution: "raidchain-webui@workspace:."
   dependencies:
     "@types/node": "npm:^22.14.0"
+    "@types/react-is": "npm:^19"
     "@vitejs/plugin-react": "npm:^5.0.0"
     lucide-react: "npm:^0.554.0"
     react: "npm:^19.2.0"
     react-dom: "npm:^19.2.0"
+    react-is: "npm:^19.2.0"
     recharts: "npm:^3.4.1"
     typescript: "npm:~5.8.2"
     vite: "npm:^6.2.0"
@@ -1754,6 +1781,13 @@ __metadata:
   peerDependencies:
     react: ^19.2.0
   checksum: 10c0/fa2cae05248d01288e91523b590ce4e7635b1e13f1344e225f850d722a8da037bf0782f63b1c1d46353334e0c696909b82e582f8cad607948fde6f7646cc18d9
+  languageName: node
+  linkType: hard
+
+"react-is@npm:^19.2.0":
+  version: 19.2.0
+  resolution: "react-is@npm:19.2.0"
+  checksum: 10c0/a63cb346aeced8ac0e671b0f9b33720d2906de02a066ca067075d871a5d4c64cdb328f495baf9b5842d5868c0d5edd1ce18465a7358b52f4b6aa983479c9bfa2
   languageName: node
   linkType: hard
 
