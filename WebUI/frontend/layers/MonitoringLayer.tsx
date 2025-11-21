@@ -1,154 +1,215 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import TopologyGraph from '../components/TopologyGraph';
 import { generateMockNodes } from '../services/mockData';
 import { NodeStatus } from '../types';
-import { Activity, Box, Network } from 'lucide-react';
+import { Activity, Box, Network, Zap, ChevronUp, ChevronLeft, ArrowLeft, X, Monitor } from 'lucide-react';
+import { Badge, StatusBadge, PageHeader, TableStyles } from '../components/Shared';
 
 interface MonitoringLayerProps {
     deployedNodeCount: number;
 }
 
+/**
+ * Monitoring Layer
+ * 
+ * ブロックチェーンネットワークの健全性、トポロジー、トランザクション負荷をリアルタイムで監視する画面。
+ * レイアウト: メインエリア（トポロジー）、ボトムパネル（Mempoolグラフ）、サイドパネル（ノードリスト）
+ */
 const MonitoringLayer: React.FC<MonitoringLayerProps> = ({ deployedNodeCount }) => {
   const [nodes, setNodes] = useState<NodeStatus[]>([]);
   const [mempoolData, setMempoolData] = useState<any[]>([]);
 
-  // Initialize and Simulation Loop
-  useEffect(() => {
-    setNodes(generateMockNodes(deployedNodeCount)); // Start with deployed count
+  // UI State
+  const [isSidePanelOpen, setIsSidePanelOpen] = useState(false);
+  const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false);
+  const [bottomPanelHeight, setBottomPanelHeight] = useState(320);
+  
+  const panelRef = useRef<HTMLDivElement>(null);
+  const resizerRef = useRef<HTMLDivElement>(null);
 
+  // モックデータの定期更新エフェクト
+  useEffect(() => {
+    setNodes(generateMockNodes(deployedNodeCount));
     const interval = setInterval(() => {
-      // Update mempool data randomly
       setMempoolData(prev => {
-        // If empty or size mismatch, recreate
         if (prev.length !== deployedNodeCount) {
-            return Array.from({ length: deployedNodeCount }, (_, i) => ({
-                name: `data-${i}`,
-                txs: Math.floor(Math.random() * 200),
-            }));
+            return Array.from({ length: deployedNodeCount }, (_, i) => ({ name: `data-${i}`, txs: Math.floor(Math.random() * 200) }));
         }
-        // Update values
-        return prev.map(item => ({
-            ...item,
-            txs: Math.max(0, item.txs + (Math.random() > 0.5 ? 10 : -20) + Math.floor(Math.random() * 10))
-        }));
+        return prev.map(item => ({ ...item, txs: Math.max(0, item.txs + (Math.random() > 0.5 ? 10 : -20) + Math.floor(Math.random() * 10)) }));
       });
 
-      // Slightly update block height for nodes
       setNodes(currentNodes => {
-          if (currentNodes.length !== 2 + deployedNodeCount) {
-              return generateMockNodes(deployedNodeCount);
-          }
+          if (currentNodes.length !== 2 + deployedNodeCount) return generateMockNodes(deployedNodeCount);
           return currentNodes.map(n => ({
               ...n,
               height: n.height + (Math.random() > 0.8 ? 1 : 0),
               txCount: Math.floor(Math.random() * 50)
           }));
       });
-
     }, 1000);
-
     return () => clearInterval(interval);
   }, [deployedNodeCount]);
 
-  return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+  // Bottom Panel Resizing Logic
+  useEffect(() => {
+      const resizer = resizerRef.current;
+      if (!resizer) return;
       
-      {/* Top Row: Topology (Full Width) */}
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200">
-          <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                  <Network className="w-4 h-4 text-blue-500" />
-                  ネットワークトポロジー
-              </h3>
-              <div className="text-sm text-slate-500">
-                  稼働ノード数: <span className="font-mono font-bold text-emerald-600">{nodes.filter(n => n.status === 'active').length}</span>
-              </div>
-          </div>
-          <TopologyGraph nodes={nodes} />
-      </div>
+      const handleMouseDown = (e: MouseEvent) => { 
+          e.preventDefault(); 
+          document.addEventListener('mousemove', handleMouseMove); 
+          document.addEventListener('mouseup', handleMouseUp); 
+          document.body.style.cursor = 'row-resize'; 
+      };
+      
+      const handleMouseMove = (e: MouseEvent) => {
+          const newHeight = window.innerHeight - e.clientY;
+          if (newHeight > 80 && newHeight < window.innerHeight * 0.8) {
+              setBottomPanelHeight(newHeight);
+              if (!isBottomPanelOpen && newHeight > 100) setIsBottomPanelOpen(true);
+          }
+      };
+      
+      const handleMouseUp = () => {
+          document.removeEventListener('mousemove', handleMouseMove); 
+          document.removeEventListener('mouseup', handleMouseUp); 
+          document.body.style.cursor = '';
+          if (panelRef.current && panelRef.current.clientHeight < 120) setIsBottomPanelOpen(false);
+      };
+      
+      resizer.addEventListener('mousedown', handleMouseDown);
+      return () => { resizer.removeEventListener('mousedown', handleMouseDown); };
+  }, [isBottomPanelOpen]);
 
-      {/* Middle Row: Mempool Monitor (Full Width) */}
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200">
-          <div className="flex items-center gap-2 mb-2">
-              <Activity className="w-5 h-5 text-orange-500" />
-              <h3 className="text-lg font-bold text-slate-800">Mempool リアルタイムグラフ</h3>
-          </div>
-          <p className="text-xs text-slate-500 mb-6">各DataChainにおける未処理トランザクションの滞留状況</p>
-          
-          <div className="w-full h-[250px]">
-              <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={mempoolData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                      <XAxis dataKey="name" tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} />
-                      <YAxis tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} label={{ value: 'Pending Txs', angle: -90, position: 'insideLeft', fontSize: 10, fill: '#94a3b8' }}/>
-                      <Tooltip 
-                          cursor={{fill: '#f8fafc'}}
-                          contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}}
-                      />
-                      <Bar dataKey="txs" radius={[4, 4, 0, 0]} barSize={60}>
-                          {mempoolData.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={entry.txs > 150 ? '#ef4444' : '#3b82f6'} />
-                          ))}
-                      </Bar>
-                  </BarChart>
-              </ResponsiveContainer>
-          </div>
-      </div>
+  return (
+    <div className="flex h-full w-full overflow-hidden relative text-gray-800">
+        
+        {/* Main Content Area (Topology) */}
+        <div className="flex-1 flex flex-col h-full min-w-0 relative z-10">
+            <div className="p-6 flex-shrink-0">
+                <PageHeader 
+                    title="Network Monitoring" 
+                    description="リアルタイムのネットワークトポロジーとノードの状態監視" 
+                    icon={Activity}
+                    iconColor="text-blue-500"
+                    action={
+                        <div className="flex items-center gap-2">
+                             <Badge color="green" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 flex items-center gap-2">
+                                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"/>
+                                Active Nodes: {nodes.filter(n => n.status === 'active').length}
+                            </Badge>
+                        </div>
+                    }
+                />
+            </div>
 
-      {/* Bottom: Node List */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
-            <h3 className="font-bold text-slate-800">ブロック生成モニター</h3>
+            {/* Topology Graph (Scrollable) */}
+            <div className="flex-1 overflow-auto p-6 pt-0 pb-32 custom-scrollbar">
+                <TopologyGraph nodes={nodes} />
+            </div>
+
+            {/* Side Panel Toggle Button */}
+            <button 
+                onClick={() => setIsSidePanelOpen(true)} 
+                className={`absolute top-6 right-0 bg-white border border-gray-200 shadow-lg rounded-l-xl p-3 text-slate-500 hover:bg-slate-50 transition-all z-20 ${isSidePanelOpen ? 'translate-x-full opacity-0 pointer-events-none' : 'translate-x-0'}`}
+            >
+                <ChevronLeft className="w-5 h-5" />
+            </button>
+
+            {/* Bottom Panel (Mempool Chart) */}
+            <div 
+                ref={panelRef}
+                className={`absolute bottom-0 left-0 right-0 bg-white shadow-[0_-10px_40px_rgba(0,0,0,0.1)] z-30 rounded-t-[2rem] border-t border-gray-100 flex flex-col bottom-panel-transition ${isBottomPanelOpen ? '' : 'h-20'}`} 
+                style={{ height: isBottomPanelOpen ? bottomPanelHeight : undefined }}
+            >
+                {/* Resizer Handle */}
+                <div ref={resizerRef} className="absolute top-0 left-0 right-0 h-4 w-full cursor-row-resize z-50 group flex justify-center items-center">
+                    <div className="w-16 h-1.5 bg-gray-200 rounded-full group-hover:bg-blue-50 transition-colors"></div>
+                </div>
+
+                {/* Header */}
+                <div className="px-8 py-4 border-b border-gray-100 flex justify-between items-center bg-white rounded-t-[2rem] cursor-pointer hover:bg-gray-50 transition-colors relative z-40 mt-1" onClick={() => setIsBottomPanelOpen(!isBottomPanelOpen)}>
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-orange-50 text-orange-600 rounded-lg"><Zap className="w-4 h-4" /></div>
+                        <div>
+                            <h3 className="font-bold text-slate-800 flex items-center gap-2">Mempool Status</h3>
+                            <p className="text-[10px] text-slate-500">各DataChainにおける未処理TXの滞留数</p>
+                        </div>
+                    </div>
+                    <div className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 group-hover:bg-white group-hover:shadow-sm transition-all">
+                         <ChevronUp className={`w-4 h-4 transition-transform ${isBottomPanelOpen ? 'rotate-180' : ''}`} />
+                    </div>
+                </div>
+
+                {/* Chart Content */}
+                <div className="flex-1 p-6 bg-slate-50/50 overflow-hidden flex flex-col">
+                     <div className="flex-1 w-full min-h-0">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={mempoolData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                                <XAxis dataKey="name" tick={{fontSize: 11, fill: '#64748b'}} axisLine={false} tickLine={false} />
+                                <YAxis tick={{fontSize: 11, fill: '#64748b'}} axisLine={false} tickLine={false} />
+                                <Tooltip 
+                                    cursor={{fill: '#f1f5f9'}} 
+                                    contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '12px'}}
+                                />
+                                <Bar dataKey="txs" radius={[6, 6, 0, 0]} maxBarSize={60}>
+                                    {mempoolData.map((entry, index) => (
+                                      <Cell key={`cell-${index}`} fill={entry.txs > 150 ? '#ef4444' : '#3b82f6'} />
+                                    ))}
+                                </Bar>
+                            </BarChart>
+                        </ResponsiveContainer>
+                     </div>
+                </div>
+            </div>
         </div>
-        <table className="w-full text-sm text-left">
-            <thead className="bg-slate-50 text-slate-500 font-medium">
-                <tr>
-                    <th className="px-6 py-3">Chain ID</th>
-                    <th className="px-6 py-3">Role</th>
-                    <th className="px-6 py-3">Status</th>
-                    <th className="px-6 py-3 text-right">Block Height</th>
-                    <th className="px-6 py-3 text-right">Tx Count (Latest)</th>
-                    <th className="px-6 py-3 text-right">Latency (ms)</th>
-                </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-                {nodes.map((node) => (
-                    <tr key={node.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-6 py-3 font-mono font-medium text-slate-700">{node.id}</td>
-                        <td className="px-6 py-3">
-                            <span className={`px-2 py-1 rounded text-xs font-bold ${
-                                node.type === 'control' ? 'bg-blue-100 text-blue-700' :
-                                node.type === 'meta' ? 'bg-purple-100 text-purple-700' :
-                                'bg-emerald-100 text-emerald-700'
-                            }`}>
-                                {node.type.toUpperCase()}
-                            </span>
-                        </td>
-                        <td className="px-6 py-3">
+
+        {/* Side Panel (Node Registry) */}
+        <div className={`flex-shrink-0 border-l border-gray-200 bg-white relative z-20 transition-all duration-300 overflow-hidden flex flex-col ${isSidePanelOpen ? 'w-96' : 'w-0'}`}>
+             {/* Side Panel Header */}
+             <div className="p-5 border-b border-gray-100 flex justify-between items-center shrink-0">
+                <h2 className="font-bold text-slate-700 flex items-center text-lg">
+                    <Monitor className="w-5 h-5 mr-2 text-slate-500" />
+                    Node Registry
+                </h2>
+                <button onClick={() => setIsSidePanelOpen(false)} className="text-gray-400 hover:text-gray-600 p-2 rounded-lg hover:bg-gray-50 transition-colors">
+                    <X className="w-5 h-5" />
+                </button>
+            </div>
+
+            {/* Node List */}
+            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-slate-50 space-y-3">
+                 {nodes.map((node) => (
+                    <div key={node.id} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all">
+                        <div className="flex justify-between items-start mb-2">
                             <div className="flex items-center gap-2">
-                                <span className={`w-2 h-2 rounded-full ${node.status === 'active' ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
-                                <span className={node.status === 'active' ? 'text-emerald-700' : 'text-red-700'}>
-                                    {node.status === 'active' ? '稼働中' : '停止中'}
-                                </span>
+                                <div className={`w-2 h-2 rounded-full ${node.status === 'active' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                                <span className="font-mono font-bold text-sm text-slate-800">{node.id}</span>
                             </div>
-                        </td>
-                        <td className="px-6 py-3 text-right font-mono flex justify-end items-center gap-2">
-                            <Box className="w-3 h-3 text-slate-400" />
-                            {node.height.toLocaleString()}
-                        </td>
-                        <td className="px-6 py-3 text-right font-mono text-slate-600">
-                             {node.txCount}
-                        </td>
-                        <td className="px-6 py-3 text-right font-mono text-slate-500">
-                            {node.latency}ms
-                        </td>
-                    </tr>
-                ))}
-            </tbody>
-        </table>
-      </div>
+                            <Badge color={node.type === 'control' ? 'blue' : node.type === 'meta' ? 'indigo' : 'slate'}>
+                                {node.type}
+                            </Badge>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-2 mt-3">
+                            <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                <div className="text-[10px] text-slate-400 font-bold uppercase">Height</div>
+                                <div className="font-mono text-sm font-bold text-slate-700">{node.height.toLocaleString()}</div>
+                            </div>
+                            <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                <div className="text-[10px] text-slate-400 font-bold uppercase">Latency</div>
+                                <div className={`font-mono text-sm font-bold ${node.latency > 50 ? 'text-orange-500' : 'text-emerald-500'}`}>
+                                    {node.latency} ms
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                 ))}
+            </div>
+        </div>
     </div>
   );
 };

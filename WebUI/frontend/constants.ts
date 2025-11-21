@@ -1,6 +1,11 @@
+
 import { AppLayer } from './types';
 import { Activity, Server, Coins, TestTube, Library, ScrollText } from 'lucide-react';
 
+/**
+ * ナビゲーションメニューの設定
+ * サイドバーに表示される項目、アイコン、ラベルを定義します。
+ */
 export const NAV_ITEMS = [
   {
     id: AppLayer.MONITORING,
@@ -21,9 +26,9 @@ export const NAV_ITEMS = [
     icon: Coins,
   },
   {
-    id: AppLayer.SCENARIO,
-    label: 'Scenarios',
-    subLabel: 'シナリオ管理',
+    id: AppLayer.PRESET,
+    label: 'Presets',
+    subLabel: 'プリセット管理',
     icon: ScrollText,
   },
   {
@@ -40,6 +45,9 @@ export const NAV_ITEMS = [
   },
 ];
 
+/**
+ * デプロイメント画面のコンソール初期ログ
+ */
 export const MOCK_INITIAL_LOGS = [
   "[System] RaidChain WebUI Controller initialized.",
   "[System] Connected to Kubernetes Cluster (minikube).",
