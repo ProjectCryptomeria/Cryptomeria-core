@@ -228,9 +228,17 @@ export const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
  * 自動スクロール機能を持ちます。
  */
 export const LogViewer: React.FC<{ logs: string[]; className?: string; title?: string }> = ({ logs, className = '', title }) => {
-  const endRef = useRef<HTMLDivElement>(null);
-  // ログが更新されるたびに最下部へスクロール
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  
+  // ログが更新されるたびに最下部へスクロール (scrollToを使用)
+  useEffect(() => { 
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: "smooth"
+      });
+    }
+  }, [logs]);
 
   return (
     <div className={`flex flex-col bg-slate-900 rounded-3xl overflow-hidden shadow-2xl border border-slate-700 font-mono ${className}`}>
@@ -250,7 +258,7 @@ export const LogViewer: React.FC<{ logs: string[]; className?: string; title?: s
       </div>
       
       {/* Log Content */}
-      <div className="flex-1 p-6 text-xs md:text-sm overflow-y-auto custom-scrollbar text-slate-300 leading-relaxed space-y-1.5">
+      <div ref={scrollRef} className="flex-1 p-6 text-xs md:text-sm overflow-y-auto custom-scrollbar text-slate-300 leading-relaxed space-y-1.5">
         {logs.length === 0 && <div className="text-slate-600 italic flex items-center gap-2"><Info className="w-4 h-4"/> Waiting for logs...</div>}
         {logs.map((log, i) => (
           <div key={i} className="break-all animate-in fade-in slide-in-from-left-2 duration-200 flex">
@@ -258,7 +266,6 @@ export const LogViewer: React.FC<{ logs: string[]; className?: string; title?: s
             <span>{log}</span>
           </div>
         ))}
-        <div ref={endRef} />
       </div>
     </div>
   );

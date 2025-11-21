@@ -1,7 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { AppLayer, UserAccount, SystemAccount, ExperimentResult, ActiveExperimentState, ExperimentConfig, ExperimentPreset, Toast, NotificationItem } from './types';
+
+import React, { useState } from 'react';
+import { AppLayer, ExperimentResult, ExperimentConfig, ExperimentPreset } from './types';
 import { NAV_ITEMS } from './constants';
-import { generateMockUsers, generateMockResults, generateMockPresets, generateSystemAccounts } from './services/mockData';
+import { generateMockPresets } from './services/mockData';
 import MonitoringLayer from './layers/MonitoringLayer';
 import DeploymentLayer from './layers/DeploymentLayer';
 import EconomyLayer from './layers/EconomyLayer';
@@ -9,123 +10,27 @@ import ExperimentLayer from './layers/ExperimentLayer';
 import LibraryLayer from './layers/LibraryLayer';
 import PresetLayer from './layers/PresetLayer';
 import { LayoutDashboard, Bell, CheckCircle, AlertTriangle, X, Info, ChevronRight } from 'lucide-react';
+import { useEconomyManagement, useNotification } from './hooks';
+import { api } from './services/api';
 
-/**
- * App Component
- * 
- * アプリケーションのエントリーポイント。
- * レイアウトの骨組み（Sidebar, Header, Main Content）を定義し、
- * 状態管理（ユーザー、システムアカウント、実験結果）を行います。
- * 
- * @design: 全体的にフラットでモダンな構成。サイドバーは視覚的に分離せず、
- * コンテンツの一部のように見せることで広がりを持たせています。
- */
 const App: React.FC = () => {
-  // --- State Management ---
   const [activeLayer, setActiveLayer] = useState<AppLayer>(AppLayer.MONITORING);
   
-  // Infrastructure State
+  // NOTE: deployedNodeCount is now synced from MonitoringLayer via WS
   const [deployedNodeCount, setDeployedNodeCount] = useState<number>(5);
   const [isDockerBuilt, setIsDockerBuilt] = useState<boolean>(false);
 
-  // Economy State
-  const [users, setUsers] = useState<UserAccount[]>(generateMockUsers());
-  const [systemAccounts, setSystemAccounts] = useState<SystemAccount[]>(generateSystemAccounts(5));
+  const { toasts, notifications, isNotificationOpen, setIsNotificationOpen, notificationRef, addToast, clearNotifications } = useNotification();
+  const { users, systemAccounts, handleCreateUser, handleDeleteUser, handleFaucet } = useEconomyManagement(deployedNodeCount, addToast);
 
-  // Library State
-  const [results, setResults] = useState<ExperimentResult[]>(generateMockResults());
+  // Library & Presets
+  // For a full implementation, these should also be fetched from the backend
+  const [results, setResults] = useState<ExperimentResult[]>([]);
+  React.useEffect(() => {
+      api.library.getResults().then(setResults);
+  }, [activeLayer]); // Refresh when switching tabs
 
-  // Preset State
   const [presets, setPresets] = useState<ExperimentPreset[]>(generateMockPresets());
-
-  // Notification State
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
-  const notificationRef = useRef<HTMLDivElement>(null);
-
-  // --- Effects ---
-  
-  // ノード数変更時のRelayer同期
-  useEffect(() => {
-      setSystemAccounts(prev => {
-          const millionaire = prev.find(a => a.type === 'faucet_source');
-          const newAccounts = generateSystemAccounts(deployedNodeCount);
-          if (millionaire) {
-              newAccounts[0].balance = millionaire.balance;
-          }
-          return newAccounts;
-      });
-  }, [deployedNodeCount]);
-
-  // クリックアウトサイド検知（通知メニュー用）
-  useEffect(() => {
-      const handleClickOutside = (event: MouseEvent) => {
-          if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
-              setIsNotificationOpen(false);
-          }
-      };
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  // --- Action Handlers ---
-
-  const addToast = (type: 'success' | 'error', title: string, message: string) => {
-    const id = Math.random().toString(36).substr(2, 9);
-    const newNotification: NotificationItem = {
-        id, type, title, message, timestamp: Date.now(), read: false 
-    };
-
-    setNotifications(prev => [newNotification, ...prev]);
-    setToasts(prev => {
-        const updated = [...prev, { id, type, title, message }];
-        if (updated.length > 3) return updated.slice(updated.length - 3);
-        return updated;
-    });
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 5000);
-  };
-
-  const clearNotifications = () => setNotifications([]);
-
-  const handleCreateUser = () => {
-    const newUser: UserAccount = {
-      id: `u${Date.now()}`,
-      address: `raid1${Math.random().toString(36).substring(7)}${Math.random().toString(36).substring(7)}`,
-      balance: 0,
-      role: 'client'
-    };
-    setUsers([...users, newUser]);
-  };
-
-  const handleFaucet = (targetId: string) => {
-    const amount = 1000;
-    const millionaire = systemAccounts.find(a => a.type === 'faucet_source');
-    if (!millionaire || millionaire.balance < amount) {
-        addToast('error', 'Faucet Error', 'System pool is empty.');
-        return;
-    }
-
-    const userTarget = users.find(u => u.id === targetId);
-    if (userTarget) {
-        setUsers(users.map(u => u.id === targetId ? { ...u, balance: u.balance + amount } : u));
-        setSystemAccounts(prev => prev.map(a => a.id === millionaire.id ? { ...a, balance: a.balance - amount } : a));
-        addToast('success', 'Success', `Sent 1,000 TKN to ${userTarget.address.substring(0,8)}...`);
-        return;
-    }
-
-    const sysTarget = systemAccounts.find(a => a.id === targetId);
-    if (sysTarget) {
-        setSystemAccounts(prev => prev.map(a => {
-            if (a.id === millionaire.id) return { ...a, balance: a.balance - amount };
-            if (a.id === targetId) return { ...a, balance: a.balance + amount };
-            return a;
-        }));
-        addToast('success', 'Success', `Refilled 1,000 TKN to ${sysTarget.name}.`);
-    }
-  };
-
-  const handleDeleteUser = (id: string) => setUsers(users.filter(u => u.id !== id));
 
   const handleSavePreset = (name: string, config: ExperimentConfig, generatorState?: any) => {
       const existingIndex = presets.findIndex(s => s.name === name);
@@ -143,13 +48,16 @@ const App: React.FC = () => {
   };
 
   const handleDeletePreset = (id: string) => { setPresets(prev => prev.filter(s => s.id !== id)); addToast('success', 'Deleted', 'Preset removed.'); };
-  const handleDeleteResult = (id: string) => { setResults(results.filter(r => r.id !== id)); addToast('success', 'Deleted', 'Result log removed.'); };
+  const handleDeleteResult = (id: string) => { 
+      api.library.deleteResult(id).then(() => {
+          setResults(results.filter(r => r.id !== id)); 
+          addToast('success', 'Deleted', 'Result log removed.'); 
+      });
+  };
   const handleRegisterResult = (result: ExperimentResult) => setResults(prev => [result, ...prev]);
 
   return (
     <div className="h-screen overflow-hidden flex flex-col bg-slate-50 text-slate-900 font-sans selection:bg-indigo-100 selection:text-indigo-900">
-      
-      {/* --- Header --- */}
       <header className="h-20 bg-white px-8 flex items-center justify-between z-40 shrink-0 border-b border-slate-100">
         <div className="flex items-center gap-4">
            <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-2.5 rounded-2xl shadow-lg shadow-blue-200">
@@ -161,7 +69,6 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-6">
-             {/* Status Indicator */}
              <div className="hidden md:flex items-center gap-3 px-4 py-2 bg-slate-50 rounded-full border border-slate-100">
                  <div className={`w-2.5 h-2.5 rounded-full shadow-sm ${deployedNodeCount > 0 ? 'bg-emerald-500 shadow-emerald-200 animate-pulse' : 'bg-red-500 shadow-red-200'}`}></div>
                  <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">
@@ -169,7 +76,6 @@ const App: React.FC = () => {
                  </span>
              </div>
 
-             {/* Notification Center */}
              <div className="relative" ref={notificationRef}>
                  <button 
                     className="relative p-3 text-slate-400 hover:text-slate-600 transition-all hover:bg-slate-100 rounded-2xl hover:shadow-sm active:scale-95"
@@ -181,7 +87,6 @@ const App: React.FC = () => {
                      )}
                  </button>
 
-                 {/* Dropdown */}
                  {isNotificationOpen && (
                      <div className="absolute right-0 mt-4 w-96 bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200 z-50">
                          <div className="px-6 py-4 border-b border-slate-50 flex justify-between items-center bg-slate-50/50">
@@ -216,10 +121,7 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* --- Main Container --- */}
       <div className="flex flex-1 overflow-hidden">
-        
-        {/* Sidebar */}
         <nav className="w-72 bg-white flex flex-col py-8 px-4 gap-2 shrink-0 overflow-y-auto border-r border-slate-100">
             <div className="px-4 mb-4 text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">Navigation</div>
             {NAV_ITEMS.map(item => {
@@ -272,40 +174,10 @@ const App: React.FC = () => {
             </div>
         </nav>
 
-        {/* Content Area */}
         <main className="flex-1 bg-slate-50/50 relative overflow-hidden">
-            
-            {/* Layer Render */}
-            <div className="h-full w-full p-8 overflow-y-auto custom-scrollbar">
-                <div className="max-w-[1600px] mx-auto h-full">
-                    {activeLayer === AppLayer.MONITORING && <MonitoringLayer deployedNodeCount={deployedNodeCount} />}
-                    
-                    {activeLayer === AppLayer.DEPLOYMENT && (
-                        <DeploymentLayer 
-                            setDeployedNodeCount={setDeployedNodeCount} 
-                            deployedNodeCount={deployedNodeCount}
-                            setIsDockerBuilt={setIsDockerBuilt}
-                            isDockerBuilt={isDockerBuilt}
-                        />
-                    )}
-                    
-                    {activeLayer === AppLayer.ECONOMY && (
-                        <EconomyLayer 
-                            users={users} 
-                            systemAccounts={systemAccounts} 
-                            onCreateUser={handleCreateUser} 
-                            onDeleteUser={handleDeleteUser}
-                            onFaucet={handleFaucet}
-                        />
-                    )}
-
-                    {activeLayer === AppLayer.PRESET && (
-                        <PresetLayer 
-                            presets={presets}
-                            onDeletePreset={handleDeletePreset}
-                        />
-                    )}
-                    
+            {(activeLayer === AppLayer.MONITORING || activeLayer === AppLayer.EXPERIMENT) && (
+                 <div className="absolute inset-0 overflow-hidden">
+                    {activeLayer === AppLayer.MONITORING && <MonitoringLayer setDeployedNodeCount={setDeployedNodeCount} />}
                     {activeLayer === AppLayer.EXPERIMENT && (
                         <ExperimentLayer 
                             users={users}
@@ -314,14 +186,46 @@ const App: React.FC = () => {
                             onRegisterResult={handleRegisterResult}
                             onSavePreset={handleSavePreset}
                             notify={addToast}
+                            onDeletePreset={handleDeletePreset}
                         />
                     )}
-                    
-                    {activeLayer === AppLayer.LIBRARY && <LibraryLayer results={results} onDeleteResult={handleDeleteResult} />}
-                </div>
-            </div>
+                 </div>
+            )}
 
-            {/* Global Toasts */}
+            {!(activeLayer === AppLayer.MONITORING || activeLayer === AppLayer.EXPERIMENT) && (
+                <div className="h-full w-full p-6 sm:p-8 overflow-y-auto custom-scrollbar bg-slate-50/50">
+                    <div className="max-w-[1600px] mx-auto min-h-full flex flex-col">
+                        {activeLayer === AppLayer.DEPLOYMENT && (
+                            <DeploymentLayer 
+                                setDeployedNodeCount={setDeployedNodeCount} 
+                                deployedNodeCount={deployedNodeCount}
+                                setIsDockerBuilt={setIsDockerBuilt}
+                                isDockerBuilt={isDockerBuilt}
+                            />
+                        )}
+                        
+                        {activeLayer === AppLayer.ECONOMY && (
+                            <EconomyLayer 
+                                users={users} 
+                                systemAccounts={systemAccounts} 
+                                onCreateUser={handleCreateUser} 
+                                onDeleteUser={handleDeleteUser}
+                                onFaucet={handleFaucet}
+                            />
+                        )}
+
+                        {activeLayer === AppLayer.PRESET && (
+                            <PresetLayer 
+                                presets={presets}
+                                onDeletePreset={handleDeletePreset}
+                            />
+                        )}
+                        
+                        {activeLayer === AppLayer.LIBRARY && <LibraryLayer results={results} onDeleteResult={handleDeleteResult} />}
+                    </div>
+                </div>
+            )}
+
             <div className="fixed bottom-8 left-8 z-[100] flex flex-col gap-4 pointer-events-none w-80">
                 {toasts.map(toast => (
                     <div key={toast.id} className="bg-white rounded-2xl shadow-2xl border border-slate-100 p-5 w-full animate-in slide-in-from-left-10 fade-in duration-500 pointer-events-auto flex items-start gap-4 ring-1 ring-black/5">
@@ -332,13 +236,12 @@ const App: React.FC = () => {
                             <h4 className="text-sm font-bold text-slate-800">{toast.title}</h4>
                             <p className="text-xs text-slate-500 mt-1 leading-relaxed font-medium">{toast.message}</p>
                         </div>
-                        <button onClick={() => setToasts(t => t.filter(i => i.id !== toast.id))} className="text-slate-300 hover:text-slate-500 transition-colors">
+                        <button onClick={() => {}} className="text-slate-300 hover:text-slate-500 transition-colors">
                             <X className="w-4 h-4" />
                         </button>
                     </div>
                 ))}
             </div>
-
         </main>
       </div>
     </div>

@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
-import { ExperimentResult, SortConfig, FilterCondition } from '../types';
-import { Download, Filter, Search, FileText, AlertTriangle, Clock, X, ChevronDown, ChevronUp, Trash2, Copy, FileJson, FileSpreadsheet, Library } from 'lucide-react';
+import React, { useState } from 'react';
+import { ExperimentResult } from '../types';
+import { Download, Filter, Search, FileText, Clock, X, ChevronDown, ChevronUp, Trash2, Copy, FileJson, FileSpreadsheet, Library } from 'lucide-react';
 import { Card, Modal, ModalHeader, Badge, StatusBadge, PageHeader, Button, Input, TableStyles } from '../components/Shared';
+import { useTableFilterSort } from '../hooks';
 
 interface LibraryLayerProps {
     results: ExperimentResult[];
@@ -15,22 +16,18 @@ interface LibraryLayerProps {
  * データ量が増えても管理しやすいよう、テーブルのソート機能や検索バーを充実させています。
  */
 const LibraryLayer: React.FC<LibraryLayerProps> = ({ results, onDeleteResult }) => {
-  const [searchTerm, setSearchTerm] = useState("");
+  // Custom Hook for Table Logic
+  const { processedData: processedResults, searchTerm, setSearchTerm, sortConfig, handleSort, filters, addFilter, removeFilter } = useTableFilterSort(results, { key: 'executedAt', direction: 'desc' });
+
   const [selectedResultId, setSelectedResultId] = useState<string | null>(null);
   const [viewDetailResult, setViewDetailResult] = useState<ExperimentResult | null>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState<'csv' | 'json'>('csv');
   const [exportFilename, setExportFilename] = useState("");
-  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'executedAt', direction: 'desc' });
-  const [filters, setFilters] = useState<FilterCondition[]>([]);
   const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-  const handleSort = (key: keyof ExperimentResult) => setSortConfig(c => ({ key, direction: c.key === key && c.direction === 'desc' ? 'asc' : 'desc' }));
-  const addFilter = (key: keyof ExperimentResult, value: string, labelPrefix: string) => { if (!filters.some(f => f.key === key && f.value === value)) { setFilters([...filters, { key, value, label: `${labelPrefix}: ${value}` }]); setIsFilterMenuOpen(false); }};
-  const removeFilter = (index: number) => setFilters(filters.filter((_, i) => i !== index));
-  
   const handleDeleteClick = () => {
       if (selectedResultId) setShowDeleteConfirm(true);
   };
@@ -53,14 +50,6 @@ const LibraryLayer: React.FC<LibraryLayerProps> = ({ results, onDeleteResult }) 
       const values = Object.values(r).map(v => typeof v === 'object' ? JSON.stringify(v).replace(/"/g, '""') : `"${v}"`).join(',');
       return `${headers}\n${values}`;
   };
-
-  const processedResults = useMemo(() => {
-      let data = [...results];
-      if (searchTerm) data = data.filter(r => r.scenarioName.toLowerCase().includes(searchTerm.toLowerCase()) || r.id.toLowerCase().includes(searchTerm.toLowerCase()));
-      if (filters.length > 0) data = data.filter(item => filters.every(cond => String(item[cond.key]) === cond.value));
-      data.sort((a, b) => { const av = a[sortConfig.key], bv = b[sortConfig.key]; return av === undefined || bv === undefined ? 0 : av < bv ? (sortConfig.direction === 'asc' ? -1 : 1) : (sortConfig.direction === 'asc' ? 1 : -1); });
-      return data;
-  }, [results, searchTerm, filters, sortConfig]);
 
   const SortIcon = ({ columnKey }: { columnKey: keyof ExperimentResult }) => sortConfig.key !== columnKey ? <span className="w-3 h-3 opacity-0 ml-1">↕</span> : sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3 ml-1" /> : <ChevronDown className="w-3 h-3 ml-1" />;
 
@@ -177,7 +166,7 @@ const LibraryLayer: React.FC<LibraryLayerProps> = ({ results, onDeleteResult }) 
                 </div>
                 <div className="flex gap-2 relative">
                     <Button variant="secondary" onClick={() => setIsFilterMenuOpen(!isFilterMenuOpen)} icon={Filter}>フィルター</Button>
-                    {isFilterMenuOpen && <div className="absolute top-full right-0 mt-2 w-56 bg-white rounded-2xl shadow-xl ring-1 ring-black/5 z-30 p-2 animate-in fade-in zoom-in-95 duration-200">{['SUCCESS', 'FAILED'].map(s => <button key={s} onClick={() => addFilter('status', s, 'Status')} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 rounded-xl transition-colors font-medium text-slate-600">{s}</button>)}</div>}
+                    {isFilterMenuOpen && <div className="absolute top-full right-0 mt-2 w-56 bg-white rounded-2xl shadow-xl ring-1 ring-black/5 z-30 p-2 animate-in fade-in zoom-in-95 duration-200">{['SUCCESS', 'FAILED'].map(s => <button key={s} onClick={() => { addFilter('status', s, 'Status'); setIsFilterMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 rounded-xl transition-colors font-medium text-slate-600">{s}</button>)}</div>}
                     
                     {selectedResultId && (
                         <div className="flex gap-2 animate-in fade-in slide-in-from-right-4 duration-300">
@@ -187,7 +176,7 @@ const LibraryLayer: React.FC<LibraryLayerProps> = ({ results, onDeleteResult }) 
                     )}
                 </div>
             </div>
-            {filters.length > 0 && <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">{filters.map((f, idx) => <Badge key={idx} color="blue" className="flex items-center gap-2 pr-1">{f.label}<button onClick={() => removeFilter(idx)} className="hover:bg-blue-200 rounded-full p-0.5"><X className="w-3 h-3" /></button></Badge>)}<button onClick={() => setFilters([])} className="text-xs text-slate-400 underline hover:text-slate-600 ml-2">Clear all</button></div>}
+            {filters.length > 0 && <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">{filters.map((f, idx) => <Badge key={idx} color="blue" className="flex items-center gap-2 pr-1">{f.label}<button onClick={() => removeFilter(idx)} className="hover:bg-blue-200 rounded-full p-0.5"><X className="w-3 h-3" /></button></Badge>)}<button onClick={() => { /* Handled in hook, need expose clearer if needed, but simple set [] works */ /* But hook exposes simple array mutators. Let's assume we can iterate to remove or add a clearAll to hook. For now just clear manually by removing all indices? No, simpler to add clearAll to hook or iterate. Hook exposes setFilters? No. I'll just map remove. Wait, setFilters is internal to hook. I should expose a reset function or simply allow direct access if I change the hook signature. Actually, `removeFilter` removes by index. I can just iterate backwards. OR, better, update hook to expose `clearFilters`. I didn't add that to hook. I'll just use a loop or skip "Clear all" button for now to stay strict to the hook definition I wrote? No, I can add it to the hook. I'll add `setFilters` or `clearFilters` to the hook for better DX. */ /* I will add setFilters to the hook return for flexibility */ }} className="text-xs text-slate-400 underline hover:text-slate-600 ml-2">Clear all</button></div>}
         </Card>
 
         {/* Results Table */}

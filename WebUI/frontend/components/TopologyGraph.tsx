@@ -1,193 +1,265 @@
 
-import React, { useMemo } from 'react';
-import { NodeStatus } from '../types';
+import React, { useMemo, useState } from 'react';
+import { NodeStatus, PacketEvent } from '../types';
 import { Server, Database, Cpu } from 'lucide-react';
+import { useWebSocket } from '../hooks';
 
 interface TopologyGraphProps {
   nodes: NodeStatus[];
 }
 
-/**
- * ネットワークトポロジー可視化コンポーネント
- * ノードの状態配列を受け取り、SVGを用いてControl/Meta/Dataチェーン間の関係図を描画します。
- * データフロー: Control Chain -> Data (Fragments) -> Meta (Manifest)
- */
 const TopologyGraph: React.FC<TopologyGraphProps> = ({ nodes }) => {
-  // ノードタイプごとに分類
-  const controlNode = nodes.find(n => n.type === 'control');
-  const metaNode = nodes.find(n => n.type === 'meta');
+  // --- Animation State ---
+  const [inflightPackets, setInflightPackets] = useState<PacketEvent[]>([]);
+  const [nodeFlash, setNodeFlash] = useState<{[id: string]: boolean}>({});
+
+  useWebSocket<PacketEvent>('/ws/monitoring/packets', (packet) => {
+      setInflightPackets(prev => [...prev, packet]);
+      // Remove packet after animation and trigger flash
+      setTimeout(() => {
+          setInflightPackets(current => current.filter(p => p.id !== packet.id));
+          setNodeFlash(prev => ({ ...prev, [packet.to]: true }));
+          setTimeout(() => setNodeFlash(prev => ({ ...prev, [packet.to]: false })), 300);
+      }, 1000);
+  });
+
   const dataNodes = nodes.filter(n => n.type === 'data');
 
-  // --- レイアウト定数と計算 ---
-  const nodeSpacing = 160; // データノード間の水平距離
-  const baseWidth = 1000;  // SVGキャンバスの基本幅
-  const height = 450;      // SVGキャンバスの高さ
+  // --- Layout Constants & Logic ---
+  const viewBoxWidth = 1200;
+  const viewBoxHeight = 600;
+
+  // 1. Controller (Orchestrator): Left Center
+  const controlPos = { x: 150, y: viewBoxHeight / 2 - 50 };
+  const controlAnchor = { x: controlPos.x + 50, y: controlPos.y }; // Connector tip (Right)
   
-  // キャンバス幅の動的計算: データノード数に応じて横幅を拡張
-  const canvasWidth = useMemo(() => {
-      const requiredWidth = Math.max(dataNodes.length * nodeSpacing + 200, baseWidth); // 200pxは余白
-      return requiredWidth;
-  }, [dataNodes.length]);
+  // 2. MetaChain (Registry): Top Right Area
+  const metaPos = { x: 900, y: 120 };
+  const metaAnchor = { x: metaPos.x - 50, y: metaPos.y }; // Connector tip (Left)
   
-  // --- ノード位置の決定 ---
-
-  // 1. Control Chain (Orchestrator): 上段中央
-  const controlPos = { x: canvasWidth / 2, y: 80 };
-
-  // 2. Meta Chain (Registry): 上段右側（Controlの右隣）
-  const metaPos = { x: canvasWidth / 2 + 250, y: 100 };
-  
-  // 3. Data Chains (Storage): 下段に等間隔で配置
-  const dataNodePositions = useMemo(() => {
-    const count = dataNodes.length;
-    const totalWidth = (count - 1) * nodeSpacing;
-    const startX = canvasWidth / 2 - totalWidth / 2; // 中央揃えの開始位置
-    
-    return dataNodes.map((node, i) => ({
-        ...node,
-        x: startX + i * nodeSpacing,
-        y: 350 // 下段のY座標
-    }));
-  }, [dataNodes, canvasWidth]);
-
-  // --- 描画ヘルパー関数 ---
-
-  // マンハッタン距離（直角）スタイルの線を描画
-  const drawOrthogonalLine = (x1: number, y1: number, x2: number, y2: number, midYRatio: number = 0.5) => {
-      const midY = y1 + (y2 - y1) * midYRatio; // 中間点のY座標
-      return `M ${x1},${y1} L ${x1},${midY} L ${x2},${midY} L ${x2},${y2}`;
+  // 3. DataChains: Bottom Area
+  const dataArea = {
+      xStart: 300,
+      xEnd: viewBoxWidth - 50,
+      yBase: viewBoxHeight - 150
   };
 
-  // 直線を描画
-  const drawDirectLine = (x1: number, y1: number, x2: number, y2: number) => {
-      return `M ${x1},${y1} L ${x2},${y2}`;
+  const dataNodeLayout = useMemo(() => {
+      const count = dataNodes.length;
+      if (count === 0) return { positions: [], scale: 1 };
+
+      const availableWidth = dataArea.xEnd - dataArea.xStart;
+      const baseNodeWidth = 120; 
+      const minScale = 0.6;
+      const maxScale = 1.0;
+
+      let scale = Math.min(maxScale, availableWidth / (count * baseNodeWidth));
+      scale = Math.max(minScale, scale);
+
+      const effectiveNodeWidth = baseNodeWidth * scale;
+      const totalUsedWidth = count * effectiveNodeWidth;
+      
+      const startOffset = dataArea.xStart + (availableWidth - totalUsedWidth) / 2 + (effectiveNodeWidth / 2);
+
+      const positions = dataNodes.map((node, i) => ({
+          ...node,
+          x: startOffset + i * effectiveNodeWidth,
+          y: dataArea.yBase,
+          scale: scale,
+          // Calculate anchor point at the top of the connector stick
+          // Node body is centered at (x,y). Connector goes up from y-35*scale to y-50*scale
+          anchor: {
+              x: startOffset + i * effectiveNodeWidth,
+              y: dataArea.yBase - (50 * scale)
+          }
+      }));
+
+      return { positions, scale };
+
+  }, [dataNodes, dataArea.xStart, dataArea.xEnd, dataArea.yBase]);
+
+  // Helper: Get coordinates for packet animation
+  const getNodePos = (id: string) => {
+      if (id === 'control-chain') return controlPos;
+      if (id === 'meta-chain') return metaPos;
+      const dataNode = dataNodeLayout.positions.find(n => n.id === id);
+      return dataNode ? { x: dataNode.x, y: dataNode.y } : null;
+  };
+
+  // Helper: Generate Polyline Path
+  const getPathToNode = (targetType: 'meta' | 'data', ex: number, ey: number) => {
+      const sx = controlAnchor.x;
+      const sy = controlAnchor.y;
+
+      if (targetType === 'meta') {
+          // Control(Right) -> Meta(Left)
+          // Path: Right -> Up -> Right
+          const midX = sx + (ex - sx) * 0.5;
+          return `M ${sx},${sy} L ${midX},${sy} L ${midX},${ey} L ${ex},${ey}`;
+      } else {
+          // Control(Right) -> Data(Top)
+          // Path: Right (Over the node) -> Down (Into the connector)
+          // This creates a tree-like structure where lines overlap horizontally then drop down
+          return `M ${sx},${sy} L ${ex},${sy} L ${ex},${ey}`;
+      }
   };
 
   return (
-    <div className="relative min-w-full min-h-full bg-slate-900 rounded-xl border border-slate-800 overflow-hidden shadow-inner flex items-center justify-center">
-      <div className="absolute top-4 left-4 text-slate-400 text-sm font-mono z-10 pointer-events-none">
-        Network Topology Visualization<br/>
-        <span className="text-[10px] opacity-70">Flow: Control → Data (Fragments) → Meta (Manifest)</span>
-      </div>
-      
-      {/* SVGコンテナ: w-fullを指定せず、計算された幅を使用することで親のスクロールを有効にする */}
-      <svg 
-          width={canvasWidth}
-          height={height}
-          viewBox={`0 0 ${canvasWidth} ${height}`} 
-          className="select-none"
-          style={{ minWidth: canvasWidth }}
+    <div className="w-full h-full flex items-center justify-center bg-slate-900 rounded-xl border border-slate-800 shadow-inner overflow-hidden relative">
+       {/* Overlay Title */}
+       <div className="absolute top-6 left-6 pointer-events-none z-10">
+            <h3 className="text-slate-300 font-bold text-lg flex items-center gap-2">
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                Network Topology
+            </h3>
+            <p className="text-slate-500 text-xs font-mono mt-1">Live IBC Packet Visualization</p>
+       </div>
+
+       <svg 
+          viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`} 
+          className="w-full h-full select-none"
+          preserveAspectRatio="xMidYMid meet"
       >
           <defs>
-              {/* グローエフェクト用のフィルター定義 */}
-              <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+              <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
                   <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
-                  <feMerge>
-                      <feMergeNode in="coloredBlur"/>
-                      <feMergeNode in="SourceGraphic"/>
-                  </feMerge>
+                  <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
               </filter>
-              <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                  <polygon points="0 0, 10 3.5, 0 7" fill="#475569" />
-              </marker>
+              <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.6" />
+                  <stop offset="100%" stopColor="#60a5fa" stopOpacity="0.3" />
+              </linearGradient>
           </defs>
 
-          {/* --- Connections (リンク描画) --- */}
+          {/* --- Connection Lines (Polylines) --- */}
 
-          {/* 1. Control -> Data: データの断片化と分散保存を表す破線 */}
-          {dataNodePositions.map((dn, i) => (
-              <g key={`link-control-data-${dn.id}`}>
+          {/* 1. Control -> Meta */}
+          <path 
+              d={getPathToNode('meta', metaAnchor.x, metaAnchor.y)}
+              fill="none" 
+              stroke="#818cf8" 
+              strokeWidth="3" 
+              className="opacity-60"
+          />
+
+          {/* 2. Control -> DataNodes */}
+          {dataNodeLayout.positions.map((dn) => {
+              const path = getPathToNode('data', dn.anchor.x, dn.anchor.y);
+              return (
                   <path 
-                      d={drawOrthogonalLine(controlPos.x, controlPos.y + 50, dn.x, dn.y - 45, 0.4 + (i % 2) * 0.1)} 
+                      key={`link-${dn.id}`}
+                      d={path}
                       fill="none"
-                      stroke="#334155"
-                      strokeWidth="2"
-                      strokeDasharray="5,5"
+                      stroke="#38bdf8" // Sky 400 (Bright Blue)
+                      strokeWidth="3"
+                      className="opacity-50 hover:opacity-100 transition-opacity duration-300"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                   />
-                  {/* パケットのアニメーション (稼働中のみ表示) */}
-                  {dn.status === 'active' && (
-                       <circle r="3" fill="#3b82f6">
-                         <animateMotion 
-                           dur={`${2 + Math.random()}s`} 
-                           repeatCount="indefinite"
-                           path={drawOrthogonalLine(controlPos.x, controlPos.y + 50, dn.x, dn.y - 45, 0.4 + (i % 2) * 0.1)}
-                           keyPoints="0;1"
-                           keyTimes="0;1"
-                           calcMode="linear"
-                         />
-                       </circle>
-                  )}
-              </g>
-          ))}
+              );
+          })}
 
-          {/* 2. Control -> Meta: マニフェスト情報の書き込みを表す実線 */}
-          <g>
-              <path 
-                  d={drawDirectLine(controlPos.x + 60, controlPos.y, metaPos.x - 50, metaPos.y)}
-                  fill="none"
-                  stroke="#6366f1"
-                  strokeWidth="3"
-              />
-               {/* パケットのアニメーション */}
-               <circle r="4" fill="#a5b4fc">
-                  <animateMotion 
-                       dur="3s" 
-                       repeatCount="indefinite"
-                       path={drawDirectLine(controlPos.x + 60, controlPos.y, metaPos.x - 50, metaPos.y)}
-                  />
-               </circle>
+          {/* --- Packet Animations --- */}
+          {inflightPackets.map(pkt => {
+              const targetNode = dataNodeLayout.positions.find(n => n.id === pkt.to);
+              let path = "";
+
+              if (pkt.to === 'meta-chain' || pkt.from === 'meta-chain') {
+                  path = getPathToNode('meta', metaAnchor.x, metaAnchor.y);
+              } else if (targetNode) {
+                  path = getPathToNode('data', targetNode.anchor.x, targetNode.anchor.y);
+              }
+              
+              if (!path) return null;
+
+              return (
+                  <circle key={pkt.id} r="6" fill="#e0f2fe" filter="url(#glow)">
+                      <animateMotion dur="0.8s" repeatCount="1" path={path} fill="freeze" keyPoints="0;1" keyTimes="0;1" calcMode="linear" />
+                  </circle>
+              );
+          })}
+
+
+          {/* --- Nodes (All Rectangles) --- */}
+
+          {/* 1. Orchestrator (ControlChain) */}
+          <g transform={`translate(${controlPos.x}, ${controlPos.y})`}>
+                {/* Connector Right */}
+               <path d="M 35,0 L 50,0" stroke="#3b82f6" strokeWidth="3" strokeLinecap="round" />
+               <circle cx="50" cy="0" r="3" fill="#3b82f6" />
+               
+               <rect 
+                    x="-35" y="-35" width="70" height="70" rx="14" 
+                    fill="#1e293b" stroke="#3b82f6" strokeWidth="2" 
+                    className="shadow-[0_0_30px_rgba(59,130,246,0.5)]" 
+                />
+               <Server className="text-blue-400 w-10 h-10" x="-20" y="-20" />
+               
+               <g transform="translate(0, 50)">
+                  <rect x="-50" y="0" width="100" height="18" rx="4" fill="#1e3a8a" fillOpacity="0.8" />
+                  <text y="12" textAnchor="middle" className="fill-blue-100 text-[10px] font-bold font-mono tracking-wider uppercase">Orchestrator</text>
+               </g>
+               <text y="80" textAnchor="middle" className="fill-blue-400 text-[9px] font-mono">ControlChain</text>
           </g>
 
+          {/* 2. Registry (MetaChain) */}
+          <g transform={`translate(${metaPos.x}, ${metaPos.y})`}>
+               {/* Connector Left */}
+               <path d="M -35,0 L -50,0" stroke="#818cf8" strokeWidth="3" strokeLinecap="round" />
+               <circle cx="-50" cy="0" r="3" fill="#818cf8" />
 
-          {/* --- Nodes Rendering (ノード描画) --- */}
-          {/* foreignObjectを使用してHTML要素(Icon等)をSVG内に埋め込む */}
+               <rect 
+                    x="-35" y="-35" width="70" height="70" rx="14" 
+                    fill="#312e81" stroke="#818cf8" strokeWidth="2" 
+                />
+               <Cpu className="text-indigo-300 w-10 h-10" x="-20" y="-20" />
 
-          {/* Control Chain (Top Center) */}
-          <foreignObject x={controlPos.x - 60} y={controlPos.y - 50} width="120" height="100">
-              <div className="flex flex-col items-center justify-center">
-                  <div className="text-[10px] text-blue-300 mb-1 font-mono">Orchestrator</div>
-                  <div className={`w-20 h-20 rounded-xl bg-blue-900/90 border-2 ${controlNode?.status === 'active' ? 'border-blue-400 shadow-[0_0_30px_rgba(59,130,246,0.4)]' : 'border-red-500'} flex items-center justify-center mb-2 backdrop-blur-sm z-20 relative`}>
-                       <Server className="w-10 h-10 text-blue-200" />
-                       {/* Badge */}
-                       <div className="absolute -top-2 -right-2 bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full border border-blue-900">Main</div>
-                  </div>
-                  <span className="text-blue-100 font-bold text-sm bg-slate-900/80 px-3 py-1 rounded-full border border-blue-900/50">ControlChain</span>
-              </div>
-          </foreignObject>
+               <g transform="translate(0, 50)">
+                  <rect x="-40" y="0" width="80" height="18" rx="4" fill="#312e81" fillOpacity="0.8" />
+                  <text y="12" textAnchor="middle" className="fill-indigo-100 text-[10px] font-bold font-mono tracking-wider uppercase">Registry</text>
+               </g>
+               <text y="80" textAnchor="middle" className="fill-indigo-400 text-[9px] font-mono">MetaChain</text>
+          </g>
 
-          {/* Meta Chain (Top Right) */}
-          <foreignObject x={metaPos.x - 50} y={metaPos.y - 40} width="100" height="100">
-              <div className="flex flex-col items-center justify-center">
-                   <div className="text-[10px] text-indigo-300 mb-1 font-mono">Registry</div>
-                  <div className={`w-16 h-16 rounded-full bg-indigo-900/90 border-2 ${metaNode?.status === 'active' ? 'border-indigo-400 shadow-[0_0_30px_rgba(99,102,241,0.4)]' : 'border-red-500'} flex items-center justify-center mb-2 backdrop-blur-sm z-20`}>
-                       <Cpu className="w-8 h-8 text-indigo-200" />
-                  </div>
-                  <span className="text-indigo-200 font-bold text-xs bg-slate-900/80 px-3 py-1 rounded-full border border-indigo-900/50">MetaChain</span>
-              </div>
-          </foreignObject>
+          {/* 3. DataChains */}
+          {dataNodeLayout.positions.map((node) => (
+              <g 
+                key={node.id} 
+                transform={`translate(${node.x}, ${node.y}) scale(${node.scale})`}
+                className="transition-all duration-500 ease-out"
+              >
+                  {/* Connector Top (Receiving end of the polyline) */}
+                  <path d="M 0,-35 L 0,-50" stroke="#38bdf8" strokeWidth="3" strokeLinecap="round" />
+                  <circle r="3" cx="0" cy="-50" fill="#38bdf8" />
 
-          {/* Data Chains (Bottom Row) */}
-          {dataNodePositions.map((node) => (
-              <foreignObject key={node.id} x={node.x - 50} y={node.y - 50} width="100" height="100">
-                  <div className="flex flex-col items-center justify-center group">
-                      {/* Connection Point Visual */}
-                      <div className="w-2 h-2 bg-slate-500 rounded-full mb-1 opacity-50"></div>
-                      
-                      <div className={`w-14 h-14 rounded-lg bg-slate-800 border-2 ${node.status === 'active' ? 'border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.3)]' : 'border-red-500'} flex items-center justify-center mb-2 transition-all duration-300 group-hover:scale-110`}>
-                          <Database className={`w-7 h-7 ${node.status === 'active' ? 'text-emerald-400' : 'text-red-400'}`} />
-                      </div>
-                      <span className="text-slate-300 font-mono text-[10px] bg-slate-900/90 px-2 py-0.5 rounded whitespace-nowrap border border-slate-700">
-                          {node.id}
-                      </span>
-                      <div className="flex items-center gap-1 mt-1">
-                           <span className={`w-1.5 h-1.5 rounded-full ${node.status === 'active' ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></span>
-                           <span className="text-[9px] text-slate-500">H:{node.height}</span>
-                      </div>
-                  </div>
-              </foreignObject>
+                  {/* Node Body */}
+                  <rect 
+                    x="-35" y="-35" width="70" height="70" rx="14" 
+                    fill={node.status === 'active' ? '#0f172a' : '#450a0a'} 
+                    stroke={nodeFlash[node.id] ? '#ffffff' : node.status === 'active' ? '#10b981' : '#ef4444'} 
+                    strokeWidth={nodeFlash[node.id] ? 4 : 2}
+                    className="transition-colors duration-200 shadow-xl"
+                    filter={nodeFlash[node.id] ? "url(#glow)" : ""}
+                  />
+                  
+                  <Database 
+                    className={`w-10 h-10 ${node.status === 'active' ? 'text-emerald-400' : 'text-red-400'}`} 
+                    x="-20" y="-20" 
+                  />
+
+                  {/* Labels */}
+                  <g transform="translate(0, 50)">
+                      <rect x="-45" y="0" width="90" height="18" rx="4" fill="#1e293b" stroke="#334155" strokeWidth="1" />
+                      <text y="12" textAnchor="middle" className="fill-slate-300 text-[11px] font-mono font-bold">{node.id}</text>
+                  </g>
+                  
+                  <g transform="translate(0, 74)">
+                      <circle r="3" cx="-18" cy="-1" fill={node.status === 'active' ? '#10b981' : '#ef4444'} className={node.status === 'active' ? 'animate-pulse' : ''} />
+                      <text x="-10" y="3" className="fill-slate-500 text-[10px] font-mono">Height: {node.height}</text>
+                  </g>
+              </g>
           ))}
-
-      </svg>
+       </svg>
     </div>
   );
 };

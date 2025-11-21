@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Play, Trash2, Layers, CheckCircle2, Server, AlertTriangle, Activity } from 'lucide-react';
-import { MOCK_INITIAL_LOGS } from '../constants';
 import { Card, LogViewer, Badge, Modal, PageHeader, Button } from '../components/Shared';
+import { useDeploymentControl } from '../hooks';
 
 interface DeploymentLayerProps {
     setDeployedNodeCount: (count: number) => void;
@@ -18,61 +18,17 @@ interface DeploymentLayerProps {
  * モーダルによる確認やログ表示によってプロセスの可視化を重視しています。
  */
 const DeploymentLayer: React.FC<DeploymentLayerProps> = ({ setDeployedNodeCount, deployedNodeCount, setIsDockerBuilt, isDockerBuilt }) => {
-  const [scaleCount, setScaleCount] = useState(deployedNodeCount);
-  const [isBuilding, setIsBuilding] = useState(false);
-  const [isDeploying, setIsDeploying] = useState(false);
-  const [logs, setLogs] = useState<string[]>(MOCK_INITIAL_LOGS);
+  // Custom Hook
+  const { scaleCount, setScaleCount, isBuilding, isDeploying, logs, handleBuild, handleDeploy, handleReset: controlReset } = useDeploymentControl(deployedNodeCount, setDeployedNodeCount, setIsDockerBuilt);
   
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
-  useEffect(() => { setScaleCount(deployedNodeCount); }, [deployedNodeCount]);
-
-  const addLog = (msg: string) => setLogs(prev => [...prev, `[${new Date().toLocaleTimeString('ja-JP')}] ${msg}`]);
-
-  // Dockerビルド処理のシミュレーション
-  const handleBuild = () => {
-    if (isBuilding) return;
-    setLogs([]); setIsBuilding(true);
-    addLog(">> Starting Docker Build for targets: [DataChain, MetaChain]...");
-    let step = 0;
-    const interval = setInterval(() => {
-        step++;
-        if (step === 1) addLog("Building context: 124.5MB transferred.");
-        if (step === 2) addLog("Step 1/5 : FROM golang:1.22-alpine as builder");
-        if (step === 3) addLog("Step 2/5 : WORKDIR /app");
-        if (step === 4) addLog("Step 3/5 : COPY . .");
-        if (step === 5) addLog("Step 4/5 : RUN go build -o datachain ./cmd/datachain");
-        if (step === 6) {
-            addLog("Successfully built image 'raidchain/node:latest'");
-            setIsBuilding(false); setIsDockerBuilt(true); clearInterval(interval);
-        }
-    }, 800);
-  };
-
-  // デプロイ処理のシミュレーション
-  const handleDeploy = () => {
-    if (isDeploying) return;
-    setLogs([]); setIsDeploying(true);
-    addLog(`>> Starting Helm Upgrade (Scale: ${scaleCount})...`);
-    setTimeout(() => {
-        addLog("Release \"raidchain-core\" does not exist. Installing it now.");
-        addLog("Manifest rendered. Applying to namespace 'default'.");
-        addLog(`[K8s] Service/datachain-svc created.`);
-        for(let i=0; i<scaleCount; i++) setTimeout(() => addLog(`[K8s] Pod/datachain-${i} scheduled.`), i * 500);
-        setTimeout(() => {
-             addLog(">> Deployment Sync Completed. System Healthy.");
-             setDeployedNodeCount(scaleCount); setIsDeploying(false);
-        }, scaleCount * 500 + 1000);
-    }, 1000);
-  };
-
-  const handleReset = () => {
+  const handleResetClick = () => {
       setShowResetConfirm(true);
   };
 
   const confirmReset = () => {
-      setLogs([]); addLog(">> Executing Helm Uninstall..."); addLog("Removing PVCs..."); addLog("Cleaned up resources.");
-      setIsDockerBuilt(false); setDeployedNodeCount(0);
+      controlReset();
       setShowResetConfirm(false);
   };
 
@@ -207,7 +163,7 @@ const DeploymentLayer: React.FC<DeploymentLayerProps> = ({ setDeployedNodeCount,
                         >
                             Helm Upgrade (Apply)
                         </Button>
-                        <Button onClick={handleReset} variant="danger" className="w-full" icon={Trash2}>
+                        <Button onClick={handleResetClick} variant="danger" className="w-full" icon={Trash2}>
                             環境をリセット
                         </Button>
                     </div>

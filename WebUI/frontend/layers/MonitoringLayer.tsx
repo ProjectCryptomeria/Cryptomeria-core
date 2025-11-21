@@ -1,92 +1,33 @@
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import TopologyGraph from '../components/TopologyGraph';
-import { generateMockNodes } from '../services/mockData';
-import { NodeStatus } from '../types';
-import { Activity, Box, Network, Zap, ChevronUp, ChevronLeft, ArrowLeft, X, Monitor } from 'lucide-react';
-import { Badge, StatusBadge, PageHeader, TableStyles } from '../components/Shared';
+import { NodeStatus, MonitoringUpdate } from '../types';
+import { Activity, Zap, ChevronUp, ChevronLeft, X, Monitor } from 'lucide-react';
+import { Badge, PageHeader } from '../components/Shared';
+import { useResizerPanel, useWebSocket } from '../hooks';
 
 interface MonitoringLayerProps {
-    deployedNodeCount: number;
+    setDeployedNodeCount: (n: number) => void;
 }
 
-/**
- * Monitoring Layer
- * 
- * ブロックチェーンネットワークの健全性、トポロジー、トランザクション負荷をリアルタイムで監視する画面。
- * レイアウト: メインエリア（トポロジー）、ボトムパネル（Mempoolグラフ）、サイドパネル（ノードリスト）
- */
-const MonitoringLayer: React.FC<MonitoringLayerProps> = ({ deployedNodeCount }) => {
+const MonitoringLayer: React.FC<MonitoringLayerProps> = ({ setDeployedNodeCount }) => {
   const [nodes, setNodes] = useState<NodeStatus[]>([]);
   const [mempoolData, setMempoolData] = useState<any[]>([]);
-
-  // UI State
   const [isSidePanelOpen, setIsSidePanelOpen] = useState(false);
-  const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false);
-  const [bottomPanelHeight, setBottomPanelHeight] = useState(320);
   
-  const panelRef = useRef<HTMLDivElement>(null);
-  const resizerRef = useRef<HTMLDivElement>(null);
+  const { isOpen: isBottomPanelOpen, setIsOpen: setIsBottomPanelOpen, height: bottomPanelHeight, panelRef, resizerRef } = useResizerPanel(320, 100, 0.8);
 
-  // モックデータの定期更新エフェクト
-  useEffect(() => {
-    setNodes(generateMockNodes(deployedNodeCount));
-    const interval = setInterval(() => {
-      setMempoolData(prev => {
-        if (prev.length !== deployedNodeCount) {
-            return Array.from({ length: deployedNodeCount }, (_, i) => ({ name: `data-${i}`, txs: Math.floor(Math.random() * 200) }));
-        }
-        return prev.map(item => ({ ...item, txs: Math.max(0, item.txs + (Math.random() > 0.5 ? 10 : -20) + Math.floor(Math.random() * 10)) }));
-      });
-
-      setNodes(currentNodes => {
-          if (currentNodes.length !== 2 + deployedNodeCount) return generateMockNodes(deployedNodeCount);
-          return currentNodes.map(n => ({
-              ...n,
-              height: n.height + (Math.random() > 0.8 ? 1 : 0),
-              txCount: Math.floor(Math.random() * 50)
-          }));
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [deployedNodeCount]);
-
-  // Bottom Panel Resizing Logic
-  useEffect(() => {
-      const resizer = resizerRef.current;
-      if (!resizer) return;
-      
-      const handleMouseDown = (e: MouseEvent) => { 
-          e.preventDefault(); 
-          document.addEventListener('mousemove', handleMouseMove); 
-          document.addEventListener('mouseup', handleMouseUp); 
-          document.body.style.cursor = 'row-resize'; 
-      };
-      
-      const handleMouseMove = (e: MouseEvent) => {
-          const newHeight = window.innerHeight - e.clientY;
-          if (newHeight > 80 && newHeight < window.innerHeight * 0.8) {
-              setBottomPanelHeight(newHeight);
-              if (!isBottomPanelOpen && newHeight > 100) setIsBottomPanelOpen(true);
-          }
-      };
-      
-      const handleMouseUp = () => {
-          document.removeEventListener('mousemove', handleMouseMove); 
-          document.removeEventListener('mouseup', handleMouseUp); 
-          document.body.style.cursor = '';
-          if (panelRef.current && panelRef.current.clientHeight < 120) setIsBottomPanelOpen(false);
-      };
-      
-      resizer.addEventListener('mousedown', handleMouseDown);
-      return () => { resizer.removeEventListener('mousedown', handleMouseDown); };
-  }, [isBottomPanelOpen]);
+  // Subscribe to monitoring updates from Mock Backend
+  useWebSocket<MonitoringUpdate>('/ws/monitoring', (data) => {
+      setNodes(data.nodes);
+      setMempoolData(data.mempool);
+      setDeployedNodeCount(data.deployedCount);
+  });
 
   return (
     <div className="flex h-full w-full overflow-hidden relative text-gray-800">
         
-        {/* Main Content Area (Topology) */}
         <div className="flex-1 flex flex-col h-full min-w-0 relative z-10">
             <div className="p-6 flex-shrink-0">
                 <PageHeader 
@@ -105,12 +46,11 @@ const MonitoringLayer: React.FC<MonitoringLayerProps> = ({ deployedNodeCount }) 
                 />
             </div>
 
-            {/* Topology Graph (Scrollable) */}
-            <div className="flex-1 overflow-auto p-6 pt-0 pb-32 custom-scrollbar">
+            {/* Main Graph Area: Resizes securely using flex and hidden overflow */}
+            <div className="flex-1 p-6 pt-0 pb-32 flex items-center justify-center overflow-hidden">
                 <TopologyGraph nodes={nodes} />
             </div>
 
-            {/* Side Panel Toggle Button */}
             <button 
                 onClick={() => setIsSidePanelOpen(true)} 
                 className={`absolute top-6 right-0 bg-white border border-gray-200 shadow-lg rounded-l-xl p-3 text-slate-500 hover:bg-slate-50 transition-all z-20 ${isSidePanelOpen ? 'translate-x-full opacity-0 pointer-events-none' : 'translate-x-0'}`}
@@ -118,18 +58,15 @@ const MonitoringLayer: React.FC<MonitoringLayerProps> = ({ deployedNodeCount }) 
                 <ChevronLeft className="w-5 h-5" />
             </button>
 
-            {/* Bottom Panel (Mempool Chart) */}
             <div 
                 ref={panelRef}
                 className={`absolute bottom-0 left-0 right-0 bg-white shadow-[0_-10px_40px_rgba(0,0,0,0.1)] z-30 rounded-t-[2rem] border-t border-gray-100 flex flex-col bottom-panel-transition ${isBottomPanelOpen ? '' : 'h-20'}`} 
                 style={{ height: isBottomPanelOpen ? bottomPanelHeight : undefined }}
             >
-                {/* Resizer Handle */}
                 <div ref={resizerRef} className="absolute top-0 left-0 right-0 h-4 w-full cursor-row-resize z-50 group flex justify-center items-center">
                     <div className="w-16 h-1.5 bg-gray-200 rounded-full group-hover:bg-blue-50 transition-colors"></div>
                 </div>
 
-                {/* Header */}
                 <div className="px-8 py-4 border-b border-gray-100 flex justify-between items-center bg-white rounded-t-[2rem] cursor-pointer hover:bg-gray-50 transition-colors relative z-40 mt-1" onClick={() => setIsBottomPanelOpen(!isBottomPanelOpen)}>
                     <div className="flex items-center gap-3">
                         <div className="p-2 bg-orange-50 text-orange-600 rounded-lg"><Zap className="w-4 h-4" /></div>
@@ -143,7 +80,6 @@ const MonitoringLayer: React.FC<MonitoringLayerProps> = ({ deployedNodeCount }) 
                     </div>
                 </div>
 
-                {/* Chart Content */}
                 <div className="flex-1 p-6 bg-slate-50/50 overflow-hidden flex flex-col">
                      <div className="flex-1 w-full min-h-0">
                         <ResponsiveContainer width="100%" height="100%">
@@ -167,9 +103,7 @@ const MonitoringLayer: React.FC<MonitoringLayerProps> = ({ deployedNodeCount }) 
             </div>
         </div>
 
-        {/* Side Panel (Node Registry) */}
         <div className={`flex-shrink-0 border-l border-gray-200 bg-white relative z-20 transition-all duration-300 overflow-hidden flex flex-col ${isSidePanelOpen ? 'w-96' : 'w-0'}`}>
-             {/* Side Panel Header */}
              <div className="p-5 border-b border-gray-100 flex justify-between items-center shrink-0">
                 <h2 className="font-bold text-slate-700 flex items-center text-lg">
                     <Monitor className="w-5 h-5 mr-2 text-slate-500" />
@@ -180,7 +114,6 @@ const MonitoringLayer: React.FC<MonitoringLayerProps> = ({ deployedNodeCount }) 
                 </button>
             </div>
 
-            {/* Node List */}
             <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-slate-50 space-y-3">
                  {nodes.map((node) => (
                     <div key={node.id} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all">
