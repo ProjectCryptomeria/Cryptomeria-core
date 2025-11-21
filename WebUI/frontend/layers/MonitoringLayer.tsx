@@ -73,7 +73,7 @@ const MonitoringLayer: React.FC<MonitoringLayerProps> = ({ deployedNodeCount }) 
       <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200">
           <div className="flex items-center gap-2 mb-2">
               <Activity className="w-5 h-5 text-orange-500" />
-              <h3 className="text-lg font-bold text-slate-800">Mempool 負荷状況</h3>
+              <h3 className="text-lg font-bold text-slate-800">Mempool リアルタイムグラフ</h3>
           </div>
           <p className="text-xs text-slate-500 mb-6">各DataChainにおける未処理トランザクションの滞留状況</p>
           
@@ -100,7 +100,7 @@ const MonitoringLayer: React.FC<MonitoringLayerProps> = ({ deployedNodeCount }) 
       {/* Bottom: Node List */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
-            <h3 className="font-bold text-slate-800">ブロックチェーン ステータス一覧</h3>
+            <h3 className="font-bold text-slate-800">ブロック生成モニター</h3>
         </div>
         <table className="w-full text-sm text-left">
             <thead className="bg-slate-50 text-slate-500 font-medium">
@@ -109,6 +109,7 @@ const MonitoringLayer: React.FC<MonitoringLayerProps> = ({ deployedNodeCount }) 
                     <th className="px-6 py-3">Role</th>
                     <th className="px-6 py-3">Status</th>
                     <th className="px-6 py-3 text-right">Block Height</th>
+                    <th className="px-6 py-3 text-right">Tx Count (Latest)</th>
                     <th className="px-6 py-3 text-right">Latency (ms)</th>
                 </tr>
             </thead>
@@ -136,6 +137,9 @@ const MonitoringLayer: React.FC<MonitoringLayerProps> = ({ deployedNodeCount }) 
                         <td className="px-6 py-3 text-right font-mono flex justify-end items-center gap-2">
                             <Box className="w-3 h-3 text-slate-400" />
                             {node.height.toLocaleString()}
+                        </td>
+                        <td className="px-6 py-3 text-right font-mono text-slate-600">
+                             {node.txCount}
                         </td>
                         <td className="px-6 py-3 text-right font-mono text-slate-500">
                             {node.latency}ms

@@ -1,3 +1,4 @@
+
 import { ExperimentResult, NodeStatus, UserAccount, SystemAccount, ExperimentScenario, AllocatorStrategy, TransmitterStrategy } from '../types';
 
 // Mock Nodes for Monitoring
@@ -55,6 +56,7 @@ export const generateMockScenarios = (): ExperimentScenario[] => [
       transmitter: TransmitterStrategy.ONE_BY_ONE,
       targetChains: ['datachain-0'],
       uploadType: 'Virtual',
+      projectName: 'latency-check-project',
       virtualConfig: { sizeMB: 100, chunkSizeKB: 64, files: 10 }
     }
   },
@@ -67,6 +69,7 @@ export const generateMockScenarios = (): ExperimentScenario[] => [
       transmitter: TransmitterStrategy.MULTI_BURST,
       targetChains: ['datachain-0', 'datachain-1', 'datachain-2'],
       uploadType: 'Virtual',
+      projectName: 'stress-test-project',
       virtualConfig: { sizeMB: 5120, chunkSizeKB: 128, files: 500 }
     }
   }

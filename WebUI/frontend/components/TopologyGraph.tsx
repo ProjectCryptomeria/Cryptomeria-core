@@ -1,3 +1,4 @@
+
 import React, { useMemo } from 'react';
 import { NodeStatus } from '../types';
 import { Server, Database, Cpu } from 'lucide-react';
@@ -14,7 +15,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ nodes }) => {
   // Layout Constants
   const nodeSpacing = 160;
   const baseWidth = 1200;
-  const height = 600;
+  const height = 450; // Compact height
   
   // Calculate dynamic width based on the number of data nodes
   // If nodes fit in 1200px, use 1200px. Otherwise expand to fit them + margins.
@@ -39,7 +40,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ nodes }) => {
     return dataNodes.map((node, i) => ({
         ...node,
         x: startX + i * nodeSpacing,
-        y: 500
+        y: 350 // Moved up to fit in smaller height
     }));
   }, [dataNodes, canvasWidth]);
 
@@ -64,7 +65,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ nodes }) => {
       <div className="w-full h-full overflow-auto">
         <svg 
             viewBox={`0 0 ${canvasWidth} ${height}`} 
-            className="w-full h-auto min-h-[500px] select-none"
+            className="w-full h-auto min-h-[400px] select-none"
             preserveAspectRatio="xMidYMid meet"
         >
             <defs>

@@ -1,15 +1,24 @@
-import React, { useState, useMemo } from 'react';
+
+import React, { useState, useMemo, useEffect } from 'react';
 import { ExperimentResult, SortConfig, FilterCondition, AllocatorStrategy, TransmitterStrategy } from '../types';
-import { Download, Filter, Search, FileText, AlertTriangle, CheckCircle, Clock, X, Database, Server, Network, ChevronDown, ChevronUp, Badge } from 'lucide-react';
+import { Download, Filter, Search, FileText, AlertTriangle, CheckCircle, Clock, X, Database, Server, Network, ChevronDown, ChevronUp, Badge, Trash2, Copy, FileJson, FileSpreadsheet } from 'lucide-react';
 
 interface LibraryLayerProps {
     results: ExperimentResult[];
+    onDeleteResult: (id: string) => void;
 }
 
-const LibraryLayer: React.FC<LibraryLayerProps> = ({ results }) => {
+const LibraryLayer: React.FC<LibraryLayerProps> = ({ results, onDeleteResult }) => {
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedResult, setSelectedResult] = useState<ExperimentResult | null>(null);
+  // Use selectedResultId for table selection, distinct from "view details" modal
+  const [selectedResultId, setSelectedResultId] = useState<string | null>(null);
+  const [viewDetailResult, setViewDetailResult] = useState<ExperimentResult | null>(null);
   
+  // Export Modal State
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'csv' | 'json'>('csv');
+  const [exportFilename, setExportFilename] = useState("");
+
   // Sorting State
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'executedAt', direction: 'desc' });
 
@@ -36,6 +45,65 @@ const LibraryLayer: React.FC<LibraryLayerProps> = ({ results }) => {
   const removeFilter = (index: number) => {
       setFilters(filters.filter((_, i) => i !== index));
   };
+
+  const handleDeleteSelected = () => {
+      if (!selectedResultId) return;
+      if (window.confirm('選択した実験データを完全に削除しますか？この操作は取り消せません。')) {
+          onDeleteResult(selectedResultId);
+          setSelectedResultId(null);
+      }
+  };
+
+  const handleOpenExport = () => {
+      if (!selectedResultId) return;
+      const result = results.find(r => r.id === selectedResultId);
+      if (!result) return;
+
+      // Default Filename: ID-Timestamp
+      const timestamp = new Date(result.executedAt).toISOString().replace(/[:.]/g, '-');
+      setExportFilename(`${result.id}-${timestamp}`);
+      setIsExportModalOpen(true);
+  };
+
+  const getExportContent = () => {
+      const result = results.find(r => r.id === selectedResultId);
+      if (!result) return "";
+
+      if (exportFormat === 'json') {
+          return JSON.stringify(result, null, 2);
+      } else {
+          // CSV
+          const headers = Object.keys(result).join(',');
+          const values = Object.values(result).map(v => {
+              if (typeof v === 'object') return JSON.stringify(v).replace(/"/g, '""'); // Simple escape
+              return `"${v}"`;
+          }).join(',');
+          return `${headers}\n${values}`;
+      }
+  };
+
+  const handleCopyExport = () => {
+      const content = getExportContent();
+      navigator.clipboard.writeText(content).then(() => {
+          alert('クリップボードにコピーしました。');
+      });
+  };
+
+  const handleDownloadExport = () => {
+      const content = getExportContent();
+      const blob = new Blob([content], { type: exportFormat === 'json' ? 'application/json' : 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${exportFilename}.${exportFormat}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setIsExportModalOpen(false);
+      alert('ダウンロードを開始しました。');
+  };
+
 
   // --- Filtering & Sorting Logic ---
   const processedResults = useMemo(() => {
@@ -89,38 +157,111 @@ const LibraryLayer: React.FC<LibraryLayerProps> = ({ results }) => {
   return (
     <div className="space-y-6 animate-in fade-in duration-500 relative h-full flex flex-col">
         
-        {/* Detail Modal */}
-        {selectedResult && (
+        {/* Export Modal */}
+        {isExportModalOpen && (
+             <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div className="bg-white w-full max-w-lg rounded-xl shadow-2xl border border-slate-200 p-6 animate-in zoom-in-95 duration-200">
+                    <div className="flex justify-between items-center mb-4">
+                         <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                             <Download className="w-5 h-5 text-blue-600" />
+                             データエクスポート
+                         </h3>
+                         <button onClick={() => setIsExportModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                             <X className="w-5 h-5" />
+                         </button>
+                    </div>
+                    
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">出力ファイル名</label>
+                            <input 
+                                type="text" 
+                                value={exportFilename}
+                                onChange={(e) => setExportFilename(e.target.value)}
+                                className="w-full p-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-blue-500"
+                            />
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">出力形式</label>
+                            <div className="flex gap-4">
+                                <label className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${exportFormat === 'csv' ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-slate-200 hover:bg-slate-50'}`}>
+                                    <input type="radio" name="format" value="csv" checked={exportFormat === 'csv'} onChange={() => setExportFormat('csv')} className="hidden" />
+                                    <FileSpreadsheet className="w-4 h-4" />
+                                    CSV
+                                </label>
+                                <label className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-lg border cursor-pointer transition-colors ${exportFormat === 'json' ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-slate-200 hover:bg-slate-50'}`}>
+                                    <input type="radio" name="format" value="json" checked={exportFormat === 'json'} onChange={() => setExportFormat('json')} className="hidden" />
+                                    <FileJson className="w-4 h-4" />
+                                    JSON
+                                </label>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">プレビュー</label>
+                            <div className="bg-slate-100 rounded-lg p-3 border border-slate-200 max-h-40 overflow-y-auto font-mono text-xs text-slate-600 custom-scrollbar whitespace-pre-wrap break-all">
+                                {getExportContent()}
+                            </div>
+                        </div>
+
+                        <div className="text-center text-sm text-slate-500 my-2">
+                            出力予定ファイル: <span className="font-bold text-slate-800">{exportFilename}.{exportFormat}</span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 pt-2">
+                            <button 
+                                onClick={handleCopyExport}
+                                className="py-2 px-4 bg-white border border-slate-300 text-slate-700 rounded-lg font-medium hover:bg-slate-50 transition-colors flex items-center justify-center gap-2"
+                            >
+                                <Copy className="w-4 h-4" />
+                                コピー
+                            </button>
+                            <button 
+                                onClick={handleDownloadExport}
+                                className="py-2 px-4 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2"
+                            >
+                                <Download className="w-4 h-4" />
+                                エクスポート
+                            </button>
+                        </div>
+                    </div>
+                </div>
+             </div>
+        )}
+
+        {/* Detail Modal (View Only) */}
+        {viewDetailResult && (
             <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                 <div className="bg-white w-full max-w-3xl rounded-xl shadow-2xl border border-slate-200 flex flex-col max-h-[90vh] overflow-hidden animate-in zoom-in-95 duration-200">
                     <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50">
                         <div className="flex items-center gap-3">
-                            <div className={`p-2 rounded-full ${selectedResult.status === 'SUCCESS' ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
-                                {selectedResult.status === 'SUCCESS' ? <CheckCircle className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
+                            <div className={`p-2 rounded-full ${viewDetailResult.status === 'SUCCESS' ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
+                                {viewDetailResult.status === 'SUCCESS' ? <CheckCircle className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
                             </div>
                             <div>
-                                <h3 className="font-bold text-lg text-slate-800">{selectedResult.scenarioName}</h3>
-                                <div className="text-xs text-slate-500 font-mono">ID: {selectedResult.id}</div>
+                                <h3 className="font-bold text-lg text-slate-800">{viewDetailResult.scenarioName}</h3>
+                                <div className="text-xs text-slate-500 font-mono">ID: {viewDetailResult.id}</div>
                             </div>
                         </div>
-                        <button onClick={() => setSelectedResult(null)} className="text-slate-400 hover:text-slate-600">
+                        <button onClick={() => setViewDetailResult(null)} className="text-slate-400 hover:text-slate-600">
                             <X className="w-6 h-6" />
                         </button>
                     </div>
                     
                     <div className="p-6 overflow-y-auto custom-scrollbar">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            {/* Details Sections (Same as before) */}
+                            {/* Details Sections */}
                             <div className="space-y-4">
                                 <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 pb-2">基本情報</h4>
                                 <div className="grid grid-cols-2 gap-4 text-sm">
                                     <div>
                                         <div className="text-slate-500">実行日時</div>
-                                        <div className="font-mono">{new Date(selectedResult.executedAt).toLocaleString('ja-JP')}</div>
+                                        <div className="font-mono">{new Date(viewDetailResult.executedAt).toLocaleString('ja-JP')}</div>
                                     </div>
                                     <div>
                                         <div className="text-slate-500">ステータス</div>
-                                        <div className={`font-bold ${selectedResult.status === 'SUCCESS' ? 'text-emerald-600' : 'text-red-600'}`}>{selectedResult.status}</div>
+                                        <div className={`font-bold ${viewDetailResult.status === 'SUCCESS' ? 'text-emerald-600' : 'text-red-600'}`}>{viewDetailResult.status}</div>
                                     </div>
                                 </div>
                             </div>
@@ -131,23 +272,23 @@ const LibraryLayer: React.FC<LibraryLayerProps> = ({ results }) => {
                                 <div className="space-y-2 text-sm">
                                     <div className="flex justify-between">
                                         <span className="text-slate-500 flex items-center gap-2"><Database className="w-3 h-3"/> データサイズ</span>
-                                        <span className="font-mono">{fmtBytes(selectedResult.dataSizeMB)}</span>
+                                        <span className="font-mono">{fmtBytes(viewDetailResult.dataSizeMB)}</span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-slate-500 flex items-center gap-2"><Network className="w-3 h-3"/> チャンクサイズ</span>
-                                        <span className="font-mono">{selectedResult.chunkSizeKB} KB</span>
+                                        <span className="font-mono">{viewDetailResult.chunkSizeKB} KB</span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-slate-500">総Tx数</span>
-                                        <span className="font-mono">{selectedResult.totalTxCount.toLocaleString()}</span>
+                                        <span className="font-mono">{viewDetailResult.totalTxCount.toLocaleString()}</span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-slate-500">Allocator</span>
-                                        <span>{selectedResult.allocator}</span>
+                                        <span>{viewDetailResult.allocator}</span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-slate-500">Transmitter</span>
-                                        <span>{selectedResult.transmitter}</span>
+                                        <span>{viewDetailResult.transmitter}</span>
                                     </div>
                                 </div>
                             </div>
@@ -157,10 +298,10 @@ const LibraryLayer: React.FC<LibraryLayerProps> = ({ results }) => {
                                 <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 pb-2">インフラ使用状況</h4>
                                 <div className="text-sm mb-2">
                                     <span className="text-slate-500">使用したDataChain数: </span>
-                                    <span className="font-bold text-slate-800">{selectedResult.targetChainCount}</span>
+                                    <span className="font-bold text-slate-800">{viewDetailResult.targetChainCount}</span>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
-                                    {selectedResult.usedChains.map(chain => (
+                                    {viewDetailResult.usedChains.map(chain => (
                                         <span key={chain} className="px-2 py-1 bg-slate-100 text-slate-600 rounded border border-slate-200 text-xs font-mono flex items-center gap-1">
                                             <Server className="w-3 h-3" />
                                             {chain}
@@ -178,15 +319,15 @@ const LibraryLayer: React.FC<LibraryLayerProps> = ({ results }) => {
                                 <div className="grid grid-cols-3 gap-4 text-center">
                                     <div>
                                         <div className="text-xs text-slate-500 mb-1">アップロード時間</div>
-                                        <div className="font-mono font-bold text-lg">{fmtTime(selectedResult.uploadTimeMs)}</div>
+                                        <div className="font-mono font-bold text-lg">{fmtTime(viewDetailResult.uploadTimeMs)}</div>
                                     </div>
                                     <div>
                                         <div className="text-xs text-slate-500 mb-1">ダウンロード時間</div>
-                                        <div className="font-mono font-bold text-lg">{fmtTime(selectedResult.downloadTimeMs)}</div>
+                                        <div className="font-mono font-bold text-lg">{fmtTime(viewDetailResult.downloadTimeMs)}</div>
                                     </div>
                                     <div>
                                         <div className="text-xs text-slate-500 mb-1">スループット</div>
-                                        <div className="font-mono font-bold text-lg text-blue-600">{fmtSpeed(selectedResult.throughputBps)}</div>
+                                        <div className="font-mono font-bold text-lg text-blue-600">{fmtSpeed(viewDetailResult.throughputBps)}</div>
                                     </div>
                                 </div>
                             </div>
@@ -249,10 +390,25 @@ const LibraryLayer: React.FC<LibraryLayerProps> = ({ results }) => {
                         </div>
                     )}
 
-                    <button className="flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-100 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-100 transition-colors">
-                        <Download className="w-4 h-4" />
-                        CSV出力
-                    </button>
+                    {/* Action Buttons: Show only when selected */}
+                    {selectedResultId ? (
+                        <div className="flex gap-2 animate-in slide-in-from-right-5 fade-in">
+                            <button 
+                                onClick={handleDeleteSelected}
+                                className="flex items-center gap-2 px-4 py-2 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                                データ削除
+                            </button>
+                            <button 
+                                onClick={handleOpenExport}
+                                className="flex items-center gap-2 px-4 py-2 bg-emerald-50 border border-emerald-200 text-emerald-600 rounded-lg text-sm font-medium hover:bg-emerald-100 transition-colors"
+                            >
+                                <Download className="w-4 h-4" />
+                                データエクスポート
+                            </button>
+                        </div>
+                    ) : null}
                 </div>
             </div>
 
@@ -303,7 +459,15 @@ const LibraryLayer: React.FC<LibraryLayerProps> = ({ results }) => {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                         {processedResults.map(r => (
-                            <tr key={r.id} className="group hover:bg-slate-50 transition-colors">
+                            <tr 
+                                key={r.id} 
+                                onClick={() => setSelectedResultId(r.id === selectedResultId ? null : r.id)}
+                                className={`group transition-colors cursor-pointer ${
+                                    selectedResultId === r.id 
+                                    ? 'bg-blue-50/50 border-l-4 border-blue-500' 
+                                    : 'hover:bg-slate-50 border-l-4 border-transparent'
+                                }`}
+                            >
                                 <td className="px-6 py-4">
                                     <div className="font-mono font-medium text-slate-700">{r.id}</div>
                                     <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
@@ -333,7 +497,7 @@ const LibraryLayer: React.FC<LibraryLayerProps> = ({ results }) => {
                                 </td>
                                 <td className="px-6 py-4 text-right">
                                     <button 
-                                        onClick={() => setSelectedResult(r)}
+                                        onClick={(e) => { e.stopPropagation(); setViewDetailResult(r); }}
                                         className="text-slate-400 hover:text-blue-600 transition-colors p-2 hover:bg-blue-50 rounded-full"
                                     >
                                         <FileText className="w-4 h-4" />

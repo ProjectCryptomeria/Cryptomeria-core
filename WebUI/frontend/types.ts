@@ -4,6 +4,7 @@ export enum AppLayer {
   MONITORING = 'monitoring',
   DEPLOYMENT = 'deployment',
   ECONOMY = 'economy',
+  SCENARIO = 'scenario', // Added Scenario Layer
   EXPERIMENT = 'experiment',
   LIBRARY = 'library',
 }
@@ -54,16 +55,24 @@ export enum TransmitterStrategy {
   MULTI_BURST = 'MultiBurst',
 }
 
+export interface RealFileConfig {
+  fileCount: number;
+  totalSizeMB: number;
+  structure: string; // ASCII Tree representation
+}
+
 export interface ExperimentConfig {
   allocator: AllocatorStrategy;
   transmitter: TransmitterStrategy;
   targetChains: string[];
   uploadType: 'Virtual' | 'Real';
+  projectName: string; // Required for both
   virtualConfig?: {
     sizeMB: number;
     chunkSizeKB: number;
     files: number;
   };
+  realConfig?: RealFileConfig;
   userId?: string; // Selected User
   shouldFail?: boolean; // For simulation
 }

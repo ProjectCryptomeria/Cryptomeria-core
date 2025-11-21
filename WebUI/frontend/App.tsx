@@ -8,6 +8,7 @@ import DeploymentLayer from './layers/DeploymentLayer';
 import EconomyLayer from './layers/EconomyLayer';
 import ExperimentLayer from './layers/ExperimentLayer';
 import LibraryLayer from './layers/LibraryLayer';
+import ScenarioLayer from './layers/ScenarioLayer';
 import { LayoutDashboard, Bell, CheckCircle, AlertTriangle, X, Trash2, Info } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -172,6 +173,16 @@ const App: React.FC = () => {
       }
   };
 
+  const handleDeleteScenario = (id: string) => {
+      setScenarios(scenarios.filter(s => s.id !== id));
+      addToast('success', '削除完了', 'シナリオを削除しました。');
+  };
+
+  const handleDeleteResult = (id: string) => {
+      setResults(results.filter(r => r.id !== id));
+      addToast('success', '削除完了', '実験結果データを削除しました。');
+  };
+
   // --- Experiment Logic ---
   const startExperiment = (config: ExperimentConfig, scenarioName: string, estimatedCost: number) => {
     if (experimentState.isRunning) return;
@@ -204,6 +215,11 @@ const App: React.FC = () => {
     const shouldFail = config.shouldFail || false;
     const failAt = 65; // Fail at 65% if scheduled
 
+    // Determine actual chunkSize for logging
+    const chunkSizeKB = config.uploadType === 'Real' && config.realConfig 
+      ? Math.floor((config.realConfig.totalSizeMB * 1024) / 10) || 64 // Mock logic for real files
+      : config.virtualConfig?.chunkSizeKB || 64;
+
     experimentInterval.current = setInterval(() => {
       p += 1;
       
@@ -211,7 +227,7 @@ const App: React.FC = () => {
       const newLogs: string[] = [];
       const time = new Date().toLocaleTimeString('ja-JP');
       
-      if (p === 5) newLogs.push(`[${time}] Splitting data into ${config.virtualConfig?.chunkSizeKB}KB chunks...`);
+      if (p === 5) newLogs.push(`[${time}] Splitting data into ${chunkSizeKB}KB chunks...`);
       if (p === 20) newLogs.push(`[${time}] Generating transactions... Strategy: ${config.allocator}`);
       if (p === 40) newLogs.push(`[${time}] Broadcasting to ${config.targetChains.length} chains...`);
       
@@ -244,273 +260,266 @@ const App: React.FC = () => {
       }
 
       if (p === 90) newLogs.push(`[${time}] Verifying manifest on MetaChain...`);
-
-      // Update State
-      setExperimentState(prev => ({
-        ...prev,
-        progress: p,
-        logs: [...prev.logs, ...newLogs],
-        statusMessage: p < 100 ? "実行中..." : "完了",
-      }));
-
-      // Completion
-      if (p >= 100) {
+      if (p === 100) {
         clearInterval(experimentInterval.current!);
-        const successLogs = [`[${time}] Experiment finished successfully.`];
+        const successLogs = [...newLogs, `[${time}] Experiment Completed Successfully.`];
         
         setExperimentState(prev => ({
           ...prev,
           isRunning: false,
           progress: 100,
           logs: [...prev.logs, ...successLogs],
-          statusMessage: "正常完了",
+          statusMessage: "完了",
         }));
 
-        // Success Refund Logic
-        const actualCost = Math.floor(estimatedCost * 0.9); // Actual is slightly less than estimate
-        const refund = estimatedCost - actualCost;
-
-        if (refund > 0) {
-            setUsers(prev => prev.map(u => u.id === userId ? { ...u, balance: u.balance + refund } : u));
-        }
-
-        addToast('success', '実験完了', `正常完了。コスト: ${actualCost} TKN (返金: ${refund} TKN)`);
-        
-        // Save Success Result
+        addToast('success', '実験完了', 'すべてのデータが正常に処理されました。');
         saveResult(scenarioName, 'SUCCESS', config, startTime, Date.now());
+        return;
       }
-    }, 80); // Speed of simulation
+
+      setExperimentState(prev => ({
+        ...prev,
+        progress: p,
+        logs: newLogs.length > 0 ? [...prev.logs, ...newLogs] : prev.logs,
+        statusMessage: p < 30 ? "Data Sharding..." : p < 80 ? "Broadcasting..." : "Verifying...",
+      }));
+
+    }, 50); // Simulation Speed
   };
 
-  const saveResult = (
-    name: string, 
-    status: 'SUCCESS' | 'FAILED', 
-    config: ExperimentConfig, 
-    start: number, 
-    end: number
-  ) => {
-    const sizeMB = config.virtualConfig?.sizeMB || 0;
-    const duration = end - start;
-    // Simulate random throughput based on success/fail
-    const throughput = status === 'SUCCESS' ? (sizeMB * 1024 * 1024 * 8) / (duration / 1000) : 0;
+  const saveResult = (scenarioName: string, status: 'SUCCESS' | 'FAILED' | 'ABORTED', config: ExperimentConfig, startTime: number, endTime: number) => {
+    const durationMs = endTime - startTime;
     
+    // Correctly calculate data size based on upload type
+    const dataSizeMB = config.uploadType === 'Virtual'
+        ? (config.virtualConfig?.sizeMB || 0)
+        : (config.realConfig?.totalSizeMB || 0);
+
+    const chunkSizeKB = config.uploadType === 'Virtual'
+        ? (config.virtualConfig?.chunkSizeKB || 0)
+        : (config.realConfig ? Math.round((config.realConfig.totalSizeMB * 1024) / 100) : 64); // Rough estimate for real
+
+    // Mock calculations for metrics
+    const uploadTimeMs = Math.floor(durationMs * 0.7);
+    const downloadTimeMs = Math.floor(durationMs * 0.3);
+    
+    // Calculate Throughput (bps) = (SizeMB * 1024 * 1024 * 8) / (TimeSeconds)
+    // Use upload time for upload throughput. Avoid division by zero.
+    const throughputBps = (uploadTimeMs > 0 && dataSizeMB > 0)
+        ? Math.floor((dataSizeMB * 1024 * 1024 * 8) / (uploadTimeMs / 1000)) 
+        : 0;
+
     const result: ExperimentResult = {
-      id: crypto.randomUUID().slice(0, 8),
-      scenarioName: name || "Untitled Scenario",
+      id: `exp-${Date.now()}`,
+      scenarioName,
       executedAt: new Date().toISOString(),
-      status: status,
-      dataSizeMB: sizeMB,
-      chunkSizeKB: config.virtualConfig?.chunkSizeKB || 64,
-      totalTxCount: Math.floor((sizeMB * 1024) / 64) + 2, // Approx calc
+      status,
+      dataSizeMB,
+      chunkSizeKB,
+      totalTxCount: Math.floor(dataSizeMB * 1024 / (chunkSizeKB || 64)) || 0,
       allocator: config.allocator,
       transmitter: config.transmitter,
       targetChainCount: config.targetChains.length,
       usedChains: config.targetChains,
-      uploadTimeMs: Math.floor(duration * 0.7), // Mock breakdown
-      downloadTimeMs: Math.floor(duration * 0.3), // Mock breakdown
-      throughputBps: throughput,
+      uploadTimeMs,
+      downloadTimeMs,
+      throughputBps,
+      logs: experimentState.logs // Snapshot
     };
 
     setResults(prev => [result, ...prev]);
   };
 
-  // --- Layer Rendering ---
-  const renderLayer = () => {
-    switch (activeLayer) {
-      case AppLayer.MONITORING: 
-        return <MonitoringLayer deployedNodeCount={deployedNodeCount} />;
-      case AppLayer.DEPLOYMENT: 
-        return <DeploymentLayer 
-            setDeployedNodeCount={setDeployedNodeCount} 
-            deployedNodeCount={deployedNodeCount}
-            setIsDockerBuilt={setIsDockerBuilt}
-            isDockerBuilt={isDockerBuilt}
-        />;
-      case AppLayer.ECONOMY: 
-        return <EconomyLayer 
-          users={users} 
-          systemAccounts={systemAccounts}
-          onCreateUser={handleCreateUser} 
-          onDeleteUser={handleDeleteUser} 
-          onFaucet={handleFaucet} 
-        />;
-      case AppLayer.EXPERIMENT: 
-        return <ExperimentLayer 
-          activeExperiment={experimentState}
-          users={users}
-          scenarios={scenarios}
-          deployedNodeCount={deployedNodeCount}
-          onRunExperiment={startExperiment}
-          onSaveScenario={handleSaveScenario}
-          notify={addToast}
-        />;
-      case AppLayer.LIBRARY: 
-        return <LibraryLayer results={results} />;
-      default: 
-        return <MonitoringLayer deployedNodeCount={deployedNodeCount} />;
-    }
-  };
-
   return (
-    <div className="flex h-screen bg-slate-50 text-slate-900 font-sans overflow-hidden relative">
+    <div className="h-screen overflow-hidden flex flex-col bg-slate-50 text-slate-900 font-sans selection:bg-blue-100 selection:text-blue-900">
       
-      {/* Active Toasts Container (Max 3) */}
-      <div className="absolute top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
-        {toasts.map(toast => (
-          <div 
-            key={toast.id} 
-            className={`pointer-events-auto flex items-start gap-3 p-4 rounded-lg shadow-xl border transition-all duration-500 animate-in fade-in slide-in-from-top-2 ${
-              toast.type === 'success' 
-                ? 'bg-white border-l-4 border-l-emerald-500 text-slate-800' 
-                : 'bg-white border-l-4 border-l-red-500 text-slate-800'
-            }`}
-          >
-             <div className={`mt-0.5 ${toast.type === 'success' ? 'text-emerald-500' : 'text-red-500'}`}>
-               {toast.type === 'success' ? <CheckCircle className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
-             </div>
-             <div className="min-w-[200px]">
-               <h4 className="font-bold text-sm">{toast.title}</h4>
-               <p className="text-xs text-slate-500 mt-1">{toast.message}</p>
-             </div>
-             <button onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))} className="text-slate-400 hover:text-slate-600">
-               <X className="w-4 h-4" />
-             </button>
-          </div>
-        ))}
-      </div>
-
-      {/* Sidebar Navigation */}
-      <aside className="w-64 bg-slate-900 text-white flex flex-col shadow-xl z-20 shrink-0">
-        <div className="p-6 border-b border-slate-800 flex items-center gap-3">
-           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-600/50">
-              <LayoutDashboard className="w-5 h-5 text-white" />
+      {/* --- Header --- */}
+      <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between z-40 shadow-sm shrink-0">
+        <div className="flex items-center gap-3">
+           <div className="bg-blue-600 p-1.5 rounded-lg">
+             <LayoutDashboard className="text-white w-5 h-5" />
            </div>
            <div>
-             <h1 className="font-bold text-lg tracking-tight">RaidChain</h1>
-             <p className="text-xs text-slate-400">WebUI Controller v2.0</p>
+               <h1 className="font-bold text-lg tracking-tight text-slate-900 leading-none">RaidChain <span className="text-slate-400 font-light">WebUI</span></h1>
+               <div className="text-[10px] text-slate-500 font-mono leading-none mt-1">v2.4.0-rc1 • Cluster: minikube</div>
            </div>
         </div>
 
-        <nav className="flex-1 p-4 space-y-2">
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeLayer === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => setActiveLayer(item.id)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group ${
-                  isActive 
-                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' 
-                    : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                }`}
-              >
-                <Icon className={`w-5 h-5 ${isActive ? 'text-white' : 'text-slate-500 group-hover:text-white'}`} />
-                <div className="text-left">
-                  <div className={`text-sm font-medium ${isActive ? 'text-white' : ''}`}>{item.label}</div>
-                  <div className={`text-[10px] ${isActive ? 'text-blue-200' : 'text-slate-600'}`}>{item.subLabel}</div>
+        <div className="flex items-center gap-4">
+             {/* System Status Indicator */}
+             <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-full border border-slate-200">
+                 <div className={`w-2 h-2 rounded-full ${deployedNodeCount > 0 ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></div>
+                 <span className="text-xs font-medium text-slate-600">
+                     {deployedNodeCount > 0 ? 'System Online' : 'System Offline'}
+                 </span>
+             </div>
+
+             {/* Notifications */}
+             <div className="relative" ref={notificationRef}>
+                 <button 
+                    className="relative p-2 text-slate-400 hover:text-slate-600 transition-colors hover:bg-slate-100 rounded-full"
+                    onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+                 >
+                     <Bell className="w-5 h-5" />
+                     {notifications.filter(n => !n.read).length > 0 && (
+                         <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white"></span>
+                     )}
+                 </button>
+
+                 {isNotificationOpen && (
+                     <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-xl border border-slate-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                         <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                             <h3 className="text-sm font-bold text-slate-700">Notifications</h3>
+                             <button onClick={clearNotifications} className="text-xs text-blue-600 hover:underline">Clear all</button>
+                         </div>
+                         <div className="max-h-80 overflow-y-auto">
+                             {notifications.length === 0 ? (
+                                 <div className="p-8 text-center text-slate-400 text-sm">No notifications</div>
+                             ) : (
+                                 notifications.map(n => (
+                                     <div key={n.id} className="px-4 py-3 border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                                         <div className="flex gap-3">
+                                             <div className={`mt-1 ${n.type === 'success' ? 'text-emerald-500' : 'text-red-500'}`}>
+                                                 {n.type === 'success' ? <CheckCircle className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+                                             </div>
+                                             <div>
+                                                 <div className="text-sm font-medium text-slate-800">{n.title}</div>
+                                                 <div className="text-xs text-slate-500 mt-0.5 leading-relaxed">{n.message}</div>
+                                                 <div className="text-[10px] text-slate-400 mt-1 text-right">
+                                                     {new Date(n.timestamp).toLocaleTimeString()}
+                                                 </div>
+                                             </div>
+                                         </div>
+                                     </div>
+                                 ))
+                             )}
+                         </div>
+                     </div>
+                 )}
+             </div>
+        </div>
+      </header>
+
+      {/* --- Navigation & Main Content --- */}
+      <div className="flex flex-1 overflow-hidden">
+        
+        {/* Sidebar Nav */}
+        <nav className="w-64 bg-white border-r border-slate-200 flex flex-col py-6 gap-1 z-30 shadow-[4px_0_24px_-12px_rgba(0,0,0,0.1)] shrink-0 overflow-y-auto">
+            <div className="px-6 mb-2 text-xs font-bold text-slate-400 uppercase tracking-wider">Main Menu</div>
+            {NAV_ITEMS.map(item => {
+                const isActive = activeLayer === item.id;
+                return (
+                    <button
+                        key={item.id}
+                        onClick={() => setActiveLayer(item.id)}
+                        className={`relative mx-3 px-4 py-3 rounded-xl text-left transition-all duration-200 flex items-center gap-3 group ${
+                            isActive 
+                            ? 'bg-blue-50 text-blue-700 shadow-sm' 
+                            : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                        }`}
+                    >
+                        {isActive && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-blue-500 rounded-r-full"></div>}
+                        <item.icon className={`w-5 h-5 ${isActive ? 'text-blue-600' : 'text-slate-400 group-hover:text-slate-600'}`} />
+                        <div>
+                            <div className={`font-bold text-sm ${isActive ? 'text-blue-800' : 'text-slate-700'}`}>{item.label}</div>
+                            <div className="text-[10px] text-slate-400 font-medium">{item.subLabel}</div>
+                        </div>
+                    </button>
+                );
+            })}
+            
+            <div className="mt-auto px-6 pt-6 border-t border-slate-100">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <div className="flex items-center gap-2 mb-2">
+                        <Info className="w-4 h-4 text-blue-500" />
+                        <span className="text-xs font-bold text-slate-700">Cluster Info</span>
+                    </div>
+                    <div className="space-y-1">
+                        <div className="flex justify-between text-[10px]">
+                            <span className="text-slate-500">Provider</span>
+                            <span className="font-mono text-slate-700">Minikube</span>
+                        </div>
+                        <div className="flex justify-between text-[10px]">
+                            <span className="text-slate-500">K8s Ver</span>
+                            <span className="font-mono text-slate-700">v1.28.3</span>
+                        </div>
+                        <div className="flex justify-between text-[10px]">
+                            <span className="text-slate-500">Memory</span>
+                            <span className="font-mono text-slate-700">8192MB</span>
+                        </div>
+                    </div>
                 </div>
-                {/* Running indicator in nav */}
-                {item.id === AppLayer.EXPERIMENT && experimentState.isRunning && (
-                   <div className="ml-auto w-2 h-2 bg-emerald-500 rounded-full animate-pulse shadow-lg shadow-emerald-500/50"></div>
-                )}
-              </button>
-            );
-          })}
+            </div>
         </nav>
 
-        <div className="p-4 border-t border-slate-800">
-          <div className="bg-slate-800 rounded-lg p-3 flex items-center gap-3">
-             <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-             <div className="text-xs text-slate-300">
-                System Status: <span className="text-emerald-400 font-bold">Online</span>
-             </div>
-          </div>
-        </div>
-      </aside>
+        {/* Main Viewport */}
+        <main className="flex-1 bg-slate-50/50 relative overflow-hidden">
+            
+            {/* Layer Container */}
+            <div className="h-full w-full p-6 overflow-y-auto custom-scrollbar">
+                {activeLayer === AppLayer.MONITORING && <MonitoringLayer deployedNodeCount={deployedNodeCount} />}
+                
+                {activeLayer === AppLayer.DEPLOYMENT && (
+                    <DeploymentLayer 
+                        setDeployedNodeCount={setDeployedNodeCount} 
+                        deployedNodeCount={deployedNodeCount}
+                        setIsDockerBuilt={setIsDockerBuilt}
+                        isDockerBuilt={isDockerBuilt}
+                    />
+                )}
+                
+                {activeLayer === AppLayer.ECONOMY && (
+                    <EconomyLayer 
+                        users={users} 
+                        systemAccounts={systemAccounts} 
+                        onCreateUser={handleCreateUser} 
+                        onDeleteUser={handleDeleteUser}
+                        onFaucet={handleFaucet}
+                    />
+                )}
 
-      {/* Main Content Area */}
-      <main className="flex-1 flex flex-col h-full relative overflow-hidden">
-        {/* Header */}
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 shadow-sm z-10 shrink-0">
-           <div>
-             <h2 className="text-xl font-bold text-slate-800">
-                {NAV_ITEMS.find(n => n.id === activeLayer)?.label} Layer
-             </h2>
-           </div>
-           <div className="flex items-center gap-4">
-              {experimentState.isRunning && (
-                 <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-blue-50 border border-blue-100 rounded-full">
-                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                    <span className="text-xs font-bold text-blue-700">実験実行中... {experimentState.progress}%</span>
-                 </div>
-              )}
-              
-              {/* Notification Bell Area */}
-              <div className="relative" ref={notificationRef}>
-                  <button 
-                    onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                    className={`relative p-2 transition-colors rounded-full hover:bg-slate-100 ${isNotificationOpen ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:text-blue-600'}`}
-                  >
-                     <Bell className="w-5 h-5" />
-                     {notifications.length > 0 && (
-                        <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
-                     )}
-                  </button>
-
-                  {/* Notification Dropdown */}
-                  {isNotificationOpen && (
-                      <div className="absolute top-full right-0 mt-2 w-80 bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-100 z-50">
-                          <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                              <h3 className="font-bold text-slate-700 text-sm">通知センター</h3>
-                              {notifications.length > 0 && (
-                                  <button onClick={clearNotifications} className="text-xs text-slate-400 hover:text-red-500 flex items-center gap-1">
-                                      <Trash2 className="w-3 h-3" />
-                                      すべて消去
-                                  </button>
-                              )}
-                          </div>
-                          <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
-                              {notifications.length === 0 ? (
-                                  <div className="p-8 text-center text-slate-400 text-sm flex flex-col items-center">
-                                      <Bell className="w-8 h-8 mb-2 opacity-20" />
-                                      通知はありません
-                                  </div>
-                              ) : (
-                                  <div className="divide-y divide-slate-100">
-                                      {notifications.map((notif) => (
-                                          <div key={notif.timestamp + notif.id} className="p-3 hover:bg-slate-50 transition-colors">
-                                              <div className="flex items-start gap-3">
-                                                  <div className={`mt-1 p-1 rounded-full ${notif.type === 'success' ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
-                                                      {notif.type === 'success' ? <CheckCircle className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
-                                                  </div>
-                                                  <div>
-                                                      <h4 className="text-sm font-bold text-slate-800">{notif.title}</h4>
-                                                      <p className="text-xs text-slate-500 mt-1 leading-relaxed">{notif.message}</p>
-                                                      <div className="text-[10px] text-slate-400 mt-1 text-right">
-                                                          {new Date(notif.timestamp).toLocaleTimeString('ja-JP')}
-                                                      </div>
-                                                  </div>
-                                              </div>
-                                          </div>
-                                      ))}
-                                  </div>
-                              )}
-                          </div>
-                      </div>
-                  )}
-              </div>
-
-           </div>
-        </header>
-
-        {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-8 bg-slate-50/50">
-            <div className="max-w-7xl mx-auto">
-               {renderLayer()}
+                {activeLayer === AppLayer.SCENARIO && (
+                    <ScenarioLayer 
+                        scenarios={scenarios}
+                        onDeleteScenario={handleDeleteScenario}
+                    />
+                )}
+                
+                {activeLayer === AppLayer.EXPERIMENT && (
+                    <ExperimentLayer 
+                        activeExperiment={experimentState}
+                        users={users}
+                        scenarios={scenarios}
+                        deployedNodeCount={deployedNodeCount}
+                        onRunExperiment={startExperiment}
+                        onSaveScenario={handleSaveScenario}
+                        notify={addToast}
+                    />
+                )}
+                
+                {activeLayer === AppLayer.LIBRARY && <LibraryLayer results={results} onDeleteResult={handleDeleteResult} />}
             </div>
-        </div>
-      </main>
+
+            {/* Toast Overlay */}
+            <div className="absolute bottom-6 right-6 z-50 flex flex-col gap-3 pointer-events-none">
+                {toasts.map(toast => (
+                    <div key={toast.id} className="bg-white rounded-lg shadow-lg border border-slate-200 p-4 w-80 animate-in slide-in-from-right-10 fade-in duration-300 pointer-events-auto flex items-start gap-3">
+                        <div className={`mt-0.5 ${toast.type === 'success' ? 'text-emerald-500' : 'text-red-500'}`}>
+                            {toast.type === 'success' ? <CheckCircle className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
+                        </div>
+                        <div className="flex-1">
+                            <h4 className="text-sm font-bold text-slate-800">{toast.title}</h4>
+                            <p className="text-xs text-slate-500 mt-1 leading-relaxed">{toast.message}</p>
+                        </div>
+                        <button onClick={() => setToasts(t => t.filter(i => i.id !== toast.id))} className="text-slate-400 hover:text-slate-600">
+                            <X className="w-4 h-4" />
+                        </button>
+                    </div>
+                ))}
+            </div>
+
+        </main>
+      </div>
     </div>
   );
 };

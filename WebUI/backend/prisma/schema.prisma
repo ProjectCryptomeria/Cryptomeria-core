@@ -1,0 +1,78 @@
+// WebUI/backend/prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  // url は prisma.config.ts および PrismaClient コンストラクタで設定するため削除
+}
+
+// ------------------------------------------------------
+// 1. User Management (Account & Economy Layer)
+// ------------------------------------------------------
+model User {
+  id                String   @id @default(uuid())
+  address           String   @unique
+  role              String   @default("client") // "admin" | "client"
+  
+  // 秘密鍵は暗号化して保存 (Backendのみで復号)
+  encryptedMnemonic String
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// ------------------------------------------------------
+// 2. Scenario Management (Experiment Layer)
+// ------------------------------------------------------
+model Scenario {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  description  String?
+  
+  // 実験設定 (ExperimentConfig) をJSONとして保存
+  // 構造: { allocator, transmitter, targetChains[], uploadType, ... }
+  config       String   // SQLiteではStringとして格納し、アプリ側でJSONパースすることを推奨
+  
+  lastModified DateTime @updatedAt
+  createdAt    DateTime @default(now())
+}
+
+// ------------------------------------------------------
+// 3. Experiment Results (Library/Analysis Layer)
+// ------------------------------------------------------
+model Result {
+  id               String   @id @default(uuid())
+  scenarioName     String
+  executedAt       DateTime @default(now())
+  status           String   // "SUCCESS" | "FAILED" | "ABORTED"
+  
+  // --- Scenario Snapshot (実行時の設定) ---
+  uploadType       String   // "Virtual" | "Real"
+  allocator        String   // "Static", "RoundRobin", "Random", "Available"
+  transmitter      String   // "OneByOne", "MultiBurst"
+  targetChainCount Int
+  
+  // 使用したチェーンのリスト (例: ["data-0", "data-2"])
+  usedChains       String   // JSON string
+  
+  // データ詳細
+  dataSizeMB       Int
+  chunkSizeKB      Int
+  totalTxCount     Int
+  
+  // --- Performance Metrics ---
+  uploadTimeMs     Int
+  downloadTimeMs   Int
+  throughputBps    Float    // bits per second
+  
+  // 仮想通貨消費量 (概算)
+  totalGasUsed     Float?
+  
+  // --- Logs & Errors ---
+  // 実行ログの配列 (例: ["[INFO] Start...", "[ERROR] Failed..."])
+  logs             String?  // JSON string (データ量が大きいためText扱い)
+  errorMessage     String?
+}

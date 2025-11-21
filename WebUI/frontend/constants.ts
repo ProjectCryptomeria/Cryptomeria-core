@@ -1,5 +1,5 @@
 import { AppLayer } from './types';
-import { Activity, Server, Coins, TestTube, Library } from 'lucide-react';
+import { Activity, Server, Coins, TestTube, Library, ScrollText } from 'lucide-react';
 
 export const NAV_ITEMS = [
   {
@@ -19,6 +19,12 @@ export const NAV_ITEMS = [
     label: 'Economy',
     subLabel: 'アカウント・資金',
     icon: Coins,
+  },
+  {
+    id: AppLayer.SCENARIO,
+    label: 'Scenarios',
+    subLabel: 'シナリオ管理',
+    icon: ScrollText,
   },
   {
     id: AppLayer.EXPERIMENT,

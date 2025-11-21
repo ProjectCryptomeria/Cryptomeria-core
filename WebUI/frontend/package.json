@@ -16,7 +16,7 @@
     "recharts": "^3.4.1"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
+    "@types/node": "^24.10.1",
     "@types/react-is": "^19",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
