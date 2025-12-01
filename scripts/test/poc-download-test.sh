@@ -3,7 +3,7 @@ set -e
 
 NAMESPACE="raidchain"
 TEST_FILENAME="test-image.png"
-# 期待されるデータ (poc-upload-test.shで使用しているものと同じ)
+# 期待されるデータ
 EXPECTED_DATA="Hello_RaidChain_This_is_a_test_data_fragment_for_IBC_transfer_verification."
 
 # 書き込み可能な一時ディレクトリを使用
@@ -29,7 +29,7 @@ kubectl exec -n "$NAMESPACE" "$GWC_POD" -- rm -f "$OUTPUT_FILE"
 log "🔌 Triggering Download via GWC CLI..."
 log "    Target File: $TEST_FILENAME"
 
-# 修正: --output ではなく --save-dir を使用
+# ダウンロード実行
 kubectl exec -n "$NAMESPACE" "$GWC_POD" -- \
     gwcd q gateway download "$TEST_FILENAME" \
     --save-dir "$OUTPUT_DIR"
@@ -59,7 +59,9 @@ log "    Restored Hash: $RESTORED_HASH"
 if [ "$ORIGINAL_HASH" == "$RESTORED_HASH" ]; then
     success "🎉 Success! Data retrieved via GWC proxy matches original."
     
-    FILE_SIZE=$(kubectl exec -n "$NAMESPACE" "$GWC_POD" -- wc -c < "$OUTPUT_FILE")
+    # 修正: リダイレクトをやめ、コマンド引数として渡し、サイズ数値のみ抽出する
+    FILE_SIZE=$(kubectl exec -n "$NAMESPACE" "$GWC_POD" -- wc -c "$OUTPUT_FILE" | awk '{print $1}')
+    
     echo "      File Path: $OUTPUT_FILE"
     echo "      File Size: $FILE_SIZE bytes"
     echo "      Content  : $RESTORED_CONTENT"

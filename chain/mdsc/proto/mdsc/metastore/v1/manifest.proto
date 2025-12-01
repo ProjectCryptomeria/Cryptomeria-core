@@ -2,20 +2,20 @@ syntax = "proto3";
 package mdsc.metastore.v1;
 
 option go_package = "mdsc/x/metastore/types";
-
+import "gogoproto/gogo.proto";
 // 1. 最下層: データの断片の保存場所情報
 message FragmentLocation {
   string fdsc_id = 1;     // 保存先チェーンID (例: "fdsc-1")
   string fragment_id = 2; // フラグメントID (ハッシュ値)
 }
 
-// 2. 中間層: ファイル単位の情報
+// 2. 中間層: ファイル情報とその断片リスト
 message FileInfo {
-  string mime_type = 1; 
+  string mime_type = 1;
   // 修正: size -> file_size
   uint64 file_size = 2;
-  // ファイルを構成するフラグメントのリスト (順序通りに結合する必要がある)
-  repeated FragmentLocation fragments = 3; 
+  // omitemptyを外す設定 (これを追加して make proto-gen すると表示される可能性が高い)
+  repeated FragmentLocation fragments = 3 [(gogoproto.jsontag) = "fragments"];
 }
 
 // 3. 最上位: マニフェスト本体
