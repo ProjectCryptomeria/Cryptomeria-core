@@ -1,11 +1,36 @@
 syntax = "proto3";
-package mdsc.metastore.v1;
+package mdsc.metastore;
+
+import "gogoproto/gogo.proto";
 
 option go_package = "mdsc/x/metastore/types";
 
-// Manifest defines the Manifest message.
+// 1. 最下層: データの断片の保存場所情報
+message FragmentLocation {
+  string fdsc_id = 1;     // 保存先チェーンID (例: "fdsc-1")
+  string fragment_id = 2; // フラグメントID (ハッシュ値)
+}
+
+// 2. 中間層: ファイル単位の情報
+message FileInfo {
+  string mime_type = 1; 
+  uint64 size = 2; 
+  
+  // ファイルを構成するフラグメントのリスト (順序通りに結合する必要がある)
+  repeated FragmentLocation fragments = 3; 
+}
+
+// 3. 最上位: マニフェスト本体
 message Manifest {
-  string project_name = 1;
+  // Key (Index) は map 構造の外側で管理されるため、ここには ProjectName を含めなくて良いが、
+  // Igniteの仕様上、Indexフィールドがmessage内に含まれることがあるため、生成されたものを維持します。
+  string project_name = 1; 
+  
   string version = 2;
   string creator = 3;
+
+  // ファイルパスをキーとしたMap構造
+  // Key: ファイルパス (例: "index.html" や "assets/logo.png")
+  // Value: FileInfo (MIMEタイプやフラグメントリスト)
+  map<string, FileInfo> files = 4;
 }
