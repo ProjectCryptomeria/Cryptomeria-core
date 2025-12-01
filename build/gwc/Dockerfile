@@ -1,15 +1,21 @@
-# 実行に必要な最小限の環境としてAlpineを使用
-FROM alpine:3.19
+# 変更点: ベースイメージを軽量な debian:bookworm-slim に変更
+FROM debian:bookworm-slim
 
-# ca-certificatesをインストール
-RUN apk add --no-cache ca-certificates curl jq
+# --- 依存パッケージのインストール ---
+# ca-certificates, curl, jq に加え、
+# useraddで使用する /bin/bash と procps (プロセス管理ツール) を追加インストールします。
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	ca-certificates curl jq bash procps \
+	&& apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # セキュリティ向上のため、専用の非rootユーザーを作成
-RUN addgroup -S gwc && adduser -S gwc -G gwc
+# GID/UID競合を避けるためID指定を削除しました。（前回の修正済み内容を維持）
+RUN groupadd gwc && \
+	useradd -G gwc -s /bin/bash -m gwc
 
-# ローカルでビルドした静的バイナリをコピー
-# このバイナリはCGO_ENABLED=0でビルドされたもの
+# ローカルでビルドしたバイナリをコピー
 COPY dist/gwcd /usr/bin/gwcd
+
 # ユーザーを切り替え
 USER gwc
 

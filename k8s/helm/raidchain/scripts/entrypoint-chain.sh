@@ -10,6 +10,8 @@ CHAIN_BINARY="${CHAIN_APP_NAME}d"
 MNEMONIC_FILE="/etc/mnemonics/${CHAIN_INSTANCE_NAME}.mnemonic"
 TX_SIZE_COST_PER_BYTE=0 # 1バイトあたりのコストを研究実験のために0に設定 (以前は1)
 
+sleep Infinity
+
 # --- 初期化処理 ---
 if [ ! -d "$CHAIN_HOME/config" ]; then
     echo "--- Initializing chain: $CHAIN_ID (type: $CHAIN_APP_NAME) ---"
@@ -83,3 +85,4 @@ fi
 echo "--- Starting node for $CHAIN_ID ---"
 # minimum-gas-pricesを0に設定してノードを起動
 exec $CHAIN_BINARY start --home "$CHAIN_HOME" --minimum-gas-prices="0$DENOM" --log_level error --log_format json
+
