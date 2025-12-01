@@ -19,7 +19,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/flags"
 )
 
-// 変更点: フラグ名を "save-dir" に変更 (Cosmos SDKの標準フラグ "output" との競合を回避)
+// 変更: Cosmos SDKの標準フラグ "output" との競合を避けるため "save-dir" に変更
 const FlagOutput = "save-dir"
 
 type ManifestResponse struct {
@@ -76,14 +76,11 @@ func CmdDownload() *cobra.Command {
 				return fmt.Errorf("MDSC endpoint not found in registry. Please register it via 'tx register-storage'")
 			}
 			fmt.Printf("   -> Found MDSC at %s\n", mdscURL)
-			// FDSC-0のURLをデフォルトで取得（FDSC_IDはmanifestから取得するため、ここでは不要だが、ルーティングテストのために必要）
-			// FDSCのURLは動的に取得されるため、fdscURLの定義は不要
 
 			// --- 2. マニフェスト取得 ---
 			manifestUrl := fmt.Sprintf("%s/mdsc/metastore/v1/manifest/%s", mdscURL, filename)
 			fmt.Printf("🔍 Fetching manifest from %s...\n", manifestUrl)
 
-			// ... (HTTP GETとデコード処理は省略) ...
 			resp, err := http.Get(manifestUrl)
 			if err != nil {
 				return fmt.Errorf("failed to fetch manifest: %w", err)
@@ -150,7 +147,7 @@ func CmdDownload() *cobra.Command {
 					fmt.Printf("   ✅ Fetched fragment %d/%d\n", idx+1, totalFragments)
 				}(i, frag.FragmentId, frag.FdscId)
 			}
-			// ... (wait/error check/combine/save処理は省略) ...
+
 			wg.Wait()
 			close(errChan)
 
@@ -181,7 +178,7 @@ func CmdDownload() *cobra.Command {
 		},
 	}
 
-	// 変更点: フラグ名を "save-dir" に変更
+	// 変更: フラグ名を "save-dir" に設定
 	cmd.Flags().String(FlagOutput, ".", "Directory to save the downloaded file")
 	flags.AddQueryFlagsToCmd(cmd)
 

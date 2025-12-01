@@ -3,18 +3,18 @@ set -e
 
 NAMESPACE="raidchain"
 TEST_FILENAME="test-image.png"
+# 期待されるデータ (poc-upload-test.shで使用しているものと同じ)
 EXPECTED_DATA="Hello_RaidChain_This_is_a_test_data_fragment_for_IBC_transfer_verification."
-OUTPUT_FILE="/tmp/restored_data.txt"
+
+# 書き込み可能な一時ディレクトリを使用
+OUTPUT_DIR="/tmp"
+OUTPUT_FILE="$OUTPUT_DIR/$TEST_FILENAME"
 
 log() { echo -e "\033[1;34m[TEST]\033[0m $1"; }
 success() { echo -e "\033[1;32m[PASS]\033[0m $1"; }
 error() { echo -e "\033[1;31m[ERROR]\033[0m $1"; }
 
 log "🚀 Starting Proxy Download Test (Client -> GWC -> MDSC/FDSC)..."
-
-# Pod名とIP/Service名の取得 (Kubernetesクラスタ内部で解決されるため不要だが、ログ用に残す)
-MDSC_URL="http://raidchain-mdsc-0.raidchain-chain-headless.raidchain.svc.cluster.local:1317"
-FDSC_URL="http://raidchain-fdsc-0-0.raidchain-chain-headless.raidchain.svc.cluster.local:1317"
 
 GWC_POD=$(kubectl get pod -n "$NAMESPACE" -l app.kubernetes.io/instance=gwc -o jsonpath="{.items[0].metadata.name}")
 
@@ -23,21 +23,46 @@ if [ -z "$GWC_POD" ]; then
     exit 1
 fi
 
-log "🔌 Triggering Download via GWC CLI (No External Flags)..."
+# 前回の残骸を削除
+kubectl exec -n "$NAMESPACE" "$GWC_POD" -- rm -f "$OUTPUT_FILE"
+
+log "🔌 Triggering Download via GWC CLI..."
 log "    Target File: $TEST_FILENAME"
 
-# 修正: --output を --save-dir に変更
+# 修正: --output ではなく --save-dir を使用
 kubectl exec -n "$NAMESPACE" "$GWC_POD" -- \
     gwcd q gateway download "$TEST_FILENAME" \
-    --save-dir "/tmp"
+    --save-dir "$OUTPUT_DIR"
 
-# 検証: Pod内のファイルをcatして内容確認
-RESTORED_CONTENT=$(kubectl exec -n "$NAMESPACE" "$GWC_POD" -- cat "/tmp/$TEST_FILENAME")
+# 検証1: ファイルが存在するか
+EXISTS=$(kubectl exec -n "$NAMESPACE" "$GWC_POD" -- test -f "$OUTPUT_FILE" && echo "yes" || echo "no")
+if [ "$EXISTS" != "yes" ]; then
+    error "Downloaded file not found at $OUTPUT_FILE"
+    exit 1
+fi
 
-log "✅ Checking content..."
-if [ "$RESTORED_CONTENT" == "$EXPECTED_DATA" ]; then
+# 検証2: 内容の照合 (MD5ハッシュ比較)
+RESTORED_CONTENT=$(kubectl exec -n "$NAMESPACE" "$GWC_POD" -- cat "$OUTPUT_FILE")
+
+# Mac/Linux互換のため md5sum または md5 を使用
+calc_md5() {
+    echo -n "$1" | md5sum | awk '{print $1}' 2>/dev/null || echo -n "$1" | md5 | awk '{print $1}'
+}
+
+ORIGINAL_HASH=$(calc_md5 "$EXPECTED_DATA")
+RESTORED_HASH=$(calc_md5 "$RESTORED_CONTENT")
+
+log "✅ Verifying content integrity..."
+log "    Original Hash: $ORIGINAL_HASH"
+log "    Restored Hash: $RESTORED_HASH"
+
+if [ "$ORIGINAL_HASH" == "$RESTORED_HASH" ]; then
     success "🎉 Success! Data retrieved via GWC proxy matches original."
-    echo "      Data: $RESTORED_CONTENT"
+    
+    FILE_SIZE=$(kubectl exec -n "$NAMESPACE" "$GWC_POD" -- wc -c < "$OUTPUT_FILE")
+    echo "      File Path: $OUTPUT_FILE"
+    echo "      File Size: $FILE_SIZE bytes"
+    echo "      Content  : $RESTORED_CONTENT"
 else
     error "Data mismatch."
     echo "      Expected: $EXPECTED_DATA"

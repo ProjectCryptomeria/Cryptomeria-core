@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 set -e
 
 # --- 環境変数と設定 ---
@@ -8,6 +8,7 @@ POD_NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
 RELEASE_NAME=${RELEASE_NAME:-raidchain}
 
 RELAYER_HOME="/home/relayer/.relayer"
+GWCD_HOME="/home/relayer/.gwc-client" # gwcd用のConfigディレクトリを分ける
 KEY_NAME="relayer"
 DENOM="uatom"
 PATH_PREFIX="path"
@@ -52,16 +53,6 @@ EOF
         rly chains add --file "$TMP_JSON_FILE"
     done
 
-    # --- 2. キーのリストア ---
-    echo "--- Restoring relayer keys ---"
-    for CHAIN_ID in $CHAIN_IDS; do
-        MNEMONIC_FILE="${MNEMONICS_DIR}/${CHAIN_ID}.mnemonic"
-        echo "--> Waiting for mnemonic for ${CHAIN_ID}..."
-        while [ ! -f "$MNEMONIC_FILE" ]; do sleep 1; done
-        RELAYER_MNEMONIC=$(cat "$MNEMONIC_FILE")
-        rly keys restore "$CHAIN_ID" "$KEY_NAME" "$RELAYER_MNEMONIC"
-    done
-
     # --- 3. チェーンIDの分類 (GWC, MDSC, FDSC) ---
     GWC_ID=""
     MDSC_ID=""
@@ -80,6 +71,24 @@ EOF
     if [ -z "$GWC_ID" ]; then echo "Error: No 'gwc' chain found."; exit 1; fi
     if [ -z "$MDSC_ID" ]; then echo "Warning: No 'mdsc' chain found."; fi
     if [ -z "$FDSC_IDS" ]; then echo "Warning: No 'fdsc' chains found."; fi
+
+    # --- 2. キーのリストア ---
+    echo "--- Restoring relayer keys ---"
+    for CHAIN_ID in $CHAIN_IDS; do
+        MNEMONIC_FILE="${MNEMONICS_DIR}/${CHAIN_ID}.mnemonic"
+        echo "--> Waiting for mnemonic for ${CHAIN_ID}..."
+        while [ ! -f "$MNEMONIC_FILE" ]; do sleep 1; done
+        RELAYER_MNEMONIC=$(cat "$MNEMONIC_FILE")
+        
+        # rlyにキーをリストア
+        rly keys restore "$CHAIN_ID" "$KEY_NAME" "$RELAYER_MNEMONIC"
+
+        # 【追加】GWCの場合、gwcdコマンド実行用にローカルキーリングにもインポート
+        if [ "$CHAIN_ID" == "$GWC_ID" ]; then
+             echo "--> Importing relayer key to local gwcd keyring..."
+             echo "$RELAYER_MNEMONIC" | gwcd keys add "$KEY_NAME" --recover --keyring-backend test --home "$GWCD_HOME"
+        fi
+    done
 
     # --- 4. IBCパスの定義 ---
     echo "--- Defining IBC paths ---"
@@ -175,15 +184,15 @@ EOF
     done
 
     if [ -n "$REGISTRATION_ARGS" ]; then
-        # Relayerのアカウントを使用
-        TX_COMMAND="tx gateway register-storage $REGISTRATION_ARGS --from $KEY_NAME --chain-id $GWC_ID --keyring-backend test -y"
+        # 【修正】rly chains execではなく、ローカルのgwcdを使用してTxを発行
+        TX_COMMAND="gwcd tx gateway register-storage $REGISTRATION_ARGS --from $KEY_NAME --chain-id $GWC_ID --keyring-backend test --home $GWCD_HOME --node $RPC_NODE -y --output json"
         echo "--> Submitting: $TX_COMMAND"
         
-        TX_RESULT=$(
-            rly chains exec $GWC_ID "$TX_COMMAND --node $RPC_NODE" 2>&1
-        )
+        # 実行と結果取得
+        TX_RESULT=$($TX_COMMAND 2>&1)
 
-        if echo "$TX_RESULT" | grep -q "code: 0"; then
+        # 成功判定 (code: 0 が含まれているか)
+        if echo "$TX_RESULT" | grep -q '"code":0'; then
             echo "✅ Storage Endpoints successfully registered."
         else
             echo "❌ Failed to register Storage Endpoints."
@@ -191,7 +200,7 @@ EOF
         fi
     fi
     
-    # 修正: IBC初期化完了後、チェーンの安定化を待つための待機を追加
+    # IBC初期化完了後、チェーンの安定化を待つための待機を追加
     echo "--- Waiting 15s for chain state stabilization after IBC setup ---"
     sleep 10
 fi
