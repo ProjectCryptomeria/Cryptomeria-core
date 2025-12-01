@@ -16,9 +16,7 @@ type Keeper struct {
 	storeService corestore.KVStoreService
 	cdc          codec.Codec
 	addressCodec address.Codec
-	// Address capable of executing a MsgUpdateParams message.
-	// Typically, this should be the x/gov module account.
-	authority []byte
+	authority    []byte
 
 	Schema collections.Schema
 	Params collections.Item[types.Params]
@@ -26,6 +24,7 @@ type Keeper struct {
 	Port collections.Item[string]
 
 	ibcKeeperFn func() *ibckeeper.Keeper
+	// 修正: ScopedKeeper を削除（他ファイルでの引数エラー回避のため）
 
 	bankKeeper types.BankKeeper
 }
@@ -36,7 +35,7 @@ func NewKeeper(
 	addressCodec address.Codec,
 	authority []byte,
 	ibcKeeperFn func() *ibckeeper.Keeper,
-
+	// 修正: ScopedKeeper 引数を削除
 	bankKeeper types.BankKeeper,
 ) Keeper {
 	if _, err := addressCodec.BytesToString(authority); err != nil {
@@ -53,8 +52,9 @@ func NewKeeper(
 
 		bankKeeper:  bankKeeper,
 		ibcKeeperFn: ibcKeeperFn,
-		Port:        collections.NewItem(sb, types.PortKey, "port", collections.StringValue),
-		Params:      collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
+		// 修正: ScopedKeeper 削除
+		Port:   collections.NewItem(sb, types.PortKey, "port", collections.StringValue),
+		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 	}
 
 	schema, err := sb.Build()

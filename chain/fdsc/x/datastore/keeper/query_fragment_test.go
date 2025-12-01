@@ -18,7 +18,9 @@ func createNFragment(keeper keeper.Keeper, ctx context.Context, n int) []types.F
 	items := make([]types.Fragment, n)
 	for i := range items {
 		items[i].FragmentId = strconv.Itoa(i)
-		items[i].Data = []byte{1 + i%1, 2 + i%2, 3 + i%3}
+		// 修正: byte() でキャスト
+		items[i].Data = []byte{byte(1 + i%1), byte(2 + i%2), byte(3 + i%3)}
+		items[i].Creator = "any"
 		_ = keeper.Fragment.Set(ctx, items[i].FragmentId, items[i])
 	}
 	return items

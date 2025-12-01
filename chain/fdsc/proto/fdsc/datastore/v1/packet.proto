@@ -7,8 +7,16 @@ option go_package = "fdsc/x/datastore/types";
 message DatastorePacketData {
   oneof packet {
     NoData noData = 1;
+    // GWCのGatewayPacketData.fragmentPacket (field 2) と一致させる
+    FragmentPacket fragmentPacket = 2;
   }
 }
 
 // NoData defines an empty data packet.
 message NoData {}
+
+// FragmentPacket defines the data fragment received from GWC
+message FragmentPacket {
+  uint64 id = 1;
+  bytes  data = 2;
+}

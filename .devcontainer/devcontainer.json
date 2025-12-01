@@ -54,7 +54,9 @@
         "ms-azuretools.vscode-docker",
         "ms-kubernetes-tools.vscode-kubernetes-tools",
         "skellock.just",
-        "redhat.vscode-yaml"
+        "redhat.vscode-yaml",
+        "pbkit.vscode-pbkit",
+        "google.geminicodeassist"
       ],
       "settings": {
         "terminal.integrated.defaultProfile.linux": "bash",
