@@ -20,6 +20,9 @@ service Msg {
 
   // Upload defines the method for uploading a file to the gateway
   rpc Upload(MsgUpload) returns (MsgUploadResponse);
+
+  // RegisterStorage defines the method for registering storage node endpoints
+  rpc RegisterStorage(MsgRegisterStorage) returns (MsgRegisterStorageResponse);
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -46,10 +49,23 @@ message MsgUpdateParamsResponse {}
 // MsgUpload defines the request type for uploading a file
 message MsgUpload {
   option (cosmos.msg.v1.signer) = "creator";
-  
   string creator = 1;
   string filename = 2;
   bytes  data = 3;
 }
 
 message MsgUploadResponse {}
+
+// MsgRegisterStorage defines the request type for registering storage endpoints
+message MsgRegisterStorage {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  repeated StorageEndpoint endpoints = 2;
+}
+
+message StorageEndpoint {
+  string chain_id = 1;
+  string api_endpoint = 2;
+}
+
+message MsgRegisterStorageResponse {}

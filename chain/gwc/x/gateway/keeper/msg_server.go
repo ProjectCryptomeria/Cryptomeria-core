@@ -38,7 +38,6 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 	// (A) MDSCチャネルの取得
 	mdscChannel, err := k.Keeper.MetastoreChannel.Get(ctx)
 	if err != nil {
-		// 修正: エラーメッセージを小文字で開始
 		return nil, fmt.Errorf("MDSC channel not found. make sure MDSC is connected via IBC: %w", err)
 	}
 
@@ -50,7 +49,6 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 	defer iter.Close()
 
 	if !iter.Valid() {
-		// 修正: エラーメッセージを小文字で開始
 		return nil, fmt.Errorf("no FDSC channels found. make sure at least one FDSC is connected via IBC")
 	}
 
@@ -186,4 +184,18 @@ func (k Keeper) TransmitGatewayPacketData(
 	}
 
 	return sequence, nil
+}
+
+// 追加: RegisterStorage
+func (k msgServer) RegisterStorage(goCtx context.Context, msg *types.MsgRegisterStorage) (*types.MsgRegisterStorageResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	for _, ep := range msg.Endpoints {
+		if err := k.Keeper.StorageEndpoints.Set(ctx, ep.ChainId, ep.ApiEndpoint); err != nil {
+			return nil, fmt.Errorf("failed to save endpoint for %s: %w", ep.ChainId, err)
+		}
+		ctx.Logger().Info("Registered Storage Endpoint", "chain_id", ep.ChainId, "url", ep.ApiEndpoint)
+	}
+
+	return &types.MsgRegisterStorageResponse{}, nil
 }

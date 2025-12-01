@@ -23,11 +23,12 @@ type Keeper struct {
 	Params collections.Item[types.Params]
 	Port   collections.Item[string]
 
-	// --- 追加: チャネル管理用ストア ---
-	// MDSCへのチャネルID (単一)
-	MetastoreChannel collections.Item[string]
-	// FDSCへのチャネルID (集合/Set)
+	// チャネル管理用ストア
+	MetastoreChannel  collections.Item[string]
 	DatastoreChannels collections.KeySet[string]
+
+	// 追加: ChainID -> API URL のマップ
+	StorageEndpoints collections.Map[string, string]
 
 	ibcKeeperFn func() *ibckeeper.Keeper
 	bankKeeper  types.BankKeeper
@@ -58,9 +59,11 @@ func NewKeeper(
 		Port:        collections.NewItem(sb, types.PortKey, "port", collections.StringValue),
 		Params:      collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 
-		// --- 追加: ストアの初期化 ---
 		MetastoreChannel:  collections.NewItem(sb, types.MetastoreChannelKey, "metastore_channel", collections.StringValue),
 		DatastoreChannels: collections.NewKeySet(sb, types.DatastoreChannelKey, "datastore_channels", collections.StringKey),
+
+		// 追加: マップ初期化
+		StorageEndpoints: collections.NewMap(sb, types.StorageEndpointKey, "storage_endpoints", collections.StringKey, collections.StringValue),
 	}
 
 	schema, err := sb.Build()
@@ -77,7 +80,6 @@ func (k Keeper) GetAuthority() []byte {
 	return k.authority
 }
 
-// --- 追加: チャネル自動登録メソッド ---
 // RegisterChannel はハンドシェイク完了時に呼ばれ、相手のポート名を見て種別を自動判別・保存します
 func (k Keeper) RegisterChannel(ctx sdk.Context, portID, channelID string) error {
 	// IBC Keeperからチャネル情報を取得

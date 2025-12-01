@@ -27,8 +27,8 @@ func GetTxCmd() *cobra.Command {
 		RunE:                       client.ValidateCmd,
 	}
 
-	// 手動定義した CmdUpload をコマンドリストに追加
 	cmd.AddCommand(CmdUpload())
+	cmd.AddCommand(CmdRegisterStorage()) // 追加
 
 	return cmd
 }
@@ -38,12 +38,9 @@ func CmdUpload() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "upload [filename] [data]",
 		Short: "Broadcast message upload",
-		// 引数が正確に2つ必要であることを指定
-		Args: cobra.ExactArgs(2),
+		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			// 引数の取得
 			argFilename := args[0]
-			// 文字列として受け取ったデータをバイト列に変換
 			argData := []byte(args[1])
 
 			clientCtx, err := client.GetClientTxContext(cmd)
@@ -51,23 +48,58 @@ func CmdUpload() *cobra.Command {
 				return err
 			}
 
-			// メッセージの作成
-			msg := &types.MsgUpload{
-				Creator:  clientCtx.GetFromAddress().String(),
-				Filename: argFilename,
-				Data:     argData,
-			}
-
+			msg := types.NewMsgUpload(
+				clientCtx.GetFromAddress().String(),
+				argFilename,
+				argData,
+			)
 			if err := msg.ValidateBasic(); err != nil {
 				return err
 			}
-
-			// トランザクションの生成とブロードキャスト
 			return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)
 		},
 	}
 
 	flags.AddTxFlagsToCmd(cmd)
 
+	return cmd
+}
+
+// 追加: CmdRegisterStorage
+func CmdRegisterStorage() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "register-storage [chain-id] [url] ...",
+		Short: "Register storage node endpoints (e.g. mdsc http://localhost:1317)",
+		Args:  cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args)%2 != 0 {
+				return fmt.Errorf("arguments must be pairs of [chain-id] [url]")
+			}
+
+			clientCtx, err := client.GetClientTxContext(cmd)
+			if err != nil {
+				return err
+			}
+
+			var endpoints []*types.StorageEndpoint
+			for i := 0; i < len(args); i += 2 {
+				endpoints = append(endpoints, &types.StorageEndpoint{
+					ChainId:     args[i],
+					ApiEndpoint: args[i+1],
+				})
+			}
+
+			msg := types.NewMsgRegisterStorage(
+				clientCtx.GetFromAddress().String(),
+				endpoints,
+			)
+
+			if err := msg.ValidateBasic(); err != nil {
+				return err
+			}
+			return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)
+		},
+	}
+	flags.AddTxFlagsToCmd(cmd)
 	return cmd
 }

@@ -6,6 +6,7 @@ import "cosmos/base/query/v1beta1/pagination.proto";
 import "gogoproto/gogo.proto";
 import "google/api/annotations.proto";
 import "gwc/gateway/v1/params.proto";
+import "gwc/gateway/v1/tx.proto"; // StorageEndpoint型を利用するため
 
 option go_package = "gwc/x/gateway/types";
 
@@ -14,6 +15,11 @@ service Query {
   // Parameters queries the parameters of the module.
   rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
     option (google.api.http).get = "/gwc/gateway/v1/params";
+  }
+
+  // StorageEndpoints queries the registered storage endpoints.
+  rpc StorageEndpoints(QueryStorageEndpointsRequest) returns (QueryStorageEndpointsResponse) {
+    option (google.api.http).get = "/gwc/gateway/v1/storage_endpoints";
   }
 }
 
@@ -27,4 +33,15 @@ message QueryParamsResponse {
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
+}
+
+// QueryStorageEndpointsRequest is request type for the Query/StorageEndpoints RPC method.
+message QueryStorageEndpointsRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+// QueryStorageEndpointsResponse is response type for the Query/StorageEndpoints RPC method.
+message QueryStorageEndpointsResponse {
+  repeated StorageEndpoint endpoints = 1;
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }

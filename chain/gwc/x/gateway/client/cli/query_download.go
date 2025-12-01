@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,19 +13,14 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"gwc/x/gateway/types"
+
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/flags"
-	// "gwc/x/gateway/types" // typesが未使用なら削除、必要なら残す
 )
 
-// ダウンロード用のフラグ
-const (
-	FlagMdscNode = "mdsc-node"
-	FlagFdscNode = "fdsc-node" // 簡易的に1つ、またはカンマ区切り
-	FlagOutput   = "output"
-)
+const FlagOutput = "output"
 
-// 外部チェーンのレスポンス用構造体 (簡易定義)
 type ManifestResponse struct {
 	Manifest struct {
 		Files map[string]struct {
@@ -45,31 +42,41 @@ type FragmentResponse struct {
 func CmdDownload() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "download [filename]",
-		Short: "Download and restore a file via GWC Gateway logic",
+		Short: "Download file resolving endpoints from GWC",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			filename := args[0]
+			outputDir, _ := cmd.Flags().GetString(FlagOutput)
 
-			// 修正: clientCtx を _ に変更（未使用エラー回避）
-			_, err := client.GetClientQueryContext(cmd)
+			clientCtx, err := client.GetClientQueryContext(cmd)
 			if err != nil {
 				return err
 			}
 
-			// 1. 設定の取得
-			mdscURL, _ := cmd.Flags().GetString(FlagMdscNode)
-			fdscURL, _ := cmd.Flags().GetString(FlagFdscNode)
-			outputDir, _ := cmd.Flags().GetString(FlagOutput)
+			// --- 1. エンドポイント情報の取得 (Service Discovery) ---
+			fmt.Println("🔍 Resolving storage nodes from GWC...")
+			queryClient := types.NewQueryClient(clientCtx)
 
-			if mdscURL == "" || fdscURL == "" {
-				return fmt.Errorf("mdsc-node and fdsc-node flags are required")
+			// 全エンドポイントを取得
+			res, err := queryClient.StorageEndpoints(context.Background(), &types.QueryStorageEndpointsRequest{})
+			if err != nil {
+				return fmt.Errorf("failed to query storage endpoints: %w", err)
 			}
 
-			fmt.Printf("⬇️  Starting download for '%s'...\n", filename)
+			// マップ化 (ChainID -> URL)
+			endpointMap := make(map[string]string)
+			for _, ep := range res.Endpoints {
+				endpointMap[ep.ChainId] = ep.ApiEndpoint
+			}
 
-			// 2. MDSCからマニフェストを取得 (HTTP Query)
-			// URL: /mdsc/metastore/v1/manifest/{project_name}
-			// ここでは ProjectName = Filename と仮定
+			// MDSCのURL特定
+			mdscURL, ok := endpointMap["mdsc"]
+			if !ok {
+				return fmt.Errorf("MDSC endpoint not found in registry. Please register it via 'tx register-storage'")
+			}
+			fmt.Printf("   -> Found MDSC at %s\n", mdscURL)
+
+			// --- 2. MDSCからマニフェストを取得 ---
 			manifestUrl := fmt.Sprintf("%s/mdsc/metastore/v1/manifest/%s", mdscURL, filename)
 			fmt.Printf("🔍 Fetching manifest from %s...\n", manifestUrl)
 
@@ -80,7 +87,8 @@ func CmdDownload() *cobra.Command {
 			defer resp.Body.Close()
 
 			if resp.StatusCode != 200 {
-				return fmt.Errorf("manifest not found (status: %d)", resp.StatusCode)
+				bodyBytes, _ := io.ReadAll(resp.Body)
+				return fmt.Errorf("manifest not found (status: %d, body: %s)", resp.StatusCode, string(bodyBytes))
 			}
 
 			var mResp ManifestResponse
@@ -96,18 +104,29 @@ func CmdDownload() *cobra.Command {
 			totalFragments := len(fileInfo.Fragments)
 			fmt.Printf("📦 Found %d fragments. Downloading...\n", totalFragments)
 
-			// 3. FDSCから断片を並列ダウンロード
-			// 簡易化: すべて指定された fdscURL から取得する (本来はIDでルーティング)
+			// --- 3. FDSCから断片を並列ダウンロード ---
 			chunks := make([][]byte, totalFragments)
 			var wg sync.WaitGroup
 			errChan := make(chan error, totalFragments)
 
 			for i, frag := range fileInfo.Fragments {
 				wg.Add(1)
-				go func(idx int, fragID string) {
+				go func(idx int, fragID, fdscID string) {
 					defer wg.Done()
 
-					// URL: /fdsc/datastore/v1/fragment/{fragment_id}
+					// FDSCのURL解決
+					fdscURL, ok := endpointMap[fdscID]
+					if !ok {
+						// 見つからない場合はデフォルトのfdsc-0などにフォールバックするか、エラーにする
+						// ここでは簡易的に fdsc-0 を試す
+						if defaultURL, ok := endpointMap["fdsc-0"]; ok {
+							fdscURL = defaultURL
+						} else {
+							errChan <- fmt.Errorf("endpoint for %s not found", fdscID)
+							return
+						}
+					}
+
 					fragUrl := fmt.Sprintf("%s/fdsc/datastore/v1/fragment/%s", fdscURL, fragID)
 
 					fResp, err := http.Get(fragUrl)
@@ -131,15 +150,14 @@ func CmdDownload() *cobra.Command {
 
 					chunks[idx] = data
 					fmt.Printf("   ✅ Fetched fragment %d/%d\n", idx+1, totalFragments)
-				}(i, frag.FragmentId)
+				}(i, frag.FragmentId, frag.FdscId)
 			}
 
 			wg.Wait()
 			close(errChan)
 
-			// エラーチェック
 			if len(errChan) > 0 {
-				return <-errChan // 最初のエラーを返す
+				return <-errChan
 			}
 
 			// 4. 結合と保存
@@ -165,8 +183,6 @@ func CmdDownload() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String(FlagMdscNode, "", "URL of MDSC API node (e.g. http://localhost:30068)")
-	cmd.Flags().String(FlagFdscNode, "", "URL of FDSC API node (e.g. http://localhost:30067)")
 	cmd.Flags().String(FlagOutput, ".", "Output directory")
 	flags.AddQueryFlagsToCmd(cmd)
 

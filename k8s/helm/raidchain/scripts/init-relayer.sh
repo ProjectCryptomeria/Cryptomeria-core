@@ -24,9 +24,7 @@ CHAIN_IDS=$(echo "$CHAIN_NAMES_CSV" | tr ',' ' ')
 if [ ! -f "$RELAYER_HOME/config/config.yaml" ]; then
     echo "--- Initializing relayer configuration ---"
     
-    # 設定ファイルがない場合はパス情報もクリーンにしてID不整合を防ぐ
     rm -rf "$RELAYER_HOME/paths"
-
     rly config init
 
     TMP_DIR="/tmp/relayer-configs"
@@ -41,7 +39,6 @@ if [ ! -f "$RELAYER_HOME/config/config.yaml" ]; then
         GRPC_ADDR="${POD_HOSTNAME}.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local:9090"
         TMP_JSON_FILE="${TMP_DIR}/${CHAIN_ID}.json"
         
-        # ガス価格などの設定
         cat > "$TMP_JSON_FILE" <<EOF
 {
   "type": "cosmos",
@@ -87,14 +84,12 @@ EOF
     # --- 4. IBCパスの定義 ---
     echo "--- Defining IBC paths ---"
 
-    # Path: GWC <-> FDSC
     for FDSC_ID in $FDSC_IDS; do
         PATH_NAME="${PATH_PREFIX}-${GWC_ID}-to-${FDSC_ID}"
         echo "--> Defining path: $PATH_NAME"
         rly paths new "$GWC_ID" "$FDSC_ID" "$PATH_NAME"
     done
 
-    # Path: GWC <-> MDSC
     if [ -n "$MDSC_ID" ]; then
         PATH_NAME="${PATH_PREFIX}-${GWC_ID}-to-${MDSC_ID}"
         echo "--> Defining path: $PATH_NAME"
@@ -108,7 +103,8 @@ EOF
         echo "--> Checking $CHAIN_ID at $RPC_ADDR"
         ATTEMPTS=0; MAX_ATTEMPTS=60
         until [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; do
-            HEIGHT=$(curl -s "${RPC_ADDR}/status" | jq -r '.result.sync_info.latest_block_height // "0"')
+            STATUS_RES=$(curl -s "${RPC_ADDR}/status")
+            HEIGHT=$(echo "$STATUS_RES" | jq -r '.result.sync_info.latest_block_height // "0"')
             if [ -n "$HEIGHT" ] && [ "$HEIGHT" -ge 1 ]; then echo "     Chain '$CHAIN_ID' is ready (Height: $HEIGHT)."; break; fi
             ATTEMPTS=$((ATTEMPTS + 1)); sleep 3
         done
@@ -118,54 +114,35 @@ EOF
     # --- 6. クライアント・接続・チャネルの確立 (並列実行) ---
     echo "--- Establishing IBC connections (Parallel) ---"
 
-    # Function to link path
     link_path() {
         P_NAME=$1
         SRC_PORT=$2
         DST_PORT=$3
         echo "--> [Start] Linking $P_NAME ($SRC_PORT <-> $DST_PORT)"
-        
-        # Clients & Connection
-        # エラーハンドリング: 失敗したらリトライせずに終了させ、後続のwaitで検知
         rly transact clients "$P_NAME" --override || { echo "Failed to create clients for $P_NAME"; return 1; }
-        
-        # 待機時間を少し短縮 (10s -> 5s) 並列なので合計時間は気にならないが最適化
         sleep 5
-        
         rly transact connection "$P_NAME" || { echo "Failed to create connection for $P_NAME"; return 1; }
-        
         sleep 5
-        
-        # Channel
         rly transact channel "$P_NAME" \
             --src-port "$SRC_PORT" \
             --dst-port "$DST_PORT" \
             --order unordered \
             --version "raidchain-1" || { echo "Failed to create channel for $P_NAME"; return 1; }
-        
         echo "✅ [Done] Path $P_NAME linked."
     }
 
-    # バックグラウンドプロセスのPIDを保存するリスト
     PIDS=""
-
-    # GWC -> FDSCs
     for FDSC_ID in $FDSC_IDS; do
         PATH_NAME="${PATH_PREFIX}-${GWC_ID}-to-${FDSC_ID}"
-        # バックグラウンド実行 (&)
         link_path "$PATH_NAME" "gateway" "datastore" &
         PIDS="$PIDS $!"
     done
-
-    # GWC -> MDSC
     if [ -n "$MDSC_ID" ]; then
         PATH_NAME="${PATH_PREFIX}-${GWC_ID}-to-${MDSC_ID}"
-        # バックグラウンド実行 (&)
         link_path "$PATH_NAME" "gateway" "metastore" &
         PIDS="$PIDS $!"
     fi
 
-    # 全てのバックグラウンドプロセスの完了を待つ
     echo "--- Waiting for parallel linking tasks to finish... ---"
     for PID in $PIDS; do
         wait $PID
@@ -174,10 +151,47 @@ EOF
             exit 1
         fi
     done
+    
+    echo "--- IBC Initialization complete ---"
 
-    echo "--- Initialization complete ---"
+    # --- 7. ストレージエンドポイントの自動登録 ---
+    echo "--- Auto-Registering Storage Endpoints via On-chain Tx ---"
+
+    GWC_FULL_NAME="${RELEASE_NAME}-${GWC_ID}-0.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local"
+    RPC_NODE="http://${GWC_FULL_NAME}:26657"
+    API_PORT="1317"
+    REGISTRATION_ARGS=""
+
+    if [ -n "$MDSC_ID" ]; then
+        MDSC_FULL_NAME="${RELEASE_NAME}-${MDSC_ID}-0.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local"
+        MDSC_ENDPOINT="http://${MDSC_FULL_NAME}:${API_PORT}"
+        REGISTRATION_ARGS="$REGISTRATION_ARGS $MDSC_ID $MDSC_ENDPOINT"
+    fi
+
+    for FDSC_ID in $FDSC_IDS; do
+        FDSC_FULL_NAME="${RELEASE_NAME}-${FDSC_ID}-0.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local"
+        FDSC_ENDPOINT="http://${FDSC_FULL_NAME}:${API_PORT}"
+        REGISTRATION_ARGS="$REGISTRATION_ARGS $FDSC_ID $FDSC_ENDPOINT"
+    done
+
+    if [ -n "$REGISTRATION_ARGS" ]; then
+        # Relayerのアカウントを使用
+        TX_COMMAND="tx gateway register-storage $REGISTRATION_ARGS --from $KEY_NAME --chain-id $GWC_ID --keyring-backend test -y"
+        echo "--> Submitting: $TX_COMMAND"
+        
+        TX_RESULT=$(
+            rly chains exec $GWC_ID "$TX_COMMAND --node $RPC_NODE" 2>&1
+        )
+
+        if echo "$TX_RESULT" | grep -q "code: 0"; then
+            echo "✅ Storage Endpoints successfully registered."
+        else
+            echo "❌ Failed to register Storage Endpoints."
+            echo "$TX_RESULT"
+        fi
+    fi
+    
 fi
 
-# --- Relayerの起動 ---
 echo "--- Starting relayer ---"
 exec rly start --log-level warn --log-format json
