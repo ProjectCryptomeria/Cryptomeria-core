@@ -7,8 +7,23 @@ option go_package = "mdsc/x/metastore/types";
 message MetastorePacketData {
   oneof packet {
     NoData noData = 1;
+    ManifestPacket manifestPacket = 3;
   }
 }
 
 // NoData defines an empty data packet.
 message NoData {}
+
+// ManifestPacket (GWCと定義を一致させる)
+message ManifestPacket {
+  string filename = 1;
+  // 修正: size -> file_size
+  uint64 file_size = 2;
+  string mime_type = 3;
+  repeated PacketFragmentMapping fragments = 4;
+}
+
+message PacketFragmentMapping {
+  string fdsc_id = 1;
+  string fragment_id = 2;
+}

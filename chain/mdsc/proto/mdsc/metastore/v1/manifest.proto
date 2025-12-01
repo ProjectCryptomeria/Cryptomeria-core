@@ -1,7 +1,5 @@
 syntax = "proto3";
-package mdsc.metastore;
-
-import "gogoproto/gogo.proto";
+package mdsc.metastore.v1;
 
 option go_package = "mdsc/x/metastore/types";
 
@@ -14,18 +12,15 @@ message FragmentLocation {
 // 2. 中間層: ファイル単位の情報
 message FileInfo {
   string mime_type = 1; 
-  uint64 size = 2; 
-  
+  // 修正: size -> file_size
+  uint64 file_size = 2;
   // ファイルを構成するフラグメントのリスト (順序通りに結合する必要がある)
   repeated FragmentLocation fragments = 3; 
 }
 
 // 3. 最上位: マニフェスト本体
 message Manifest {
-  // Key (Index) は map 構造の外側で管理されるため、ここには ProjectName を含めなくて良いが、
-  // Igniteの仕様上、Indexフィールドがmessage内に含まれることがあるため、生成されたものを維持します。
-  string project_name = 1; 
-  
+  string project_name = 1;
   string version = 2;
   string creator = 3;
 

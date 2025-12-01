@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"strconv" // 追加
 
 	"gwc/x/gateway/types"
 
@@ -32,15 +33,17 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 		"data_size", len(msg.Data),
 	)
 
-	// 定数 (PoC用)
+	// --- 定数定義 ---
 	const (
-		ChunkSize      = 1024 * 10 // 10KB
-		TargetPort     = "datastore"
-		TargetChannel  = "channel-0"
-		TimeoutSeconds = 600
+		ChunkSize         = 1024 * 10 // 10KB
+		TargetPort        = "datastore"
+		TargetChannelFDSC = "channel-0" // FDSCへのチャネル
+		TargetChannelMDSC = "channel-1" // MDSCへのチャネル (init-relayer.shの順序に依存)
+		TimeoutSeconds    = 600
+		FDSC_ID_DEFAULT   = "fdsc-0" // 今回はシングルFDSC構成と仮定
 	)
 
-	// データの分割 (Sharding)
+	// --- データの分割 (Sharding) ---
 	dataLen := len(msg.Data)
 	totalChunks := dataLen / ChunkSize
 	if dataLen%ChunkSize != 0 {
@@ -49,7 +52,10 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 
 	ctx.Logger().Info("Sharding data", "total_chunks", totalChunks)
 
-	// パケット送信ループ
+	// マニフェスト用情報の保存リスト
+	var fragmentMappings []*types.PacketFragmentMapping
+
+	// --- パケット送信ループ (FDSCへ) ---
 	for i := 0; i < totalChunks; i++ {
 		start := i * ChunkSize
 		end := start + ChunkSize
@@ -59,12 +65,14 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 		chunkData := msg.Data[start:end]
 
 		// ID生成
-		fragmentID := uint64(ctx.BlockTime().UnixNano()) + uint64(i)
+		fragmentIDNum := uint64(ctx.BlockTime().UnixNano()) + uint64(i)
+		fragmentIDStr := strconv.FormatUint(fragmentIDNum, 10)
 
+		// パケット作成
 		packetData := types.GatewayPacketData{
 			Packet: &types.GatewayPacketData_FragmentPacket{
 				FragmentPacket: &types.FragmentPacket{
-					Id:   fragmentID,
+					Id:   fragmentIDNum,
 					Data: chunkData,
 				},
 			},
@@ -72,22 +80,58 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 
 		timeoutTimestamp := uint64(ctx.BlockTime().UnixNano()) + uint64(TimeoutSeconds*1_000_000_000)
 
-		// IBCパケット送信
-		// 修正: types.PortKeyではなく文字列 "gateway" を渡す
+		// IBCパケット送信 (To FDSC)
 		_, err := k.Keeper.TransmitGatewayPacketData(
 			ctx,
 			packetData,
 			"gateway",
-			TargetChannel,
+			TargetChannelFDSC,
 			clienttypes.ZeroHeight(),
 			timeoutTimestamp,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to send packet %d: %w", i, err)
+			return nil, fmt.Errorf("failed to send fragment packet %d: %w", i, err)
 		}
 
-		ctx.Logger().Info("Sent FragmentPacket", "chunk_index", i, "fragment_id", fragmentID)
+		// マッピング情報を記録
+		fragmentMappings = append(fragmentMappings, &types.PacketFragmentMapping{
+			FdscId:     FDSC_ID_DEFAULT,
+			FragmentId: fragmentIDStr,
+		})
+
+		ctx.Logger().Info("Sent FragmentPacket", "chunk_index", i, "fragment_id", fragmentIDStr)
 	}
+
+	// --- マニフェスト送信 (To MDSC) ---
+	ctx.Logger().Info("Sending Manifest to MDSC...")
+
+	manifestPacket := types.GatewayPacketData{
+		Packet: &types.GatewayPacketData_ManifestPacket{
+			ManifestPacket: &types.ManifestPacket{
+				Filename:  msg.Filename,
+				FileSize:  uint64(dataLen),
+				MimeType:  "application/octet-stream", // 簡易実装
+				Fragments: fragmentMappings,
+			},
+		},
+	}
+
+	timeoutTimestamp := uint64(ctx.BlockTime().UnixNano()) + uint64(TimeoutSeconds*1_000_000_000)
+
+	// IBCパケット送信 (To MDSC)
+	_, err := k.Keeper.TransmitGatewayPacketData(
+		ctx,
+		manifestPacket,
+		"gateway",
+		TargetChannelMDSC, // MDSCへのチャネルID
+		clienttypes.ZeroHeight(),
+		timeoutTimestamp,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send manifest packet: %w", err)
+	}
+
+	ctx.Logger().Info("Sent ManifestPacket", "filename", msg.Filename, "fragments_count", len(fragmentMappings))
 
 	return &types.MsgUploadResponse{}, nil
 }
@@ -102,13 +146,11 @@ func (k Keeper) TransmitGatewayPacketData(
 	timeoutTimestamp uint64,
 ) (uint64, error) {
 
-	// 修正: GetBytes() -> Marshal()
 	packetBytes, err := packetData.Marshal()
 	if err != nil {
 		return 0, fmt.Errorf("failed to marshal packet data: %w", err)
 	}
 
-	// 修正: SendPacketの引数から capability を削除 (v10仕様に合わせる)
 	sequence, err := k.ibcKeeperFn().ChannelKeeper.SendPacket(
 		ctx,
 		sourcePort,

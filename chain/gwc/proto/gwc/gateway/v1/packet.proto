@@ -24,6 +24,13 @@ message FragmentPacket {
 // ManifestPacket defines the metadata to be sent to MDSC
 message ManifestPacket {
   string filename = 1;
-  uint64 size = 2;
-  // 必要に応じてフィールドを追加（例: map<int, string> chunksなど）
+  // 修正: size -> file_size (Goでの名前衝突回避のため)
+  uint64 file_size = 2;
+  string mime_type = 3;
+  repeated PacketFragmentMapping fragments = 4;
+}
+
+message PacketFragmentMapping {
+  string fdsc_id = 1;
+  string fragment_id = 2;
 }

@@ -112,8 +112,6 @@ func (im IBCModule) OnRecvPacket(
 	modulePacket channeltypes.Packet,
 	relayer sdk.AccAddress,
 ) ibcexported.Acknowledgement {
-	var ack channeltypes.Acknowledgement
-
 	var modulePacketData types.MetastorePacketData
 	if err := modulePacketData.Unmarshal(modulePacket.GetData()); err != nil {
 		return channeltypes.NewErrorAcknowledgement(errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal packet data: %s", err.Error()))
@@ -121,13 +119,65 @@ func (im IBCModule) OnRecvPacket(
 
 	// Dispatch packet
 	switch packet := modulePacketData.Packet.(type) {
+	// --- ManifestPacketの受信処理 ---
+	case *types.MetastorePacketData_ManifestPacket:
+		manifestData := packet.ManifestPacket
+
+		// 1. FragmentLocationリストの変換 (Packet型 -> 保存型)
+		var storedFragments []*types.FragmentLocation
+		for _, f := range manifestData.Fragments {
+			storedFragments = append(storedFragments, &types.FragmentLocation{
+				FdscId:     f.FdscId,
+				FragmentId: f.FragmentId,
+			})
+		}
+
+		// 2. FileInfoの作成
+		fileInfo := types.FileInfo{
+			MimeType:  manifestData.MimeType,
+			FileSize:  manifestData.FileSize,
+			Fragments: storedFragments,
+		}
+
+		// 3. Manifestの作成と保存
+		// 今回は PoC としてファイル名 = プロジェクト名 として簡易的に保存
+		projectName := manifestData.Filename
+
+		// 既存のマニフェストがあれば取得して更新、なければ新規作成
+		// Note: Collections APIを使用。Getは値とエラーを返す。
+		manifest, err := im.keeper.Manifest.Get(ctx, projectName)
+		if err != nil { // Not Found (collections.ErrNotFound) or other errors
+			// 新規作成
+			manifest = types.Manifest{
+				ProjectName: projectName,
+				Version:     "1.0.0", // 初期バージョン
+				Creator:     "ibc-user",
+				Files:       make(map[string]*types.FileInfo),
+			}
+			// 新規Mapにエントリを追加
+			manifest.Files[manifestData.Filename] = &fileInfo
+		} else {
+			// 更新
+			// Protobufのmapがnilの場合の初期化
+			if manifest.Files == nil {
+				manifest.Files = make(map[string]*types.FileInfo)
+			}
+			manifest.Files[manifestData.Filename] = &fileInfo
+		}
+
+		// 保存
+		if err := im.keeper.Manifest.Set(ctx, projectName, manifest); err != nil {
+			return channeltypes.NewErrorAcknowledgement(fmt.Errorf("failed to save manifest: %w", err))
+		}
+
+		ctx.Logger().Info("Manifest Packet Received & Saved", "project", projectName, "fragments_count", len(storedFragments))
+
+		return channeltypes.NewResultAcknowledgement([]byte{byte(1)})
+
 	default:
 		err := fmt.Errorf("unrecognized %s packet type: %T", types.ModuleName, packet)
 		return channeltypes.NewErrorAcknowledgement(err)
 	}
-
-	// NOTE: acknowledgement will be written synchronously during IBC handler execution.
-	return ack
 }
 
 // OnAcknowledgementPacket implements the IBCModule interface
@@ -143,19 +193,7 @@ func (im IBCModule) OnAcknowledgementPacket(
 		return errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal packet acknowledgement: %v", err)
 	}
 
-	var modulePacketData types.MetastorePacketData
-	if err := modulePacketData.Unmarshal(modulePacket.GetData()); err != nil {
-		return errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal packet data: %s", err.Error())
-	}
-
-	var eventType string
-
-	// Dispatch packet
-	switch packet := modulePacketData.Packet.(type) {
-	default:
-		errMsg := fmt.Sprintf("unrecognized %s packet type: %T", types.ModuleName, packet)
-		return errorsmod.Wrap(sdkerrors.ErrUnknownRequest, errMsg)
-	}
+	var eventType = types.EventTypePacket
 
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(
@@ -199,9 +237,7 @@ func (im IBCModule) OnTimeoutPacket(
 	// Dispatch packet
 	switch packet := modulePacketData.Packet.(type) {
 	default:
-		errMsg := fmt.Sprintf("unrecognized %s packet type: %T", types.ModuleName, packet)
-		return errorsmod.Wrap(sdkerrors.ErrUnknownRequest, errMsg)
+		ctx.Logger().Error("Packet Timeout", "type", fmt.Sprintf("%T", packet))
+		return nil
 	}
-
-	return nil
 }
