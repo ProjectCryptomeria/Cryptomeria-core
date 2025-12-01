@@ -39,24 +39,31 @@ else
     # 固有処理: チェーン名に応じてデータ構造とクエリの定義を分岐
     echo "🧬  Scaffolding specific data structures and queries for $CHAIN_NAME..."
     case "$CHAIN_NAME" in
-        "datachain")
-            # datachain: index(string)をキーとするKVS(map)を定義
-            ignite scaffold map storedChunk data:bytes \
+        "fdsc")
+            # FDSC: FragmentData Storage Chain (旧 datachain)
+            # Key: fragment_id (ハッシュ), Value: data (バイナリ)
+            ignite scaffold map fragment data:bytes \
                 --module "$MODULE_NAME" \
-                --index index:string \
+                --index fragment_id:string \
                 --signer creator \
                 --yes
             ;;
-        "metachain")
-            # metachain: url(string)をキーとするKVS(map)を定義
-            ignite scaffold map storedManifest manifest:string domain:string \
+        "mdsc")
+            # MDSC: ManifestData Storage Chain (旧 metachain)
+            # Key: project_name, Value: version (Manifestの核となる情報)
+            ignite scaffold map manifest version:string \
                 --module "$MODULE_NAME" \
-                --index index:string \
+                --index project_name:string \
                 --signer creator \
                 --yes
+            ;;
+        "gwc")
+            # GWC: Gateway Chain (旧 gatewaychain)
+            # GWCは揮発性（Strict Pruning）運用のため、永続的なストレージは定義しません。
+            echo "ℹ️  Gateway Chain (GWC) is configured as ephemeral. Skipping data structure scaffold."
             ;;
         *)
-            echo "💥 Error: Unknown chain name '$CHAIN_NAME'."
+            echo "💥 Error: Unknown chain name '$CHAIN_NAME'. Must be 'fdsc', 'mdsc', or 'gwc'."
             exit 1
             ;;
     esac
