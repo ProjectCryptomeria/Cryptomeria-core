@@ -9,7 +9,7 @@ RUN addgroup -S mdsc && adduser -S mdsc -G mdsc
 
 # ローカルでビルドした静的バイナリをコピー
 # このバイナリはCGO_ENABLED=0でビルドされたもの
-COPY ./dist/mdscd /usr/bin/mdscd
+COPY dist/mdscd /usr/bin/mdscd
 
 # ユーザーを切り替え
 USER mdsc

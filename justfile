@@ -23,7 +23,6 @@ all-in-one chains=DEFAULT_CHAINS:
     @echo "✅ All-in-one process complete!"
 
 # --- Go-Generated Tasks ---
-[parallel]
 generate:
     @just generate-fdsc
     @just generate-mdsc
@@ -55,22 +54,22 @@ build: build-fdsc build-mdsc build-gwc build-relayer
 build-fdsc:
     @echo "🏗️  Building FDSC..."
     @cd chain/fdsc && \
-        ignite chain build -o dist && \
-        docker build -t {{IMAGE_FDSC}} -f ../../build/fdsc/Dockerfile .
+        ignite chain build -o ../../dist --skip-proto
+    @docker build -t {{IMAGE_FDSC}} -f build/fdsc/Dockerfile .
 
 # MDSC (ManifestData Storage Chain) のDockerイメージをビルド
 build-mdsc:
     @echo "🏗️  Building MDSC..."
     @cd chain/mdsc && \
-        ignite chain build -o dist && \
-        docker build -t {{IMAGE_MDSC}} -f ../../build/mdsc/Dockerfile .
+        ignite chain build -o ../../dist --skip-proto
+    @docker build -t {{IMAGE_MDSC}} -f build/mdsc/Dockerfile .
 
 # GWC (Gateway Chain) のDockerイメージをビルド
 build-gwc:
     @echo "🏗️  Building GWC..."
     @cd chain/gwc && \
-        ignite chain build -o dist && \
-        docker build -t {{IMAGE_GWC}} -f ../../build/gwc/Dockerfile .
+        ignite chain build -o ../../dist --skip-proto
+    @docker build -t {{IMAGE_GWC}} -f build/gwc/Dockerfile .
 
 # relayerのDockerイメージをビルド
 build-relayer:

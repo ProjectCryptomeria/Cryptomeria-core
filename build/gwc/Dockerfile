@@ -9,7 +9,7 @@ RUN addgroup -S gwc && adduser -S gwc -G gwc
 
 # ローカルでビルドした静的バイナリをコピー
 # このバイナリはCGO_ENABLED=0でビルドされたもの
-COPY ./dist/gwcd /usr/bin/gwcd
+COPY dist/gwcd /usr/bin/gwcd
 # ユーザーを切り替え
 USER gwc
 

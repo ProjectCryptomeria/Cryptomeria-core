@@ -9,7 +9,7 @@ RUN addgroup -S fdsc && adduser -S fdsc -G fdsc
 
 # ローカルでビルドした静的バイナリをコピー
 # このバイナリはCGO_ENABLED=0でビルドされたもの
-COPY ./dist/fdscd /usr/bin/fdscd
+COPY dist/fdscd /usr/bin/fdscd
 # ユーザーを切り替え
 USER fdsc
 
