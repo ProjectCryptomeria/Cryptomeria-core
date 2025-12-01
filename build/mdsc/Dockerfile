@@ -5,14 +5,14 @@ FROM alpine:3.19
 RUN apk add --no-cache ca-certificates curl jq
 
 # セキュリティ向上のため、専用の非rootユーザーを作成
-RUN addgroup -S metachain && adduser -S metachain -G metachain
+RUN addgroup -S mdsc && adduser -S mdsc -G mdsc
 
 # ローカルでビルドした静的バイナリをコピー
 # このバイナリはCGO_ENABLED=0でビルドされたもの
-COPY ./dist/metachaind /usr/bin/metachaind
+COPY ./dist/mdscd /usr/bin/mdscd
 
 # ユーザーを切り替え
-USER metachain
+USER mdsc
 
-# デフォルトのコマンドとしてmetachaindコマンドを設定
-CMD ["metachaind"]
+# デフォルトのコマンドとしてmdscdコマンドを設定
+CMD ["mdscd"]

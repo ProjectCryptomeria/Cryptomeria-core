@@ -31,25 +31,28 @@ build: build-fdsc build-mdsc build-gwc build-relayer
 
 # FDSC (FragmentData Storage Chain) のDockerイメージをビルド
 build-fdsc:
-    @echo "🏗️  Building FDSC..."
-    @ignite chain build --path ./chain/fdsc -o dist --skip-proto
-    @docker build -t {{IMAGE_FDSC}} -f build/fdsc/Dockerfile .
+    @echo "🏗️  Building FDSC..."
+    @cd chain/fdsc && \
+        ignite chain build -o dist && \
+        docker build -t {{IMAGE_FDSC}} -f ../../build/fdsc/Dockerfile .
 
 # MDSC (ManifestData Storage Chain) のDockerイメージをビルド
 build-mdsc:
-    @echo "🏗️  Building MDSC..."
-    @ignite chain build --path ./chain/mdsc -o dist --skip-proto
-    @docker build -t {{IMAGE_MDSC}} -f build/mdsc/Dockerfile .
+    @echo "🏗️  Building MDSC..."
+    @cd chain/mdsc && \
+        ignite chain build -o dist && \
+        docker build -t {{IMAGE_MDSC}} -f ../../build/mdsc/Dockerfile .
 
 # GWC (Gateway Chain) のDockerイメージをビルド
 build-gwc:
-    @echo "🏗️  Building GWC..."
-    @ignite chain build --path ./chain/gwc -o dist --skip-proto
-    @docker build -t {{IMAGE_GWC}} -f build/gwc/Dockerfile .
+    @echo "🏗️  Building GWC..."
+    @cd chain/gwc && \
+        ignite chain build -o dist && \
+        docker build -t {{IMAGE_GWC}} -f ../../build/gwc/Dockerfile .
 
 # relayerのDockerイメージをビルド
 build-relayer:
-    @echo "🏗️  Building Relayer..."
+    @echo "🏗️  Building Relayer..."
     @docker build -t {{IMAGE_RELAYER}} -f build/relayer/Dockerfile .
 
 # --- Kubernetes Tasks ---
