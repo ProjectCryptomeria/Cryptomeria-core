@@ -26,10 +26,10 @@ fi
 log "🔌 Triggering Download via GWC CLI (No External Flags)..."
 log "    Target File: $TEST_FILENAME"
 
-# 修正: --mdsc-node と --fdsc-node フラグを削除
+# 修正: --output を --save-dir に変更
 kubectl exec -n "$NAMESPACE" "$GWC_POD" -- \
     gwcd q gateway download "$TEST_FILENAME" \
-    --output "/tmp"
+    --save-dir "/tmp"
 
 # 検証: Pod内のファイルをcatして内容確認
 RESTORED_CONTENT=$(kubectl exec -n "$NAMESPACE" "$GWC_POD" -- cat "/tmp/$TEST_FILENAME")

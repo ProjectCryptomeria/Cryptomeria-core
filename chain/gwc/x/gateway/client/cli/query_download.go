@@ -19,7 +19,8 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/flags"
 )
 
-const FlagOutput = "output"
+// 変更点: フラグ名を "save-dir" に変更 (Cosmos SDKの標準フラグ "output" との競合を回避)
+const FlagOutput = "save-dir"
 
 type ManifestResponse struct {
 	Manifest struct {
@@ -180,8 +181,8 @@ func CmdDownload() *cobra.Command {
 		},
 	}
 
-	// 修正: 不要なフラグを削除。Outputフラグのみ残す
-	cmd.Flags().String(FlagOutput, ".", "Output directory")
+	// 変更点: フラグ名を "save-dir" に変更
+	cmd.Flags().String(FlagOutput, ".", "Directory to save the downloaded file")
 	flags.AddQueryFlagsToCmd(cmd)
 
 	return cmd
