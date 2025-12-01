@@ -10,8 +10,6 @@ CHAIN_BINARY="${CHAIN_APP_NAME}d"
 MNEMONIC_FILE="/etc/mnemonics/${CHAIN_INSTANCE_NAME}.mnemonic"
 TX_SIZE_COST_PER_BYTE=0 # 1バイトあたりのコストを研究実験のために0に設定 (以前は1)
 
-sleep Infinity
-
 # --- 初期化処理 ---
 if [ ! -d "$CHAIN_HOME/config" ]; then
     echo "--- Initializing chain: $CHAIN_ID (type: $CHAIN_APP_NAME) ---"
