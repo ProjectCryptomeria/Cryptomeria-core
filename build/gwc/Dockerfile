@@ -8,10 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	ca-certificates curl jq bash procps \
 	&& apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# セキュリティ向上のため、専用の非rootユーザーを作成
-# GID/UID競合を避けるためID指定を削除しました。（前回の修正済み内容を維持）
-RUN groupadd gwc && \
-	useradd -G gwc -s /bin/bash -m gwc
+RUN groupadd gwc && useradd gwc -g gwc -s /bin/bash
 
 # ローカルでビルドしたバイナリをコピー
 COPY dist/gwcd /usr/bin/gwcd
