@@ -3,7 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
-	"strconv" // 追加
+	"strconv"
 
 	"gwc/x/gateway/types"
 
@@ -33,14 +33,41 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 		"data_size", len(msg.Data),
 	)
 
+	// --- 1. 送信先チャネルの動的取得 ---
+
+	// (A) MDSCチャネルの取得
+	mdscChannel, err := k.Keeper.MetastoreChannel.Get(ctx)
+	if err != nil {
+		// 修正: エラーメッセージを小文字で開始
+		return nil, fmt.Errorf("MDSC channel not found. make sure MDSC is connected via IBC: %w", err)
+	}
+
+	// (B) FDSCチャネルの取得
+	iter, err := k.Keeper.DatastoreChannels.Iterate(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+
+	if !iter.Valid() {
+		// 修正: エラーメッセージを小文字で開始
+		return nil, fmt.Errorf("no FDSC channels found. make sure at least one FDSC is connected via IBC")
+	}
+
+	fdscChannel, err := iter.Key()
+	if err != nil {
+		return nil, err
+	}
+
+	ctx.Logger().Info("Resolved IBC Channels",
+		"mdsc_channel", mdscChannel,
+		"fdsc_channel", fdscChannel)
+
 	// --- 定数定義 ---
 	const (
-		ChunkSize         = 1024 * 10 // 10KB
-		TargetPort        = "datastore"
-		TargetChannelFDSC = "channel-0" // FDSCへのチャネル
-		TargetChannelMDSC = "channel-1" // MDSCへのチャネル (init-relayer.shの順序に依存)
-		TimeoutSeconds    = 600
-		FDSC_ID_DEFAULT   = "fdsc-0" // 今回はシングルFDSC構成と仮定
+		ChunkSize       = 1024 * 10 // 10KB
+		TimeoutSeconds  = 600
+		FDSC_ID_DEFAULT = "fdsc-0"
 	)
 
 	// --- データの分割 (Sharding) ---
@@ -64,11 +91,9 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 		}
 		chunkData := msg.Data[start:end]
 
-		// ID生成
 		fragmentIDNum := uint64(ctx.BlockTime().UnixNano()) + uint64(i)
 		fragmentIDStr := strconv.FormatUint(fragmentIDNum, 10)
 
-		// パケット作成
 		packetData := types.GatewayPacketData{
 			Packet: &types.GatewayPacketData_FragmentPacket{
 				FragmentPacket: &types.FragmentPacket{
@@ -85,7 +110,7 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 			ctx,
 			packetData,
 			"gateway",
-			TargetChannelFDSC,
+			fdscChannel,
 			clienttypes.ZeroHeight(),
 			timeoutTimestamp,
 		)
@@ -93,7 +118,6 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 			return nil, fmt.Errorf("failed to send fragment packet %d: %w", i, err)
 		}
 
-		// マッピング情報を記録
 		fragmentMappings = append(fragmentMappings, &types.PacketFragmentMapping{
 			FdscId:     FDSC_ID_DEFAULT,
 			FragmentId: fragmentIDStr,
@@ -103,14 +127,12 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 	}
 
 	// --- マニフェスト送信 (To MDSC) ---
-	ctx.Logger().Info("Sending Manifest to MDSC...")
-
 	manifestPacket := types.GatewayPacketData{
 		Packet: &types.GatewayPacketData_ManifestPacket{
 			ManifestPacket: &types.ManifestPacket{
 				Filename:  msg.Filename,
 				FileSize:  uint64(dataLen),
-				MimeType:  "application/octet-stream", // 簡易実装
+				MimeType:  "application/octet-stream",
 				Fragments: fragmentMappings,
 			},
 		},
@@ -119,11 +141,11 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 	timeoutTimestamp := uint64(ctx.BlockTime().UnixNano()) + uint64(TimeoutSeconds*1_000_000_000)
 
 	// IBCパケット送信 (To MDSC)
-	_, err := k.Keeper.TransmitGatewayPacketData(
+	_, err = k.Keeper.TransmitGatewayPacketData(
 		ctx,
 		manifestPacket,
 		"gateway",
-		TargetChannelMDSC, // MDSCへのチャネルID
+		mdscChannel,
 		clienttypes.ZeroHeight(),
 		timeoutTimestamp,
 	)

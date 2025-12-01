@@ -55,11 +55,11 @@ update target:
     @echo "--> 🔄 Rolling restart for {{target}}..."
     # type名へのマッピング（簡易的）
     @if [ "{{target}}" = "gwc" ]; then \
-        kubectl rollout restart statefulset -n {{NAMESPACE}} -l app.kubernetes.io/component=gateway; \
+        kubectl rollout restart statefulset -n {{NAMESPACE}} -l app.kubernetes.io/component=gwc; \
     elif [ "{{target}}" = "mdsc" ]; then \
-        kubectl rollout restart statefulset -n {{NAMESPACE}} -l app.kubernetes.io/component=metastore; \
+        kubectl rollout restart statefulset -n {{NAMESPACE}} -l app.kubernetes.io/component=mdsc; \
     elif [ "{{target}}" = "fdsc" ]; then \
-        kubectl rollout restart statefulset -n {{NAMESPACE}} -l app.kubernetes.io/component=datastore; \
+        kubectl rollout restart statefulset -n {{NAMESPACE}} -l app.kubernetes.io/component=fdsc; \
     elif [ "{{target}}" = "relayer" ]; then \
         just build-relayer; \
         kubectl rollout restart deployment/{{HELM_RELEASE_NAME}}-relayer -n {{NAMESPACE}}; \

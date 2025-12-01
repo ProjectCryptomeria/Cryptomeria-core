@@ -74,6 +74,12 @@ func (im IBCModule) OnChanOpenAck(
 	if counterpartyVersion != types.Version {
 		return errorsmod.Wrapf(types.ErrInvalidVersion, "invalid counterparty version: %s, expected %s", counterpartyVersion, types.Version)
 	}
+
+	// チャネルの自動登録を実行
+	if err := im.keeper.RegisterChannel(ctx, portID, channelID); err != nil {
+		ctx.Logger().Error("Failed to register channel", "error", err)
+	}
+
 	return nil
 }
 
@@ -92,7 +98,6 @@ func (im IBCModule) OnChanCloseInit(
 	portID,
 	channelID string,
 ) error {
-	// Disallow user-initiated channel closing for channels
 	return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "user cannot close channel")
 }
 
@@ -112,8 +117,6 @@ func (im IBCModule) OnRecvPacket(
 	modulePacket channeltypes.Packet,
 	relayer sdk.AccAddress,
 ) ibcexported.Acknowledgement {
-	var ack channeltypes.Acknowledgement
-
 	var modulePacketData types.GatewayPacketData
 	if err := modulePacketData.Unmarshal(modulePacket.GetData()); err != nil {
 		return channeltypes.NewErrorAcknowledgement(errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal packet data: %s", err.Error()))
@@ -125,9 +128,6 @@ func (im IBCModule) OnRecvPacket(
 		err := fmt.Errorf("unrecognized %s packet type: %T", types.ModuleName, packet)
 		return channeltypes.NewErrorAcknowledgement(err)
 	}
-
-	// NOTE: acknowledgement will be written synchronously during IBC handler execution.
-	return ack
 }
 
 // OnAcknowledgementPacket implements the IBCModule interface
@@ -148,40 +148,12 @@ func (im IBCModule) OnAcknowledgementPacket(
 		return errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal packet data: %s", err.Error())
 	}
 
-	var eventType string
-
 	// Dispatch packet
 	switch packet := modulePacketData.Packet.(type) {
 	default:
 		errMsg := fmt.Sprintf("unrecognized %s packet type: %T", types.ModuleName, packet)
 		return errorsmod.Wrap(sdkerrors.ErrUnknownRequest, errMsg)
 	}
-
-	ctx.EventManager().EmitEvent(
-		sdk.NewEvent(
-			eventType,
-			sdk.NewAttribute(types.AttributeKeyAck, fmt.Sprintf("%v", ack)),
-		),
-	)
-
-	switch resp := ack.Response.(type) {
-	case *channeltypes.Acknowledgement_Result:
-		ctx.EventManager().EmitEvent(
-			sdk.NewEvent(
-				eventType,
-				sdk.NewAttribute(types.AttributeKeyAckSuccess, string(resp.Result)),
-			),
-		)
-	case *channeltypes.Acknowledgement_Error:
-		ctx.EventManager().EmitEvent(
-			sdk.NewEvent(
-				eventType,
-				sdk.NewAttribute(types.AttributeKeyAckError, resp.Error),
-			),
-		)
-	}
-
-	return nil
 }
 
 // OnTimeoutPacket implements the IBCModule interface
@@ -202,6 +174,4 @@ func (im IBCModule) OnTimeoutPacket(
 		errMsg := fmt.Sprintf("unrecognized %s packet type: %T", types.ModuleName, packet)
 		return errorsmod.Wrap(sdkerrors.ErrUnknownRequest, errMsg)
 	}
-
-	return nil
 }

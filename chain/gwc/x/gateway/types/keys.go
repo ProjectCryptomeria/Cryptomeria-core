@@ -10,8 +10,6 @@ const (
 	StoreKey = ModuleName
 
 	// GovModuleName duplicates the gov module's name to avoid a dependency with x/gov.
-	// It should be synced with the gov module's name if it is ever changed.
-	// See: https://github.com/cosmos/cosmos-sdk/blob/v0.52.0-beta.2/x/gov/types/keys.go#L9
 	GovModuleName = "gov"
 
 	// Version defines the current version the IBC module supports
@@ -28,3 +26,12 @@ var (
 
 // ParamsKey is the prefix to retrieve all Params
 var ParamsKey = collections.NewPrefix("p_gateway")
+
+// --- 追加: チャネル管理用のキー ---
+var (
+	// MetastoreChannelKey: MDSCへのチャネルIDを保存 (1つ)
+	MetastoreChannelKey = collections.NewPrefix("channel_mdsc")
+
+	// DatastoreChannelKey: FDSCへのチャネルIDリストを保存 (複数可)
+	DatastoreChannelKey = collections.NewPrefix("channel_fdsc")
+)
