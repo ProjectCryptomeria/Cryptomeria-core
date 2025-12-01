@@ -67,8 +67,7 @@ update target:
         echo "Unknown target: {{target}}"; \
         exit 1; \
     fi
-    @echo "✅ Update complete! Following logs..."
-    @just logs-{{target}}
+    @echo "✅ Update complete!"
 
 # --- Build Tasks ---
 
@@ -217,3 +216,15 @@ ctl-exp:
 
 ctl-monitor:
     @cd controller && yarn ts-node src/scripts/monitor-chain.ts
+
+
+# --- Test Tasks ---
+upload-test:
+    @echo "--> 📤 Uploading test data..."
+    @./scripts/test/poc-upload-test.sh
+    @echo "✅ Test data upload complete!"
+
+download-test:
+    @echo "--> 📥 Downloading test data..."
+    @./scripts/test/poc-download-test.sh
+    @echo "✅ Test data download complete!"

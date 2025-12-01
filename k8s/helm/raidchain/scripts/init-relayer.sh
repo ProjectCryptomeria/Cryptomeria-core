@@ -24,7 +24,7 @@ CHAIN_IDS=$(echo "$CHAIN_NAMES_CSV" | tr ',' ' ')
 if [ ! -f "$RELAYER_HOME/config/config.yaml" ]; then
     echo "--- Initializing relayer configuration ---"
     
-    # [修正点1] 設定ファイルがない場合はパス情報もクリーンにしてID不整合を防ぐ
+    # 設定ファイルがない場合はパス情報もクリーンにしてID不整合を防ぐ
     rm -rf "$RELAYER_HOME/paths"
 
     rly config init
@@ -81,21 +81,20 @@ EOF
     done
 
     if [ -z "$GWC_ID" ]; then echo "Error: No 'gwc' chain found."; exit 1; fi
-    # MDSCやFDSCが見つからない場合の警告（必須ではないが構成上必要）
     if [ -z "$MDSC_ID" ]; then echo "Warning: No 'mdsc' chain found."; fi
     if [ -z "$FDSC_IDS" ]; then echo "Warning: No 'fdsc' chains found."; fi
 
     # --- 4. IBCパスの定義 ---
     echo "--- Defining IBC paths ---"
 
-    # Path: GWC <-> FDSC (Gateway to Datastore)
+    # Path: GWC <-> FDSC
     for FDSC_ID in $FDSC_IDS; do
         PATH_NAME="${PATH_PREFIX}-${GWC_ID}-to-${FDSC_ID}"
         echo "--> Defining path: $PATH_NAME"
         rly paths new "$GWC_ID" "$FDSC_ID" "$PATH_NAME"
     done
 
-    # Path: GWC <-> MDSC (Gateway to Metastore)
+    # Path: GWC <-> MDSC
     if [ -n "$MDSC_ID" ]; then
         PATH_NAME="${PATH_PREFIX}-${GWC_ID}-to-${MDSC_ID}"
         echo "--> Defining path: $PATH_NAME"
@@ -116,56 +115,65 @@ EOF
         if [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; then echo "!!! Timed out waiting for chain '$CHAIN_ID'. !!!"; exit 1; fi
     done
 
-    # --- 6. クライアント・接続・チャネルの確立 ---
-    echo "--- Establishing IBC connections ---"
+    # --- 6. クライアント・接続・チャネルの確立 (並列実行) ---
+    echo "--- Establishing IBC connections (Parallel) ---"
 
     # Function to link path
     link_path() {
         P_NAME=$1
         SRC_PORT=$2
         DST_PORT=$3
-        echo "--> Linking $P_NAME ($SRC_PORT <-> $DST_PORT)"
+        echo "--> [Start] Linking $P_NAME ($SRC_PORT <-> $DST_PORT)"
         
         # Clients & Connection
-        echo "   -> Creating clients..."
-        rly transact clients "$P_NAME" --override
+        # エラーハンドリング: 失敗したらリトライせずに終了させ、後続のwaitで検知
+        rly transact clients "$P_NAME" --override || { echo "Failed to create clients for $P_NAME"; return 1; }
         
-        # [修正点2] クライアント作成からConnection作成までの待機時間を延長 (2s -> 10s)
-        # ブロックの確定とインデックス化を待つため
-        echo "   -> Waiting for clients to be indexed..."
-        sleep 10
+        # 待機時間を少し短縮 (10s -> 5s) 並列なので合計時間は気にならないが最適化
+        sleep 5
         
-        echo "   -> Creating connection..."
-        rly transact connection "$P_NAME"
+        rly transact connection "$P_NAME" || { echo "Failed to create connection for $P_NAME"; return 1; }
         
-        # [修正点2] Connection完了待ちも少し延長
         sleep 5
         
         # Channel
-        # Note: version "raidchain-1" is arbitrary; ensure modules support it or use empty
-        echo "   -> Creating channel..."
         rly transact channel "$P_NAME" \
             --src-port "$SRC_PORT" \
             --dst-port "$DST_PORT" \
             --order unordered \
-            --version "raidchain-1"
+            --version "raidchain-1" || { echo "Failed to create channel for $P_NAME"; return 1; }
         
-        echo "✅ Path $P_NAME linked."
+        echo "✅ [Done] Path $P_NAME linked."
     }
+
+    # バックグラウンドプロセスのPIDを保存するリスト
+    PIDS=""
 
     # GWC -> FDSCs
     for FDSC_ID in $FDSC_IDS; do
         PATH_NAME="${PATH_PREFIX}-${GWC_ID}-to-${FDSC_ID}"
-        # src: gwc(gateway), dst: fdsc(datastore)
-        link_path "$PATH_NAME" "gateway" "datastore"
+        # バックグラウンド実行 (&)
+        link_path "$PATH_NAME" "gateway" "datastore" &
+        PIDS="$PIDS $!"
     done
 
     # GWC -> MDSC
     if [ -n "$MDSC_ID" ]; then
         PATH_NAME="${PATH_PREFIX}-${GWC_ID}-to-${MDSC_ID}"
-        # src: gwc(gateway), dst: mdsc(metastore)
-        link_path "$PATH_NAME" "gateway" "metastore"
+        # バックグラウンド実行 (&)
+        link_path "$PATH_NAME" "gateway" "metastore" &
+        PIDS="$PIDS $!"
     fi
+
+    # 全てのバックグラウンドプロセスの完了を待つ
+    echo "--- Waiting for parallel linking tasks to finish... ---"
+    for PID in $PIDS; do
+        wait $PID
+        if [ $? -ne 0 ]; then
+            echo "❌ Error: A linking process failed."
+            exit 1
+        fi
+    done
 
     echo "--- Initialization complete ---"
 fi

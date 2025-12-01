@@ -98,6 +98,7 @@ func (im IBCModule) OnChanCloseInit(
 	portID,
 	channelID string,
 ) error {
+	// Disallow user-initiated channel closing for channels
 	return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "user cannot close channel")
 }
 
@@ -148,8 +149,42 @@ func (im IBCModule) OnAcknowledgementPacket(
 		return errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal packet data: %s", err.Error())
 	}
 
+	var eventType = types.EventTypePacket
+
+	ctx.EventManager().EmitEvent(
+		sdk.NewEvent(
+			eventType,
+			sdk.NewAttribute(types.AttributeKeyAck, fmt.Sprintf("%v", ack)),
+		),
+	)
+
+	switch resp := ack.Response.(type) {
+	case *channeltypes.Acknowledgement_Result:
+		ctx.EventManager().EmitEvent(
+			sdk.NewEvent(
+				eventType,
+				sdk.NewAttribute(types.AttributeKeyAckSuccess, string(resp.Result)),
+			),
+		)
+	case *channeltypes.Acknowledgement_Error:
+		ctx.EventManager().EmitEvent(
+			sdk.NewEvent(
+				eventType,
+				sdk.NewAttribute(types.AttributeKeyAckError, resp.Error),
+			),
+		)
+	}
+
 	// Dispatch packet
 	switch packet := modulePacketData.Packet.(type) {
+	// --- 追加: Ack受信時のハンドリング (エラー回避のため必須) ---
+	case *types.GatewayPacketData_FragmentPacket:
+		// 断片データのAck受信。正常終了。
+		return nil
+	case *types.GatewayPacketData_ManifestPacket:
+		// マニフェストのAck受信。正常終了。
+		return nil
+	// -----------------------------------------------------
 	default:
 		errMsg := fmt.Sprintf("unrecognized %s packet type: %T", types.ModuleName, packet)
 		return errorsmod.Wrap(sdkerrors.ErrUnknownRequest, errMsg)
@@ -170,6 +205,14 @@ func (im IBCModule) OnTimeoutPacket(
 
 	// Dispatch packet
 	switch packet := modulePacketData.Packet.(type) {
+	// --- 追加: Timeout時のハンドリング ---
+	case *types.GatewayPacketData_FragmentPacket:
+		ctx.Logger().Error("Fragment Packet Timeout!", "id", packet.FragmentPacket.Id)
+		return nil
+	case *types.GatewayPacketData_ManifestPacket:
+		ctx.Logger().Error("Manifest Packet Timeout!", "filename", packet.ManifestPacket.Filename)
+		return nil
+	// ------------------------------------
 	default:
 		errMsg := fmt.Sprintf("unrecognized %s packet type: %T", types.ModuleName, packet)
 		return errorsmod.Wrap(sdkerrors.ErrUnknownRequest, errMsg)
