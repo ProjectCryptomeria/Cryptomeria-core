@@ -23,6 +23,10 @@ CHAIN_IDS=$(echo "$CHAIN_NAMES_CSV" | tr ',' ' ')
 # --- リレイヤーの初期化（初回起動時のみ） ---
 if [ ! -f "$RELAYER_HOME/config/config.yaml" ]; then
     echo "--- Initializing relayer configuration ---"
+    
+    # [修正点1] 設定ファイルがない場合はパス情報もクリーンにしてID不整合を防ぐ
+    rm -rf "$RELAYER_HOME/paths"
+
     rly config init
 
     TMP_DIR="/tmp/relayer-configs"
@@ -123,13 +127,23 @@ EOF
         echo "--> Linking $P_NAME ($SRC_PORT <-> $DST_PORT)"
         
         # Clients & Connection
+        echo "   -> Creating clients..."
         rly transact clients "$P_NAME" --override
-        sleep 2
+        
+        # [修正点2] クライアント作成からConnection作成までの待機時間を延長 (2s -> 10s)
+        # ブロックの確定とインデックス化を待つため
+        echo "   -> Waiting for clients to be indexed..."
+        sleep 10
+        
+        echo "   -> Creating connection..."
         rly transact connection "$P_NAME"
-        sleep 2
+        
+        # [修正点2] Connection完了待ちも少し延長
+        sleep 5
         
         # Channel
         # Note: version "raidchain-1" is arbitrary; ensure modules support it or use empty
+        echo "   -> Creating channel..."
         rly transact channel "$P_NAME" \
             --src-port "$SRC_PORT" \
             --dst-port "$DST_PORT" \
