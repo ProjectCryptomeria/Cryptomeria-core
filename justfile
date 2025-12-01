@@ -17,6 +17,7 @@ default:
 
 # [一括実行] クリーンアップ、再生成、ビルド、デプロイを全て実行
 all-in-one chains=DEFAULT_CHAINS:
+    @just clean-k8s
     @just build
     @just deploy-clean {{chains}}
     @echo "✅ All-in-one process complete!"

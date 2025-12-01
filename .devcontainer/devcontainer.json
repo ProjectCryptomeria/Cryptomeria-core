@@ -7,7 +7,15 @@
   "remoteUser": "ubuntu",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "workspaceFolder": "/workspace",
-
+  // 🛠️ 【追加】ホストのKubeconfigをコンテナ内にマウント
+  // ${env:HOME} は WSL環境での /home/ubuntu (または設定されたユーザー) を指します。
+  "mounts": [
+    "source=${env:HOME}/.kube,target=/home/ubuntu/.kube,type=bind,consistency=cached"
+  ],
+  // 📝 【追加】KUBECONFIG環境変数を明示的に設定
+  "remoteEnv": {
+    "KUBECONFIG": "/home/ubuntu/.kube/config"
+  },
   // ✨ Features でツールを一括インストール
   "features": {
     // 1. Docker (HostのDockerを使う設定)
@@ -36,6 +44,7 @@
       "minikube": "none" // minikubeは不要ならnone
     }
   },
+
   "customizations": {
     "vscode": {
       "extensions": [
