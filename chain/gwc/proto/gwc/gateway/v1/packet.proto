@@ -1,0 +1,14 @@
+syntax = "proto3";
+package gwc.gateway.v1;
+
+option go_package = "gwc/x/gateway/types";
+
+// GatewayPacketData defines the Gateway data packet.
+message GatewayPacketData {
+  oneof packet {
+    NoData noData = 1;
+  }
+}
+
+// NoData defines an empty data packet.
+message NoData {}

@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package mdsc.metastore.v1;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "mdsc/metastore/v1/manifest.proto";
+import "mdsc/metastore/v1/params.proto";
+
+option go_package = "mdsc/x/metastore/types";
+
+// GenesisState defines the metastore module's genesis state.
+message GenesisState {
+  // params defines all the parameters of the module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+  string port_id = 2;
+  repeated Manifest manifest_map = 3 [(gogoproto.nullable) = false];
+}

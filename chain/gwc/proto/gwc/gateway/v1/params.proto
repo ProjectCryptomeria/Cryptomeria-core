@@ -1,0 +1,13 @@
+syntax = "proto3";
+package gwc.gateway.v1;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "gwc/x/gateway/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (amino.name) = "gwc/x/gateway/Params";
+  option (gogoproto.equal) = true;
+}

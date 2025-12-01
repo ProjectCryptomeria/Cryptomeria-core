@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package fdsc.datastore.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "fdsc/datastore/v1/fragment.proto";
+import "fdsc/datastore/v1/params.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+
+option go_package = "fdsc/x/datastore/types";
+
+// Query defines the gRPC querier service.
+service Query {
+  // Parameters queries the parameters of the module.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/fdsc/datastore/v1/params";
+  }
+
+  // ListFragment Queries a list of Fragment items.
+  rpc GetFragment(QueryGetFragmentRequest) returns (QueryGetFragmentResponse) {
+    option (google.api.http).get = "/fdsc/datastore/v1/fragment/{fragment_id}";
+  }
+
+  // ListFragment defines the ListFragment RPC.
+  rpc ListFragment(QueryAllFragmentRequest) returns (QueryAllFragmentResponse) {
+    option (google.api.http).get = "/fdsc/datastore/v1/fragment";
+  }
+}
+
+// QueryParamsRequest is request type for the Query/Params RPC method.
+message QueryParamsRequest {}
+
+// QueryParamsResponse is response type for the Query/Params RPC method.
+message QueryParamsResponse {
+  // params holds all the parameters of this module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// QueryGetFragmentRequest defines the QueryGetFragmentRequest message.
+message QueryGetFragmentRequest {
+  string fragment_id = 1;
+}
+
+// QueryGetFragmentResponse defines the QueryGetFragmentResponse message.
+message QueryGetFragmentResponse {
+  Fragment fragment = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryAllFragmentRequest defines the QueryAllFragmentRequest message.
+message QueryAllFragmentRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+// QueryAllFragmentResponse defines the QueryAllFragmentResponse message.
+message QueryAllFragmentResponse {
+  repeated Fragment fragment = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}

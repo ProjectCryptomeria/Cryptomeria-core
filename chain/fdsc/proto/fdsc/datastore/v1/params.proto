@@ -1,0 +1,13 @@
+syntax = "proto3";
+package fdsc.datastore.v1;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "fdsc/x/datastore/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (amino.name) = "fdsc/x/datastore/Params";
+  option (gogoproto.equal) = true;
+}
