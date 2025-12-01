@@ -17,11 +17,32 @@ default:
 
 # [一括実行] クリーンアップ、再生成、ビルド、デプロイを全て実行
 all-in-one chains=DEFAULT_CHAINS:
-    @just clean-all
-    @just scaffold-chain
     @just build
     @just deploy-clean {{chains}}
     @echo "✅ All-in-one process complete!"
+
+# --- Go-Generated Tasks ---
+[parallel]
+generate:
+    @just generate-fdsc
+    @just generate-mdsc
+    @just generate-gwc
+    @echo "✅ Code generation for all chains complete!"
+
+generate-fdsc:
+    @echo "🔧 Generating code for FDSC..."
+    @cd chain/fdsc && ignite generate proto-go
+    @echo "✅ FDSC code generation complete!"
+
+generate-mdsc:
+    @echo "🔧 Generating code for MDSC..."
+    @cd chain/mdsc && ignite generate proto-go
+    @echo "✅ MDSC code generation complete!"
+
+generate-gwc:
+    @echo "🔧 Generating code for GWC..."
+    @cd chain/gwc && ignite generate proto-go
+    @echo "✅ GWC code generation complete!"
 
 # --- Build Tasks ---
 

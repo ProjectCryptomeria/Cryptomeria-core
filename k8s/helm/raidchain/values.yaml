@@ -7,34 +7,33 @@ imagePullPolicy: IfNotPresent
 # Service Configuration
 # =============================================================================
 service:
-  # 外部アクセス用のNodePort Serviceを作成するかどうか
-  # trueにすると、各チェーンが固定のポートで公開されます
   external:
     enabled: true
-    # 各チェーンのRPCポート(26657)にマッピングするNodePortの開始番号
     startPortRpc: 30057
-    # (★★★ この行を追加 ★★★) 各チェーンのAPIポート(1317)にマッピングするNodePortの開始番号
     startPortApi: 30067
 
 # =============================================================================
 # Chain Node Configuration
 # =============================================================================
-# デプロイしたいチェーンをリスト形式で定義します。
-# nameはk8s内で一意である必要があります。
-# typeはどのチェーンの定義(chainTypes)を使用するかを指定します。
+# generate-values.sh で上書きされますが、デフォルト値としても新しい構成にしておきます
 chains:
-  - name: data-0
-    type: datachain
-  - name: meta-0
-    type: metachain
+  - name: gwc
+    type: gwc
+  - name: mdsc
+    type: mdsc
+  - name: fdsc-0
+    type: fdsc
 
-# チェーンの「種類」ごとの設定を定義します。
+# 【修正】チェーンの種類定義を刷新
 chainTypes:
-  datachain:
-    repository: raidchain/datachain
+  gwc:
+    repository: raidchain/gwc
     tag: latest
-  metachain:
-    repository: raidchain/metachain
+  mdsc:
+    repository: raidchain/mdsc
+    tag: latest
+  fdsc:
+    repository: raidchain/fdsc
     tag: latest
 
 chain:

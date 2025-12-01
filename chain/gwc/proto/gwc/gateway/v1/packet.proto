@@ -7,8 +7,23 @@ option go_package = "gwc/x/gateway/types";
 message GatewayPacketData {
   oneof packet {
     NoData noData = 1;
+    FragmentPacket fragmentPacket = 2;
+    ManifestPacket manifestPacket = 3;
   }
 }
 
 // NoData defines an empty data packet.
 message NoData {}
+
+// FragmentPacket defines the data fragment to be sent to FDSC
+message FragmentPacket {
+  uint64 id = 1;
+  bytes  data = 2;
+}
+
+// ManifestPacket defines the metadata to be sent to MDSC
+message ManifestPacket {
+  string filename = 1;
+  uint64 size = 2;
+  // 必要に応じてフィールドを追加（例: map<int, string> chunksなど）
+}

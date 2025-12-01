@@ -29,13 +29,15 @@ if [ ! -f "$RELAYER_HOME/config/config.yaml" ]; then
     mkdir -p "$TMP_DIR"
     trap 'rm -rf -- "$TMP_DIR"' EXIT
 
-    # --- チェーン設定の追加 ---
+    # --- 1. チェーン設定の追加 ---
     echo "--- Adding chain configurations ---"
     for CHAIN_ID in $CHAIN_IDS; do
         POD_HOSTNAME="${RELEASE_NAME}-${CHAIN_ID}-0"
         RPC_ADDR="http://${POD_HOSTNAME}.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local:26657"
         GRPC_ADDR="${POD_HOSTNAME}.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local:9090"
         TMP_JSON_FILE="${TMP_DIR}/${CHAIN_ID}.json"
+        
+        # ガス価格などの設定
         cat > "$TMP_JSON_FILE" <<EOF
 {
   "type": "cosmos",
@@ -49,7 +51,7 @@ EOF
         rly chains add --file "$TMP_JSON_FILE"
     done
 
-    # --- キーのリストア ---
+    # --- 2. キーのリストア ---
     echo "--- Restoring relayer keys ---"
     for CHAIN_ID in $CHAIN_IDS; do
         MNEMONIC_FILE="${MNEMONICS_DIR}/${CHAIN_ID}.mnemonic"
@@ -59,64 +61,101 @@ EOF
         rly keys restore "$CHAIN_ID" "$KEY_NAME" "$RELAYER_MNEMONIC"
     done
 
-    # --- IBCパスの定義 ---
-    echo "--- Defining IBC paths ---"
-    META_CHAIN_ID=""
-    DATA_CHAIN_IDS=""
+    # --- 3. チェーンIDの分類 (GWC, MDSC, FDSC) ---
+    GWC_ID=""
+    MDSC_ID=""
+    FDSC_IDS=""
+
     for CHAIN_ID in $CHAIN_IDS; do
-      if [[ $CHAIN_ID == meta-* ]]; then META_CHAIN_ID=$CHAIN_ID; else DATA_CHAIN_IDS="$DATA_CHAIN_IDS $CHAIN_ID"; fi
+      if [[ $CHAIN_ID == *gwc* ]]; then
+        GWC_ID=$CHAIN_ID
+      elif [[ $CHAIN_ID == *mdsc* ]]; then
+        MDSC_ID=$CHAIN_ID
+      elif [[ $CHAIN_ID == *fdsc* ]]; then
+        FDSC_IDS="$FDSC_IDS $CHAIN_ID"
+      fi
     done
-    if [ -z "$META_CHAIN_ID" ]; then echo "Error: No 'meta' chain found."; exit 1; fi
 
-    for DATA_CHAIN_ID in $DATA_CHAIN_IDS; do
-        PATH_NAME="${PATH_PREFIX}-${DATA_CHAIN_ID}-to-${META_CHAIN_ID}"
-        echo "--> Defining IBC path: $PATH_NAME with version ${RELEASE_NAME}-1"
-        rly paths new "$DATA_CHAIN_ID" "$META_CHAIN_ID" "$PATH_NAME"
+    if [ -z "$GWC_ID" ]; then echo "Error: No 'gwc' chain found."; exit 1; fi
+    # MDSCやFDSCが見つからない場合の警告（必須ではないが構成上必要）
+    if [ -z "$MDSC_ID" ]; then echo "Warning: No 'mdsc' chain found."; fi
+    if [ -z "$FDSC_IDS" ]; then echo "Warning: No 'fdsc' chains found."; fi
+
+    # --- 4. IBCパスの定義 ---
+    echo "--- Defining IBC paths ---"
+
+    # Path: GWC <-> FDSC (Gateway to Datastore)
+    for FDSC_ID in $FDSC_IDS; do
+        PATH_NAME="${PATH_PREFIX}-${GWC_ID}-to-${FDSC_ID}"
+        echo "--> Defining path: $PATH_NAME"
+        rly paths new "$GWC_ID" "$FDSC_ID" "$PATH_NAME"
     done
 
-    # --- 全チェーンの準備待機 ---
+    # Path: GWC <-> MDSC (Gateway to Metastore)
+    if [ -n "$MDSC_ID" ]; then
+        PATH_NAME="${PATH_PREFIX}-${GWC_ID}-to-${MDSC_ID}"
+        echo "--> Defining path: $PATH_NAME"
+        rly paths new "$GWC_ID" "$MDSC_ID" "$PATH_NAME"
+    fi
+
+    # --- 5. 全チェーンの準備待機 ---
     echo "--- Waiting for all chains to be ready... ---"
     for CHAIN_ID in $CHAIN_IDS; do
         RPC_ADDR="http://${RELEASE_NAME}-${CHAIN_ID}-0.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local:26657"
-        echo "--> RPC Address : $RPC_ADDR"
-        echo "--> Waiting for chain '$CHAIN_ID' to reach height 5..."
-        ATTEMPTS=0; MAX_ATTEMPTS=30
+        echo "--> Checking $CHAIN_ID at $RPC_ADDR"
+        ATTEMPTS=0; MAX_ATTEMPTS=60
         until [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; do
             HEIGHT=$(curl -s "${RPC_ADDR}/status" | jq -r '.result.sync_info.latest_block_height // "0"')
-            if [ -n "$HEIGHT" ] && [ "$HEIGHT" -ge 5 ]; then echo "     Chain '$CHAIN_ID' is ready at height $HEIGHT."; break; fi
-            ATTEMPTS=$((ATTEMPTS + 1)); echo "     Current height of '$CHAIN_ID' is $HEIGHT. Waiting... (Attempt $ATTEMPTS/$MAX_ATTEMPTS)"; sleep 5
+            if [ -n "$HEIGHT" ] && [ "$HEIGHT" -ge 1 ]; then echo "     Chain '$CHAIN_ID' is ready (Height: $HEIGHT)."; break; fi
+            ATTEMPTS=$((ATTEMPTS + 1)); sleep 3
         done
-        if [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; then echo "!!! Timed out waiting for chain '$CHAIN_ID' to start. !!!"; exit 1; fi
+        if [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; then echo "!!! Timed out waiting for chain '$CHAIN_ID'. !!!"; exit 1; fi
     done
 
-    # クライアント、接続、チャネルを順番に手動で確立
-    echo "--- Manually creating Clients, Connections, and Channels for all paths ---"
-    for DATA_CHAIN_ID in $DATA_CHAIN_IDS; do
-        # パス名の組み立て方を、`rly paths new`で定義した時と同じ順序に修正
-        PATH_NAME="${PATH_PREFIX}-${DATA_CHAIN_ID}-to-${META_CHAIN_ID}"
+    # --- 6. クライアント・接続・チャネルの確立 ---
+    echo "--- Establishing IBC connections ---"
 
-        echo "--> Full link setup for path: $PATH_NAME"
+    # Function to link path
+    link_path() {
+        P_NAME=$1
+        SRC_PORT=$2
+        DST_PORT=$3
+        echo "--> Linking $P_NAME ($SRC_PORT <-> $DST_PORT)"
         
-        # 1. クライアント作成 (--overrideで常に新規作成)
-        echo "     Step 1: Creating clients..."
-        rly transact clients "$PATH_NAME" --override --log-level warn
-        sleep 5
-
-        # 2. 接続確立
-        echo "     Step 2: Creating connection..."
-        rly transact connection "$PATH_NAME" -t 30s -r 5 --log-level warn
-        sleep 5
-
-        # 3. チャネル開設
-        echo "     Step 3: Creating channel..."
-        rly transact channel "$PATH_NAME" --src-port datastore --dst-port metastore --order unordered --version "raidchain-1" -t 30s -r 5 --log-level warn
+        # Clients & Connection
+        rly transact clients "$P_NAME" --override
+        sleep 2
+        rly transact connection "$P_NAME"
+        sleep 2
         
-        echo "✅ Path $PATH_NAME fully linked."
+        # Channel
+        # Note: version "raidchain-1" is arbitrary; ensure modules support it or use empty
+        rly transact channel "$P_NAME" \
+            --src-port "$SRC_PORT" \
+            --dst-port "$DST_PORT" \
+            --order unordered \
+            --version "raidchain-1"
+        
+        echo "✅ Path $P_NAME linked."
+    }
+
+    # GWC -> FDSCs
+    for FDSC_ID in $FDSC_IDS; do
+        PATH_NAME="${PATH_PREFIX}-${GWC_ID}-to-${FDSC_ID}"
+        # src: gwc(gateway), dst: fdsc(datastore)
+        link_path "$PATH_NAME" "gateway" "datastore"
     done
+
+    # GWC -> MDSC
+    if [ -n "$MDSC_ID" ]; then
+        PATH_NAME="${PATH_PREFIX}-${GWC_ID}-to-${MDSC_ID}"
+        # src: gwc(gateway), dst: mdsc(metastore)
+        link_path "$PATH_NAME" "gateway" "metastore"
+    fi
 
     echo "--- Initialization complete ---"
 fi
 
-# --- Relayerを起動し、確立されたチャネルでパケットをリッスンする ---
-echo "--- Starting relayer to listen for packets on established channels... ---"
+# --- Relayerの起動 ---
+echo "--- Starting relayer ---"
 exec rly start --log-level warn --log-format json
