@@ -111,10 +111,6 @@ logs-gwc:
 
 # --- Development Tasks ---
 
-# チェーンの動作確認テストを実行
-test:
-    @./scripts/test/chain-integrity-test.sh
-
 # 新しいチェーンのひな形を生成 (3種類すべて)
 scaffold-chain:
     @just scaffold-fdsc
