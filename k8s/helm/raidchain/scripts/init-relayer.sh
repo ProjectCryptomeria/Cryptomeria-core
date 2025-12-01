@@ -191,7 +191,11 @@ EOF
         fi
     fi
     
+    # 修正: IBC初期化完了後、チェーンの安定化を待つための待機を追加
+    echo "--- Waiting 15s for chain state stabilization after IBC setup ---"
+    sleep 10
 fi
 
+# --- Relayerの起動 ---
 echo "--- Starting relayer ---"
 exec rly start --log-level warn --log-format json

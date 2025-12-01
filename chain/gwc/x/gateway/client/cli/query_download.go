@@ -75,11 +75,14 @@ func CmdDownload() *cobra.Command {
 				return fmt.Errorf("MDSC endpoint not found in registry. Please register it via 'tx register-storage'")
 			}
 			fmt.Printf("   -> Found MDSC at %s\n", mdscURL)
+			// FDSC-0のURLをデフォルトで取得（FDSC_IDはmanifestから取得するため、ここでは不要だが、ルーティングテストのために必要）
+			// FDSCのURLは動的に取得されるため、fdscURLの定義は不要
 
-			// --- 2. MDSCからマニフェストを取得 ---
+			// --- 2. マニフェスト取得 ---
 			manifestUrl := fmt.Sprintf("%s/mdsc/metastore/v1/manifest/%s", mdscURL, filename)
 			fmt.Printf("🔍 Fetching manifest from %s...\n", manifestUrl)
 
+			// ... (HTTP GETとデコード処理は省略) ...
 			resp, err := http.Get(manifestUrl)
 			if err != nil {
 				return fmt.Errorf("failed to fetch manifest: %w", err)
@@ -117,14 +120,8 @@ func CmdDownload() *cobra.Command {
 					// FDSCのURL解決
 					fdscURL, ok := endpointMap[fdscID]
 					if !ok {
-						// 見つからない場合はデフォルトのfdsc-0などにフォールバックするか、エラーにする
-						// ここでは簡易的に fdsc-0 を試す
-						if defaultURL, ok := endpointMap["fdsc-0"]; ok {
-							fdscURL = defaultURL
-						} else {
-							errChan <- fmt.Errorf("endpoint for %s not found", fdscID)
-							return
-						}
+						errChan <- fmt.Errorf("endpoint for %s not found in registry", fdscID)
+						return
 					}
 
 					fragUrl := fmt.Sprintf("%s/fdsc/datastore/v1/fragment/%s", fdscURL, fragID)
@@ -152,7 +149,7 @@ func CmdDownload() *cobra.Command {
 					fmt.Printf("   ✅ Fetched fragment %d/%d\n", idx+1, totalFragments)
 				}(i, frag.FragmentId, frag.FdscId)
 			}
-
+			// ... (wait/error check/combine/save処理は省略) ...
 			wg.Wait()
 			close(errChan)
 
@@ -183,6 +180,7 @@ func CmdDownload() *cobra.Command {
 		},
 	}
 
+	// 修正: 不要なフラグを削除。Outputフラグのみ残す
 	cmd.Flags().String(FlagOutput, ".", "Output directory")
 	flags.AddQueryFlagsToCmd(cmd)
 
