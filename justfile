@@ -44,6 +44,32 @@ generate-gwc:
     @cd chain/gwc && ignite generate proto-go
     @echo "✅ GWC code generation complete!"
 
+# --- Fast Update Tasks ---
+
+# 特定のコンポーネントのみビルドしてPodを再起動（データは維持）
+# 使用例: just update gwc
+# 使用例: just update fdsc
+# 使用例: just update mdsc
+update target:
+    @just build-{{target}}
+    @echo "--> 🔄 Rolling restart for {{target}}..."
+    # type名へのマッピング（簡易的）
+    @if [ "{{target}}" = "gwc" ]; then \
+        kubectl rollout restart statefulset -n {{NAMESPACE}} -l app.kubernetes.io/component=gateway; \
+    elif [ "{{target}}" = "mdsc" ]; then \
+        kubectl rollout restart statefulset -n {{NAMESPACE}} -l app.kubernetes.io/component=metastore; \
+    elif [ "{{target}}" = "fdsc" ]; then \
+        kubectl rollout restart statefulset -n {{NAMESPACE}} -l app.kubernetes.io/component=datastore; \
+    elif [ "{{target}}" = "relayer" ]; then \
+        just build-relayer; \
+        kubectl rollout restart deployment/{{HELM_RELEASE_NAME}}-relayer -n {{NAMESPACE}}; \
+    else \
+        echo "Unknown target: {{target}}"; \
+        exit 1; \
+    fi
+    @echo "✅ Update complete! Following logs..."
+    @just logs-{{target}}
+
 # --- Build Tasks ---
 
 # [推奨] 全てのコンポーネントをビルド
