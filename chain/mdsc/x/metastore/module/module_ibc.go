@@ -119,11 +119,10 @@ func (im IBCModule) OnRecvPacket(
 
 	// Dispatch packet
 	switch packet := modulePacketData.Packet.(type) {
-	// --- ManifestPacketの受信処理 ---
 	case *types.MetastorePacketData_ManifestPacket:
 		manifestData := packet.ManifestPacket
 
-		// 1. FragmentLocationリストの変換 (Packet型 -> 保存型)
+		// 1. FragmentLocationリストの変換
 		var storedFragments []*types.FragmentLocation
 		for _, f := range manifestData.Fragments {
 			storedFragments = append(storedFragments, &types.FragmentLocation{
@@ -132,7 +131,7 @@ func (im IBCModule) OnRecvPacket(
 			})
 		}
 
-		// 2. FileInfoの作成 (値型)
+		// 2. FileInfoの作成
 		fileInfo := types.FileInfo{
 			MimeType:  manifestData.MimeType,
 			FileSize:  manifestData.FileSize,
@@ -140,32 +139,26 @@ func (im IBCModule) OnRecvPacket(
 		}
 
 		// 3. Manifestの作成と保存
-		// 今回は PoC としてファイル名 = プロジェクト名 として簡易的に保存
 		projectName := manifestData.Filename
 
-		// 既存のマニフェストがあれば取得して更新、なければ新規作成
-		// Note: Collections APIを使用。Getは値とエラーを返す。
 		manifest, err := im.keeper.Manifest.Get(ctx, projectName)
-		if err != nil { // Not Found (collections.ErrNotFound) or other errors
-			// 新規作成
+		if err != nil { // 新規作成
 			manifest = types.Manifest{
 				ProjectName: projectName,
-				Version:     "1.0.0", // 初期バージョン
+				Version:     "1.0.0",
 				Creator:     "ibc-user",
-				// 修正: Filesマップをポインタ型 (*types.FileInfo) で初期化
+				// 修正: ポインタ型のマップで初期化
 				Files: make(map[string]*types.FileInfo),
 			}
-			// 新規Mapにエントリを追加 (値型をポインタに変換)
-			manifest.Files[manifestData.Filename] = &fileInfo // 👈 修正: & を使用
-		} else {
-			// 更新
-			// Protobufのmapがnilの場合の初期化
+			// 修正: アドレス(&)を代入
+			manifest.Files[manifestData.Filename] = &fileInfo
+		} else { // 更新
 			if manifest.Files == nil {
-				// 修正: Filesマップをポインタ型 (*types.FileInfo) で初期化
+				// 修正: ポインタ型のマップで初期化
 				manifest.Files = make(map[string]*types.FileInfo)
 			}
-			// Mapにエントリを更新 (値型をポインタに変換)
-			manifest.Files[manifestData.Filename] = &fileInfo // 👈 修正: & を使用
+			// 修正: アドレス(&)を代入
+			manifest.Files[manifestData.Filename] = &fileInfo
 		}
 
 		// 保存
@@ -173,7 +166,8 @@ func (im IBCModule) OnRecvPacket(
 			return channeltypes.NewErrorAcknowledgement(fmt.Errorf("failed to save manifest: %w", err))
 		}
 
-		ctx.Logger().Info("Manifest Packet Received & Saved", "project", projectName, "fragments_count", len(storedFragments))
+		// デバッグログ
+		fmt.Printf("\n[DEBUG] Manifest Saved: %+v\n", manifest)
 
 		return channeltypes.NewResultAcknowledgement([]byte{byte(1)})
 

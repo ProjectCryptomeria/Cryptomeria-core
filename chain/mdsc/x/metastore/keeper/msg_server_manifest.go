@@ -40,7 +40,7 @@ func (k msgServer) CreateManifest(ctx context.Context, msg *types.MsgCreateManif
 	return &types.MsgCreateManifestResponse{}, nil
 }
 
-// 新規追加: Manifestにファイル情報を追加するハンドラ (コンパイラエラー解消のため必須)
+// 新規追加: Manifestにファイル情報を追加するハンドラ
 func (k msgServer) AddFileToManifest(ctx context.Context, msg *types.MsgAddFileToManifest) (*types.MsgAddFileToManifestResponse, error) {
 	if _, err := k.addressCodec.StringToBytes(msg.Creator); err != nil {
 		return nil, errorsmod.Wrap(sdkerrors.ErrInvalidAddress, fmt.Sprintf("invalid signer address: %s", err))
@@ -96,8 +96,7 @@ func (k msgServer) UpdateManifest(ctx context.Context, msg *types.MsgUpdateManif
 		return nil, errorsmod.Wrap(sdkerrors.ErrUnauthorized, "incorrect owner")
 	}
 
-	// 修正: 既存の Manifest (val) から Files マップを引き継ぐことで、
-	// ファイル情報が失われるバグを防ぐ
+	// 修正: 既存の Manifest (val) から Files マップを引き継ぐ
 	var manifest = types.Manifest{
 		Creator:     msg.Creator,
 		ProjectName: msg.ProjectName,
