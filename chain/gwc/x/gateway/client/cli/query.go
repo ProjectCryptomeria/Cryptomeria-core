@@ -24,7 +24,7 @@ func GetQueryCmd(queryRoute string) *cobra.Command {
 
 	// 追加: 標準的なクエリコマンド
 	cmd.AddCommand(CmdParams())
-	cmd.AddCommand(CmdStorageEndpoints())
+	cmd.AddCommand(CmdEndpoints())
 
 	// 追加: ダウンロードコマンド
 	cmd.AddCommand(CmdDownload())
@@ -59,9 +59,9 @@ func CmdParams() *cobra.Command {
 	return cmd
 }
 
-func CmdStorageEndpoints() *cobra.Command {
+func CmdEndpoints() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "storage-endpoints",
+		Use:   "endpoints",
 		Short: "shows the registered storage endpoints",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -91,7 +91,7 @@ func CmdStorageEndpoints() *cobra.Command {
 	}
 
 	flags.AddQueryFlagsToCmd(cmd)
-	flags.AddPaginationFlagsToCmd(cmd, "storage-endpoints")
+	flags.AddPaginationFlagsToCmd(cmd, "endpoints")
 
 	return cmd
 }

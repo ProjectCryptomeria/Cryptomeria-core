@@ -36,19 +36,28 @@ hot-reload-all: (hot-reload 'fdsc') (hot-reload 'mdsc') (hot-reload 'gwc')
 
 # --- Fast Update Tasks ---
 
-# [高速開発用] バイナリだけをビルド・転送・再起動 (PVCデータは維持)
-# 使用例: just hot-reload fdsc
-# 使用例: just hot-reload gwc
+# [高速開発用] バイナリをビルド・転送・再起動 (検証機能付き)
 hot-reload target:
     #!/usr/bin/env bash
     set -e
     echo "🔥 Hot reloading {{target}}..."
     
-    # 1. Linux向けにクロスコンパイル (Igniteを使わずGoで直接ビルドすると速い)
-    echo "   Compiling binary for Linux..."
+    # 1. Igniteでビルド (generateも念のため実行)
+    echo "   Generating proto and compiling binary..."
     just generate {{target}}
     just build-chain {{target}}
     
+    BINARY_NAME="{{target}}d"
+    LOCAL_BINARY="dist/$BINARY_NAME"
+    
+    # ローカルのハッシュ値を確認
+    if command -v md5sum >/dev/null; then
+        LOCAL_HASH=$(md5sum "$LOCAL_BINARY" | awk '{print $1}')
+    else
+        LOCAL_HASH=$(md5sum "$LOCAL_BINARY" | awk '{print $4}') # Macの場合
+    fi
+    echo "   📦 Local Binary Hash: $LOCAL_HASH"
+
     # 2. 実行中のPodを特定
     echo "   Injecting binary into Pod..."
     POD=$(kubectl get pod -n {{NAMESPACE}} -l app.kubernetes.io/component={{target}} -o jsonpath="{.items[0].metadata.name}")
@@ -59,14 +68,46 @@ hot-reload target:
     fi
     echo "   Target Pod: $POD"
 
-    # 3. 新しいバイナリを転送 (一旦 temp に置く)
-    kubectl cp dist/{{target}}d {{NAMESPACE}}/$POD:/tmp/{{target}}d_new
+    # 3. 新しいバイナリを転送
+    kubectl cp "$LOCAL_BINARY" {{NAMESPACE}}/$POD:/tmp/"$BINARY_NAME"_new
     
-    # 4. コンテナ内でバイナリを差し替えてプロセスを再起動
-    # 解説: CMDがループになっているため、killall でプロセスを殺すと、
-    # コンテナは落ちずにループが即座に新しいバイナリでプロセスを再起動する。
-    echo "   Swapping binary and restarting process..."
-    kubectl exec -n {{NAMESPACE}} $POD -- /bin/bash -c "mv /tmp/{{target}}d_new /home/{{target}}/bin/{{target}}d && chmod +x /home/{{target}}/bin/{{target}}d && killall {{target}}d"
+    # 4. コンテナ内で検証・置換・再起動
+    echo "   Verifying and restarting process..."
+    kubectl exec -n {{NAMESPACE}} $POD -- /bin/bash -c "
+        set -e
+        # 転送されたファイルのハッシュ確認
+        REMOTE_HASH=\$(md5sum /tmp/${BINARY_NAME}_new | awk '{print \$1}')
+        echo \"   📦 Remote Binary Hash (New): \$REMOTE_HASH\"
+        
+        if [ \"$LOCAL_HASH\" != \"\$REMOTE_HASH\" ]; then
+            echo \"❌ Hash mismatch! Copy failed.\"
+            exit 1
+        fi
+
+        # バイナリの差し替え
+        mv /tmp/${BINARY_NAME}_new /home/{{target}}/bin/$BINARY_NAME
+        chmod +x /home/{{target}}/bin/$BINARY_NAME
+        
+        # 再起動前のPID取得
+        OLD_PID=\$(pgrep -x $BINARY_NAME || echo '')
+        
+        # プロセス停止
+        killall $BINARY_NAME
+        
+        # 再起動待ち (entrypointのループが再起動するのを待つ)
+        sleep 2
+        
+        # 再起動後のPID取得
+        NEW_PID=\$(pgrep -x $BINARY_NAME || echo '')
+        
+        echo \"   🔄 PID Change: \$OLD_PID -> \$NEW_PID\"
+        
+        if [ \"\$OLD_PID\" == \"\$NEW_PID\" ] && [ -n \"\$OLD_PID\" ]; then
+            echo \"⚠️ Warning: PID did not change. Process might not have restarted correctly.\"
+        else
+            echo \"✅ Process restarted successfully.\"
+        fi
+    "
     echo "✅ {{target}} reloaded!"
 
 # --- Build Tasks ---

@@ -32,6 +32,10 @@ spec:
               value: {{ .type | quote }}
             - name: CHAIN_INSTANCE_NAME
               value: {{ .name | quote }}
+            {{- /* 修正: values.yaml の env をここに展開 */ -}}
+            {{- if $.Values.env }}
+            {{- toYaml $.Values.env | nindent 12 }}
+            {{- end }}
           ports:
             - containerPort: 26657
               name: rpc
