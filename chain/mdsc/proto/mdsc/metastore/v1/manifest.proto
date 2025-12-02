@@ -20,6 +20,5 @@ message Manifest {
   string project_name = 1;
   string version = 2;
   string creator = 3;
-  // ここも同様に moretags を削除
-  map<string, FileInfo> files = 4 [(gogoproto.nullable) = false]; 
+  map<string, FileInfo> files = 4; 
 }

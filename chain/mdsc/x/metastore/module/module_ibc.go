@@ -148,17 +148,17 @@ func (im IBCModule) OnRecvPacket(
 				Version:     "1.0.0",
 				Creator:     "ibc-user",
 				// 修正: ポインタ型のマップで初期化
-				Files: make(map[string]types.FileInfo),
+				Files: make(map[string]*types.FileInfo),
 			}
 			// 修正: アドレス(&)を代入
-			manifest.Files[manifestData.Filename] = fileInfo
+			manifest.Files[manifestData.Filename] = &fileInfo
 		} else { // 更新
 			if manifest.Files == nil {
 				// 修正: ポインタ型のマップで初期化
-				manifest.Files = make(map[string]types.FileInfo)
+				manifest.Files = make(map[string]*types.FileInfo)
 			}
 			// 修正: アドレス(&)を代入
-			manifest.Files[manifestData.Filename] = fileInfo
+			manifest.Files[manifestData.Filename] = &fileInfo
 		}
 
 		// 保存
