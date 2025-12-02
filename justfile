@@ -197,19 +197,31 @@ deploy chains=DEFAULT_CHAINS:
 
 # デプロイされたアプリケーションと関連PVCをクラスタからアンインストール
 undeploy:
-    @-helm uninstall {{HELM_RELEASE_NAME}} --namespace {{NAMESPACE}}
-    @echo "--> 🗑️ Deleting Persistent Volume Claims..."
+    @echo "--> 🛑 Uninstalling Helm release..."
+    @# --wait を追加: リソースが解放されるのを待ってから次に進む
+    @-helm uninstall {{HELM_RELEASE_NAME}} --namespace {{NAMESPACE}} --wait
+    
+    @echo "--> 🗑️ Deleting Persistent Volume Claims (Data)..."
+    @# PVC（データ）を削除。これでチェーンの状態はリセットされます
     @-kubectl -n {{NAMESPACE}} delete pvc -l app.kubernetes.io/name={{HELM_RELEASE_NAME}}
+    
+    @echo "--> 🧹 Cleaning up stray Jobs..."
+    @# Helmで管理しきれていないJobが残ることがあるので念のため削除
+    @-kubectl -n {{NAMESPACE}} delete jobs --all
 
-# K8sリソースをクリーンアップしてからデプロイ
+# [高速化] Namespaceは残したまま、リソースとデータだけリセットして再デプロイ
 # 例: just deploy-clean 4
 deploy-clean chains=DEFAULT_CHAINS:
-    @just clean-k8s
+    @just undeploy
     @just deploy {{chains}}
-    @echo "✅ Redeployment complete!"
+    @echo "✅ Redeployment complete (Namespace preserved)!"
 
-upgrade:
-    @helm upgrade {{HELM_RELEASE_NAME}} k8s/helm/raidchain --namespace {{NAMESPACE}} --reuse-values
+# データ（ブロックチェーンの状態）は維持したまま、バイナリや設定だけ更新
+update:
+    @echo "--> ♻️ Updating Helm release (Preserving data)..."
+    @helm upgrade {{HELM_RELEASE_NAME}} k8s/helm/raidchain --namespace {{NAMESPACE}}
+    @kubectl -n {{NAMESPACE}} rollout restart statefulset
+    @echo "✅ Update complete! Chain data preserved."
 
 # --- Development Tasks ---
 [parallel]
@@ -232,9 +244,9 @@ scaffold-gwc:
 
 # --- Cleanup Tasks ---
 
-# K8sリソース(Namespaceごと)を削除
+# Namespaceごと完全に消し去る（時間がかかるので非常時や終了時用）
 clean-k8s: undeploy
-    @echo "--> 🗑️ Deleting namespace {{NAMESPACE}}..."
+    @echo "--> 🗑️ Deleting namespace {{NAMESPACE}} (This may take a while)..."
     @kubectl delete namespace {{NAMESPACE}} --ignore-not-found
 
 # --- Controller Tasks ---

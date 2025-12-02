@@ -114,29 +114,66 @@ EOF
         until [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; do
             STATUS_RES=$(curl -s "${RPC_ADDR}/status")
             HEIGHT=$(echo "$STATUS_RES" | jq -r '.result.sync_info.latest_block_height // "0"')
-            if [ -n "$HEIGHT" ] && [ "$HEIGHT" -ge 1 ]; then echo "     Chain '$CHAIN_ID' is ready (Height: $HEIGHT)."; break; fi
-            ATTEMPTS=$((ATTEMPTS + 1)); sleep 3
+            
+            # 【修正】1 -> 5 に変更 (IBC Proof生成に必要な高さを確保)
+            if [ -n "$HEIGHT" ] && [ "$HEIGHT" -ge 5 ]; then 
+                echo "     Chain '$CHAIN_ID' is ready (Height: $HEIGHT)."
+                break
+            fi
+            
+            ATTEMPTS=$((ATTEMPTS + 1)); sleep 1 # チェック間隔を短くしても良い
         done
         if [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; then echo "!!! Timed out waiting for chain '$CHAIN_ID'. !!!"; exit 1; fi
     done
 
-    # --- 6. クライアント・接続・チャネルの確立 (並列実行) ---
+# --- 6. クライアント・接続・チャネルの確立 (並列実行) ---
     echo "--- Establishing IBC connections (Parallel) ---"
+
+    # 【追加】リトライ用関数
+    # コマンドが失敗した場合、1秒待って再実行します（最大30回＝約30秒粘る）
+    retry() {
+        local n=1
+        local max=30
+        local delay=1
+        while true; do
+            # コマンド実行。成功したらループを抜ける
+            "$@" && break 
+            
+            # 失敗時の処理
+            if [[ $n -lt $max ]]; then
+                ((n++))
+                echo "⚠️ Command failed. Retrying in ${delay}s... ($n/$max)"
+                sleep $delay;
+            else
+                echo "❌ The command has failed after $n attempts."
+                return 1
+            fi
+        done
+    }
 
     link_path() {
         P_NAME=$1
         SRC_PORT=$2
         DST_PORT=$3
         echo "--> [Start] Linking $P_NAME ($SRC_PORT <-> $DST_PORT)"
-        rly transact clients "$P_NAME" --override || { echo "Failed to create clients for $P_NAME"; return 1; }
-        sleep 5
-        rly transact connection "$P_NAME" || { echo "Failed to create connection for $P_NAME"; return 1; }
-        sleep 5
-        rly transact channel "$P_NAME" \
+        
+        # 【修正】各ステップを retry でラップし、固定sleepを削除
+        
+        # 1. クライアント作成
+        retry rly transact clients "$P_NAME" --override || { echo "Failed to create clients for $P_NAME"; return 1; }
+        
+        # 2. コネクション作成
+        # 前のステップのブロックが含まれるのを待つ必要があるため、
+        # ここでリトライが数回走ることで、自動的に「必要最小限の待ち時間」になります。
+        retry rly transact connection "$P_NAME" || { echo "Failed to create connection for $P_NAME"; return 1; }
+        
+        # 3. チャネル作成
+        retry rly transact channel "$P_NAME" \
             --src-port "$SRC_PORT" \
             --dst-port "$DST_PORT" \
             --order unordered \
             --version "raidchain-1" || { echo "Failed to create channel for $P_NAME"; return 1; }
+            
         echo "✅ [Done] Path $P_NAME linked."
     }
 
@@ -201,8 +238,8 @@ EOF
     fi
     
     # IBC初期化完了後、チェーンの安定化を待つための待機を追加
-    echo "--- Waiting 15s for chain state stabilization after IBC setup ---"
-    sleep 10
+    echo "--- Waiting 5s for chain state stabilization after IBC setup ---"
+    sleep 5 # 【修正】15秒から5秒に短縮（必要に応じて）
 fi
 
 # --- Relayerの起動 ---
