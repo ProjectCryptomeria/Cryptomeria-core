@@ -30,7 +30,7 @@ func (k msgServer) CreateManifest(ctx context.Context, msg *types.MsgCreateManif
 		Creator:     msg.Creator,
 		ProjectName: msg.ProjectName,
 		Version:     msg.Version,
-		Files:       make(map[string]*types.FileInfo), // 👈 修正: ポインタ型 (*) で初期化
+		Files:       make(map[string]types.FileInfo), // 👈 修正: ポインタ型 (*) で初期化
 	}
 
 	if err := k.Manifest.Set(ctx, manifest.ProjectName, manifest); err != nil {
@@ -62,11 +62,11 @@ func (k msgServer) AddFileToManifest(ctx context.Context, msg *types.MsgAddFileT
 
 	// ManifestのFilesマップが未初期化 (nil) の場合、ポインタ型で初期化する
 	if val.Files == nil {
-		val.Files = make(map[string]*types.FileInfo) // 👈 修正: ポインタ型 (*) で初期化
+		val.Files = make(map[string]types.FileInfo) // 👈 修正: ポインタ型 (*) で初期化
 	}
 
 	// ファイル情報をマップに追加/更新 (値のアドレスをポインタとして使用)
-	val.Files[msg.FilePath] = &msg.FileInfo // 👈 修正: ポインタ (&) を使用
+	val.Files[msg.FilePath] = msg.FileInfo // 👈 修正: ポインタ (&) を使用
 
 	// Manifestを更新して保存
 	if err := k.Manifest.Set(ctx, val.ProjectName, val); err != nil {
