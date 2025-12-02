@@ -3,10 +3,6 @@
 # --- 変数定義 ---
 HELM_RELEASE_NAME := "raidchain"
 NAMESPACE         := "raidchain"
-IMAGE_FDSC        := "raidchain/fdsc:latest"
-IMAGE_MDSC        := "raidchain/mdsc:latest"
-IMAGE_GWC         := "raidchain/gwc:latest"
-IMAGE_RELAYER     := "raidchain/relayer:latest"
 DEFAULT_CHAINS    := "2"
 
 # justコマンドのデフォルトの挙動を設定。コマンド一覧を表示する。
@@ -23,83 +19,123 @@ all-in-one chains=DEFAULT_CHAINS:
     @echo "✅ All-in-one process complete!"
 
 # --- Go-Generated Tasks ---
-generate:
-    @just generate-fdsc
-    @just generate-mdsc
-    @just generate-gwc
-    @echo "✅ Code generation for all chains complete!"
+[parallel]
+generate-all: (generate 'fdsc') (generate 'mdsc') (generate 'gwc')
+    @echo "✅ All code generation complete!"
 
-generate-fdsc:
-    @echo "🔧 Generating code for FDSC..."
-    @cd chain/fdsc && ignite generate proto-go
-    @echo "✅ FDSC code generation complete!"
+generate target:
+    @echo "🔧 Generating code for {{uppercase(target)}}..."
+    @cd chain/{{target}} && ignite generate proto-go
+    @echo "✅ {{uppercase(target)}} code generation complete!"
 
-generate-mdsc:
-    @echo "🔧 Generating code for MDSC..."
-    @cd chain/mdsc && ignite generate proto-go
-    @echo "✅ MDSC code generation complete!"
 
-generate-gwc:
-    @echo "🔧 Generating code for GWC..."
-    @cd chain/gwc && ignite generate proto-go
-    @echo "✅ GWC code generation complete!"
+# --- Fast Update Tasks ---
+[parallel]
+hot-reload-all: (hot-reload 'fdsc') (hot-reload 'mdsc') (hot-reload 'gwc')
+    @echo "✅ Hot reload for all components complete!"
 
 # --- Fast Update Tasks ---
 
-# 特定のコンポーネントのみビルドしてPodを再起動（データは維持）
-# 使用例: just update gwc
-# 使用例: just update fdsc
-# 使用例: just update mdsc
-update target:
-    @just build-{{target}}
-    @echo "--> 🔄 Rolling restart for {{target}}..."
-    # type名へのマッピング（簡易的）
-    @if [ "{{target}}" = "gwc" ]; then \
-        kubectl rollout restart statefulset -n {{NAMESPACE}} -l app.kubernetes.io/component=gwc; \
-    elif [ "{{target}}" = "mdsc" ]; then \
-        kubectl rollout restart statefulset -n {{NAMESPACE}} -l app.kubernetes.io/component=mdsc; \
-    elif [ "{{target}}" = "fdsc" ]; then \
-        kubectl rollout restart statefulset -n {{NAMESPACE}} -l app.kubernetes.io/component=fdsc; \
-    elif [ "{{target}}" = "relayer" ]; then \
-        just build-relayer; \
-        kubectl rollout restart deployment/{{HELM_RELEASE_NAME}}-relayer -n {{NAMESPACE}}; \
-    else \
-        echo "Unknown target: {{target}}"; \
-        exit 1; \
+# [高速開発用] バイナリだけをビルド・転送・再起動 (PVCデータは維持)
+# 使用例: just hot-reload fdsc
+# 使用例: just hot-reload gwc
+hot-reload target:
+    #!/usr/bin/env bash
+    set -e
+    echo "🔥 Hot reloading {{target}}..."
+    
+    # 1. Linux向けにクロスコンパイル (Igniteを使わずGoで直接ビルドすると速い)
+    echo "   Compiling binary for Linux..."
+    just generate {{target}}
+    just build-chain {{target}}
+    
+    # 2. 実行中のPodを特定
+    echo "   Injecting binary into Pod..."
+    POD=$(kubectl get pod -n {{NAMESPACE}} -l app.kubernetes.io/component={{target}} -o jsonpath="{.items[0].metadata.name}")
+    
+    if [ -z "$POD" ]; then
+        echo "❌ Error: Pod for {{target}} not found in namespace {{NAMESPACE}}."
+        exit 1
     fi
-    @echo "✅ Update complete!"
+    echo "   Target Pod: $POD"
+
+    # 3. 新しいバイナリを転送 (一旦 temp に置く)
+    kubectl cp dist/{{target}}d {{NAMESPACE}}/$POD:/tmp/{{target}}d_new
+    
+    # 4. コンテナ内でバイナリを差し替えてプロセスを再起動
+    # 解説: CMDがループになっているため、killall でプロセスを殺すと、
+    # コンテナは落ちずにループが即座に新しいバイナリでプロセスを再起動する。
+    echo "   Swapping binary and restarting process..."
+    kubectl exec -n {{NAMESPACE}} $POD -- /bin/bash -c "mv /tmp/{{target}}d_new /home/{{target}}/bin/{{target}}d && chmod +x /home/{{target}}/bin/{{target}}d && killall {{target}}d"
+    echo "✅ {{target}} reloaded!"
 
 # --- Build Tasks ---
 
-# [推奨] 全てのコンポーネントをビルド
-build: build-fdsc build-mdsc build-gwc build-relayer
-    @echo "✅ All images built."
+# [一括] 全てのコンポーネントをビルド (並列実行)
+[parallel]
+build-all: (build 'fdsc') (build 'mdsc') (build 'gwc') (build 'relayer')
+    @echo "✅ All components built successfully."
 
-# FDSC (FragmentData Storage Chain) のDockerイメージをビルド
-build-fdsc:
-    @echo "🏗️  Building FDSC..."
-    @cd chain/fdsc && \
-        ignite chain build -o ../../dist --skip-proto
-    @docker build -t {{IMAGE_FDSC}} -f build/fdsc/Dockerfile .
+# [一括] 全てのチェーンバイナリをビルド (並列実行)
+[parallel]
+build-chain-all: (build-chain 'fdsc') (build-chain 'mdsc') (build-chain 'gwc')
+    @echo "✅ All chain binaries compiled successfully."
 
-# MDSC (ManifestData Storage Chain) のDockerイメージをビルド
-build-mdsc:
-    @echo "🏗️  Building MDSC..."
-    @cd chain/mdsc && \
-        ignite chain build -o ../../dist --skip-proto
-    @docker build -t {{IMAGE_MDSC}} -f build/mdsc/Dockerfile .
+# [一括] 全てのDockerイメージをビルド (並列実行)
+[parallel]
+build-image-all: (build-image 'fdsc') (build-image 'mdsc') (build-image 'gwc') (build-image 'relayer')
+    @echo "✅ All Docker images built successfully."
 
-# GWC (Gateway Chain) のDockerイメージをビルド
-build-gwc:
-    @echo "🏗️  Building GWC..."
-    @cd chain/gwc && \
-        ignite chain build -o ../../dist --skip-proto
-    @docker build -t {{IMAGE_GWC}} -f build/gwc/Dockerfile .
+# [統合] 特定のターゲットのバイナリ作成とDockerイメージ作成を一括で行う
+# 使用例: just build fdsc
+build target:
+    #!/usr/bin/env bash
+    set -e
+    # Relayerはバイナリコンパイル不要（Dockerfile内で完結する場合）または別手順のためスキップ
+    if [ "{{target}}" != "relayer" ]; then
+        just build-chain {{target}}
+    fi
+    just build-image {{target}}
 
-# relayerのDockerイメージをビルド
-build-relayer:
-    @echo "🏗️  Building Relayer..."
-    @docker build -t {{IMAGE_RELAYER}} -f build/relayer/Dockerfile .
+# [ステップ1] Igniteを使ってチェーンのバイナリをコンパイルする
+# 使用例: just compile-binary fdsc
+build-chain target:
+    #!/usr/bin/env bash
+    set -e
+    # ターゲットの検証
+    if [[ ! "{{target}}" =~ ^(fdsc|mdsc|gwc)$ ]]; then
+        echo "❌ Error: Target '{{target}}' is not a valid chain project."
+        echo "   Allowed: fdsc, mdsc, gwc"
+        exit 1
+    fi
+
+    echo "🏗️  Compiling binary for {{target}}..."
+    cd chain/{{target}} && ignite chain build -o ../../dist --skip-proto
+    echo "✅ Binary compiled: dist/{{target}}d"
+
+# [ステップ2] Dockerイメージをビルドする
+# 使用例: just build-image fdsc
+build-image target:
+    #!/usr/bin/env bash
+    set -e
+    # ターゲットの検証 (Relayerも含む)
+    if [[ ! "{{target}}" =~ ^(fdsc|mdsc|gwc|relayer)$ ]]; then
+        echo "❌ Error: Target '{{target}}' is unknown."
+        echo "   Allowed: fdsc, mdsc, gwc, relayer"
+        exit 1
+    fi
+
+    echo "🐳 Building Docker image for {{target}}..."
+    
+    # Dockerfileの存在確認
+    DOCKERFILE="build/{{target}}/Dockerfile"
+    if [ ! -f "$DOCKERFILE" ]; then
+        echo "❌ Error: Dockerfile not found at $DOCKERFILE"
+        exit 1
+    fi
+
+    docker build -t "raidchain/{{target}}:latest" -f "$DOCKERFILE" .
+    echo "✅ Image built: raidchain/{{target}}:latest"
 
 # --- Kubernetes Tasks ---
 
@@ -134,34 +170,14 @@ deploy-clean chains=DEFAULT_CHAINS:
 upgrade:
     @helm upgrade {{HELM_RELEASE_NAME}} k8s/helm/raidchain --namespace {{NAMESPACE}} --reuse-values
 
-# --- Logging and Exec ---
-
-# [デフォルト] 全コンポーネントのログを表示
-logs: logs-all
-
-# 全てのコンポーネントのログを表示
-logs-all:
-    @kubectl logs -f -l app.kubernetes.io/instance={{HELM_RELEASE_NAME}} -n {{NAMESPACE}} --max-log-requests=15
-
-# FDSC Podのログを表示
-logs-fdsc:
-    @kubectl logs -f -l app.kubernetes.io/instance={{HELM_RELEASE_NAME}},app.kubernetes.io/name=fdsc -n {{NAMESPACE}}
-
-# MDSC Podのログを表示
-logs-mdsc:
-    @kubectl logs -f -l app.kubernetes.io/instance={{HELM_RELEASE_NAME}},app.kubernetes.io/name=mdsc -n {{NAMESPACE}}
-
-# GWC Podのログを表示
-logs-gwc:
-    @kubectl logs -f -l app.kubernetes.io/instance={{HELM_RELEASE_NAME}},app.kubernetes.io/name=gwc -n {{NAMESPACE}}
-
 # --- Development Tasks ---
+[parallel]
+scaffold-all: (scaffold 'fdsc') (scaffold 'mdsc') (scaffold 'gwc')
+    @echo "✅ Scaffold complete! Check the 'chain' directory."
 
-# 新しいチェーンのひな形を生成 (3種類すべて)
-scaffold-chain:
-    @just scaffold-fdsc
-    @just scaffold-mdsc
-    @just scaffold-gwc
+# 新しいチェーンのひな形を生成 
+scaffold target:
+    @just scaffold-{{target}}
     @echo "✅ Scaffold complete! Check the 'chain' directory."
 
 scaffold-fdsc:
@@ -174,14 +190,6 @@ scaffold-gwc:
     @./scripts/scaffold/scaffold-chain.sh gwc gateway
 
 # --- Cleanup Tasks ---
-
-# K8sリソースを削除し、生成されたディレクトリも削除
-clean-all: clean-k8s clean-chain
-    @echo "✅ Full cleanup complete!"
-
-clean-chain:
-    @echo "--> 🗑️ Deleting generated chain directories..."
-    @rm -rf chain/fdsc chain/mdsc chain/gwc
 
 # K8sリソース(Namespaceごと)を削除
 clean-k8s: undeploy
@@ -217,8 +225,13 @@ ctl-exp:
 ctl-monitor:
     @cd controller && yarn ts-node src/scripts/monitor-chain.ts
 
-
 # --- Test Tasks ---
+
+test process:
+    @echo "--> 🧪 Running {{process}}-test process..."
+    @just {{process}}-test
+    @echo "✅ process complete!"
+
 upload-test:
     @echo "--> 📤 Uploading test data..."
     @./scripts/test/poc-upload-test.sh

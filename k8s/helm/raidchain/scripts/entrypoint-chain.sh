@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 set -e
 
 # --- 環境変数と設定 ---
@@ -79,8 +80,38 @@ if [ ! -d "$CHAIN_HOME/config" ]; then
     echo "--- Initialization complete for $CHAIN_ID ---"
 fi
 
-# --- ノードの起動 ---
-echo "--- Starting node for $CHAIN_ID ---"
-# minimum-gas-pricesを0に設定してノードを起動
-exec $CHAIN_BINARY start --home "$CHAIN_HOME" --minimum-gas-prices="0$DENOM" --log_level error --log_format json
+# --- ノードの起動 (ホットリロード対応) ---
 
+# 実行するコマンドライン引数を変数に格納
+START_CMD="$CHAIN_BINARY start --home $CHAIN_HOME --minimum-gas-prices=0$DENOM --log_level error --log_format json"
+
+if [ "$DEV_MODE" = "true" ]; then
+    echo "=================================================="
+    echo "🚧 DEVELOPMENT MODE: Hot Reload Enabled"
+    echo "=================================================="
+    echo "   Running '$CHAIN_BINARY' inside a loop."
+    echo "   Use 'just hot-reload' to update the binary."
+    echo "=================================================="
+
+    # 無限ループでノードを実行
+    while true; do
+        echo "--> 🚀 Starting node for $CHAIN_ID..."
+        
+        # バックグラウンドで実行
+        $START_CMD &
+        PID=$!
+        
+        # プロセス終了を待機 (killall された場合やクラッシュした場合)
+        # set -e が効いているため、waitが失敗扱いにならないように || true をつける
+        wait $PID || true
+        EXIT_CODE=$?
+        
+        echo "--> ⚠️  Node process exited with code $EXIT_CODE."
+        echo "--> 🔄 Restarting in 1 second..."
+        sleep 1
+    done
+else
+    # 本番モード: 通常通り exec で実行 (PID 1 を引き継ぐ)
+    echo "--- Starting node for $CHAIN_ID (Production) ---"
+    exec $START_CMD
+fi
