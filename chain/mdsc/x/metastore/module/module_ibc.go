@@ -132,7 +132,7 @@ func (im IBCModule) OnRecvPacket(
 			})
 		}
 
-		// 2. FileInfoの作成
+		// 2. FileInfoの作成 (値型)
 		fileInfo := types.FileInfo{
 			MimeType:  manifestData.MimeType,
 			FileSize:  manifestData.FileSize,
@@ -152,17 +152,20 @@ func (im IBCModule) OnRecvPacket(
 				ProjectName: projectName,
 				Version:     "1.0.0", // 初期バージョン
 				Creator:     "ibc-user",
-				Files:       make(map[string]*types.FileInfo),
+				// 修正: Filesマップをポインタ型 (*types.FileInfo) で初期化
+				Files: make(map[string]*types.FileInfo),
 			}
-			// 新規Mapにエントリを追加
-			manifest.Files[manifestData.Filename] = &fileInfo
+			// 新規Mapにエントリを追加 (値型をポインタに変換)
+			manifest.Files[manifestData.Filename] = &fileInfo // 👈 修正: & を使用
 		} else {
 			// 更新
 			// Protobufのmapがnilの場合の初期化
 			if manifest.Files == nil {
+				// 修正: Filesマップをポインタ型 (*types.FileInfo) で初期化
 				manifest.Files = make(map[string]*types.FileInfo)
 			}
-			manifest.Files[manifestData.Filename] = &fileInfo
+			// Mapにエントリを更新 (値型をポインタに変換)
+			manifest.Files[manifestData.Filename] = &fileInfo // 👈 修正: & を使用
 		}
 
 		// 保存

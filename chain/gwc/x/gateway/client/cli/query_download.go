@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -130,6 +131,17 @@ func CmdDownload() *cobra.Command {
 						return
 					}
 					defer fResp.Body.Close()
+
+					// --- Debugging Response ---
+					fmt.Printf("\n[DEBUG] Fragment: %s\n", fragID)
+					fmt.Printf("Status: %s\n", fResp.Status)
+					// fmt.Printf("Headers: %v\n", fResp.Header) // ヘッダーが多すぎる場合はコメントアウト
+
+					// ボディを読み出して表示し、元に戻す
+					bodyBytes, _ := io.ReadAll(fResp.Body)
+					fmt.Printf("Body: %s\n", string(bodyBytes))
+					fResp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+					// --------------------------
 
 					var fr FragmentResponse
 					if err := json.NewDecoder(fResp.Body).Decode(&fr); err != nil {
