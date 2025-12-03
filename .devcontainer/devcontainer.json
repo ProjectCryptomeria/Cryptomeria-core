@@ -10,7 +10,7 @@
   // 🛠️ 【追加】ホストのKubeconfigをコンテナ内にマウント
   // ${env:HOME} は WSL環境での /home/ubuntu (または設定されたユーザー) を指します。
   "mounts": [
-    "source=${env:HOME}/.kube,target=/home/ubuntu/.kube,type=bind,consistency=cached"
+    "source=C:/Users/${localEnv:USERNAME}/.kube/.kube,target=/home/ubuntu/.kube,type=bind,consistency=cached"
   ],
   // 📝 【追加】KUBECONFIG環境変数を明示的に設定
   "remoteEnv": {
