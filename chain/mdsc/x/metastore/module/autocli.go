@@ -17,11 +17,11 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:       "params",
 					Short:     "Shows the parameters of the module",
 				},
-				// {
-				// 	RpcMethod: "ListManifest",
-				// 	Use:       "list-manifest",
-				// 	Short:     "List all manifest",
-				// },
+				{
+					RpcMethod: "ListManifest",
+					Use:       "list-manifest",
+					Short:     "List all manifest",
+				},
 				{
 					RpcMethod:      "GetManifest",
 					Use:            "get-manifest [id]",

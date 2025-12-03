@@ -1,11 +1,9 @@
 package keeper
 
 import (
-	"context"
-	"encoding/json" // 追加
+	"context" // 追加
 	"errors"
-	"fmt" // 追加
-
+	// 追加
 	"mdsc/x/metastore/types"
 
 	"cosmossdk.io/collections"
@@ -30,23 +28,6 @@ func (q queryServer) ListManifest(ctx context.Context, req *types.QueryAllManife
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-
-	// === [DEBUG START] 自前でJSON化して確認 ===
-	fmt.Println("========== DEBUG: ListManifest JSON Check ==========")
-	if len(manifests) > 0 {
-		// Go標準の json.Marshal を使用 (gogoproto/jsonpb ではない)
-		// これにより、構造体タグ `json:"..."` が正しく効いているか確認できる
-		bz, err := json.MarshalIndent(manifests, "", "  ")
-		if err != nil {
-			fmt.Printf("DEBUG ERROR: json.Marshal failed: %v\n", err)
-		} else {
-			fmt.Println(string(bz))
-		}
-	} else {
-		fmt.Println("DEBUG: No manifests found.")
-	}
-	fmt.Println("====================================================")
-	// === [DEBUG END] ===
 
 	return &types.QueryAllManifestResponse{Manifest: manifests, Pagination: pageRes}, nil
 }
