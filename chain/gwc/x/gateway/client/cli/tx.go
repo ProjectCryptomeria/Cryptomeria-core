@@ -29,7 +29,7 @@ func GetTxCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(CmdUpload())
-	cmd.AddCommand(CmdRegisterStorage()) // 追加
+	cmd.AddCommand(CmdRegisterStorage())
 
 	return cmd
 }
@@ -78,15 +78,16 @@ func CmdUpload() *cobra.Command {
 	return cmd
 }
 
-// 追加: CmdRegisterStorage
+// CmdRegisterStorage
+// 構造変更に対応: [channel-id] [chain-id] [url] のトリプレットを受け取る
 func CmdRegisterStorage() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "register-storage [chain-id] [url] ...",
-		Short: "Register storage node endpoints (e.g. mdsc http://localhost:1317)",
-		Args:  cobra.MinimumNArgs(2),
+		Use:   "register-storage [channel-id] [chain-id] [url] ...",
+		Short: "Register storage node info (e.g. channel-0 fdsc-1 http://localhost:1317)",
+		Args:  cobra.MinimumNArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args)%2 != 0 {
-				return fmt.Errorf("arguments must be pairs of [chain-id] [url]")
+			if len(args)%3 != 0 {
+				return fmt.Errorf("arguments must be triplets of [channel-id] [chain-id] [url]")
 			}
 
 			clientCtx, err := client.GetClientTxContext(cmd)
@@ -94,18 +95,21 @@ func CmdRegisterStorage() *cobra.Command {
 				return err
 			}
 
-			var endpoints []*types.StorageEndpoint
-			for i := 0; i < len(args); i += 2 {
-				endpoints = append(endpoints, &types.StorageEndpoint{
-					ChainId:     args[i],
-					ApiEndpoint: args[i+1],
+			var storageInfos []*types.StorageInfo
+			for i := 0; i < len(args); i += 3 {
+				storageInfos = append(storageInfos, &types.StorageInfo{
+					ChannelId:   args[i],
+					ChainId:     args[i+1],
+					ApiEndpoint: args[i+2],
+					// ConnectionType is usually set automatically by the keeper via IBC hooks,
+					// but can be inferred or left empty here if just updating endpoint.
 				})
 			}
 
-			msg := types.NewMsgRegisterStorage(
-				clientCtx.GetFromAddress().String(),
-				endpoints,
-			)
+			msg := &types.MsgRegisterStorage{
+				Creator:      clientCtx.GetFromAddress().String(),
+				StorageInfos: storageInfos,
+			}
 
 			if err := msg.ValidateBasic(); err != nil {
 				return err

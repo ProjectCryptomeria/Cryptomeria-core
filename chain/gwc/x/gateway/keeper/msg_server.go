@@ -87,8 +87,7 @@ func (k msgServer) processZipUpload(ctx sdk.Context, msg *types.MsgUpload, mdscC
 	ctx.Logger().Info("Processing Zip Upload")
 
 	const (
-		TimeoutSeconds  = 600
-		FDSC_ID_DEFAULT = "fdsc" // 簡易ID
+		TimeoutSeconds = 600
 	)
 
 	processedFiles, err := ProcessZipData(msg.Data, chunkSize)
@@ -168,8 +167,7 @@ func (k msgServer) processSingleFileUpload(ctx sdk.Context, msg *types.MsgUpload
 
 func (k msgServer) distributeFile(ctx sdk.Context, data []byte, fdscChannels []string, chunkSize int) ([]*types.PacketFragmentMapping, error) {
 	const (
-		TimeoutSeconds  = 600
-		FDSC_ID_DEFAULT = "fdsc" // 簡易ID
+		TimeoutSeconds = 600
 	)
 
 	dataLen := len(data)
@@ -283,15 +281,49 @@ func (k Keeper) TransmitGatewayPacketData(
 	return sequence, nil
 }
 
-// 追加: RegisterStorage
+// RegisterStorage Updates: ChannelIDをキーとして情報をマージする
 func (k msgServer) RegisterStorage(goCtx context.Context, msg *types.MsgRegisterStorage) (*types.MsgRegisterStorageResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	for _, ep := range msg.Endpoints {
-		if err := k.Keeper.StorageEndpoints.Set(ctx, ep.ChainId, ep.ApiEndpoint); err != nil {
-			return nil, fmt.Errorf("failed to save endpoint for %s: %w", ep.ChainId, err)
+	for _, info := range msg.StorageInfos {
+		if info.ChannelId == "" {
+			return nil, fmt.Errorf("channel_id is required")
 		}
-		ctx.Logger().Info("Registered Storage Endpoint", "chain_id", ep.ChainId, "url", ep.ApiEndpoint)
+
+		// 既存の情報を取得
+		// infoはポインタ (*types.StorageInfo) なので、値をコピーして扱う必要があります
+
+		var targetInfo types.StorageInfo
+
+		existingInfo, err := k.Keeper.StorageInfos.Get(ctx, info.ChannelId)
+		if err != nil {
+			// 新規登録 (または見つからない)
+			// infoをデリファレンスして値として保持
+			targetInfo = *info
+			ctx.Logger().Info("Registering new StorageInfo manually", "channel_id", info.ChannelId)
+		} else {
+			// 既存情報へのマージ
+			targetInfo = existingInfo
+			if info.ChainId != "" {
+				targetInfo.ChainId = info.ChainId
+			}
+			if info.ApiEndpoint != "" {
+				targetInfo.ApiEndpoint = info.ApiEndpoint
+			}
+			if info.ConnectionType != "" {
+				targetInfo.ConnectionType = info.ConnectionType
+			}
+		}
+
+		if err := k.Keeper.StorageInfos.Set(ctx, info.ChannelId, targetInfo); err != nil {
+			return nil, fmt.Errorf("failed to save storage info for %s: %w", info.ChannelId, err)
+		}
+
+		ctx.Logger().Info("Updated Storage Info",
+			"channel_id", targetInfo.ChannelId,
+			"chain_id", targetInfo.ChainId,
+			"url", targetInfo.ApiEndpoint,
+			"type", targetInfo.ConnectionType)
 	}
 
 	return &types.MsgRegisterStorageResponse{}, nil

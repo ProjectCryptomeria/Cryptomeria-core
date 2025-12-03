@@ -10,7 +10,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// queryServer 構造体を定義 (Keeperを埋め込む)
 type queryServer struct {
 	Keeper
 }
@@ -23,7 +22,6 @@ func NewQueryServerImpl(k Keeper) types.QueryServer {
 
 var _ types.QueryServer = queryServer{}
 
-// Params クエリの実装 (レシーバを queryServer に変更)
 func (k queryServer) Params(goCtx context.Context, req *types.QueryParamsRequest) (*types.QueryParamsResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
@@ -38,7 +36,6 @@ func (k queryServer) Params(goCtx context.Context, req *types.QueryParamsRequest
 	return &types.QueryParamsResponse{Params: params}, nil
 }
 
-// StorageEndpoints クエリの実装 (レシーバを queryServer に変更)
 func (k queryServer) StorageEndpoints(goCtx context.Context, req *types.QueryStorageEndpointsRequest) (*types.QueryStorageEndpointsResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
@@ -46,13 +43,17 @@ func (k queryServer) StorageEndpoints(goCtx context.Context, req *types.QuerySto
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	var endpoints []*types.StorageEndpoint
+	var storageInfos []*types.StorageInfo
 
-	// StorageEndpoints は Keeper のフィールドなので k.Keeper.StorageEndpoints でアクセス
-	err := k.Keeper.StorageEndpoints.Walk(ctx, nil, func(chainID, url string) (bool, error) {
-		endpoints = append(endpoints, &types.StorageEndpoint{
-			ChainId:     chainID,
-			ApiEndpoint: url,
+	// StorageInfosマップ (Key: ChannelID, Value: StorageInfo) を走査
+	err := k.Keeper.StorageInfos.Walk(ctx, nil, func(channelID string, info types.StorageInfo) (bool, error) {
+		// マップから取得した値(info)のアドレスを取るのではなく、新しい構造体を作成してリストに追加
+		// (Protoの繰り返しフィールドはポインタのスライスであることが多いため)
+		storageInfos = append(storageInfos, &types.StorageInfo{
+			ChannelId:      info.ChannelId, // KeyのChannelIDを優先（あるいはinfo内のものと一致しているはず）
+			ChainId:        info.ChainId,
+			ApiEndpoint:    info.ApiEndpoint,
+			ConnectionType: info.ConnectionType,
 		})
 		return false, nil
 	})
@@ -60,5 +61,6 @@ func (k queryServer) StorageEndpoints(goCtx context.Context, req *types.QuerySto
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	return &types.QueryStorageEndpointsResponse{Endpoints: endpoints}, nil
+	// Proto定義のフィールド名は `storage_infos` なので Go構造体では `StorageInfos`
+	return &types.QueryStorageEndpointsResponse{StorageInfos: storageInfos}, nil
 }

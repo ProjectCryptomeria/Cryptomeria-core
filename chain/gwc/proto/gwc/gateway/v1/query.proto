@@ -6,7 +6,8 @@ import "cosmos/base/query/v1beta1/pagination.proto";
 import "gogoproto/gogo.proto";
 import "google/api/annotations.proto";
 import "gwc/gateway/v1/params.proto";
-import "gwc/gateway/v1/tx.proto"; // StorageEndpoint型を利用するため
+// Import types
+import "gwc/gateway/v1/types.proto";
 
 option go_package = "gwc/x/gateway/types";
 
@@ -42,6 +43,6 @@ message QueryStorageEndpointsRequest {
 
 // QueryStorageEndpointsResponse is response type for the Query/StorageEndpoints RPC method.
 message QueryStorageEndpointsResponse {
-  repeated StorageEndpoint endpoints = 1;
+  repeated StorageInfo storage_infos = 1;
   cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }

@@ -1,0 +1,19 @@
+syntax = "proto3";
+package gwc.gateway.v1;
+
+option go_package = "gwc/x/gateway/types";
+
+// StorageInfo holds the connection details for a storage chain (MDSC/FDSC).
+message StorageInfo {
+  // channel_id is the local IBC channel ID connected to this chain (e.g., "channel-0")
+  string channel_id = 1;
+  
+  // chain_id is the chain ID of the connected storage chain (e.g., "fdsc-1")
+  string chain_id = 2;
+  
+  // api_endpoint is the HTTP API endpoint for downloading files (e.g., "http://localhost:1317")
+  string api_endpoint = 3;
+  
+  // connection_type indicates whether this is "mdsc" or "fdsc"
+  string connection_type = 4;
+}

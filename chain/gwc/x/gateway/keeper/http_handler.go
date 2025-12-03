@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"sync"
 
-	"gwc/x/gateway/types" // 追加
+	"gwc/x/gateway/types"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/gorilla/mux"
@@ -44,7 +44,7 @@ func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req
 	// ストアに保存されたエンドポイント情報を動的に取得してConfigを上書きする
 	queryClient := types.NewQueryClient(clientCtx)
 	res, err := queryClient.StorageEndpoints(req.Context(), &types.QueryStorageEndpointsRequest{})
-	
+
 	// ローカルの上書き用マップを作成 (元のマップを汚染しないため)
 	dynamicFDSC := make(map[string]string)
 	// 初期値としてConfigの値をコピー
@@ -53,12 +53,19 @@ func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req
 	}
 
 	if err == nil {
-		for _, ep := range res.Endpoints {
-			if ep.ChainId == "mdsc" {
-				config.MDSCEndpoint = ep.ApiEndpoint
+		// 修正: Endpoints -> StorageInfos
+		for _, info := range res.StorageInfos {
+			if info.ConnectionType == "mdsc" || info.ChainId == "mdsc" {
+				config.MDSCEndpoint = info.ApiEndpoint
 			} else {
-				// FDSCの場合、ChainId (例: "channel-1" or "fdsc") をキーとして登録
-				dynamicFDSC[ep.ChainId] = ep.ApiEndpoint
+				// FDSCの場合、ChannelID (Upload時の識別子) をキーとして登録
+				if info.ChannelId != "" {
+					dynamicFDSC[info.ChannelId] = info.ApiEndpoint
+				}
+				// 念のためChainIDでも登録
+				if info.ChainId != "" {
+					dynamicFDSC[info.ChainId] = info.ApiEndpoint
+				}
 			}
 		}
 	} else {
@@ -72,7 +79,7 @@ func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req
 	if mdscEndpoint == "" {
 		mdscEndpoint = "http://localhost:1318" // Default fallback
 	}
-	
+
 	// Fetch Manifest
 	manifestURL := fmt.Sprintf("%s/mdsc/metastore/v1/manifest/%s", mdscEndpoint, projectName)
 	resp, err := http.Get(manifestURL)
@@ -132,10 +139,6 @@ func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req
 			defer wg.Done()
 			endpoint, ok := fdscEndpoints[fdscID]
 			if !ok {
-				// マップに見つからない場合のエラーハンドリング
-				// ハードコードされたデフォルトにはフォールバックせず、エラーとする
-				// (ただしテストのためにlocalhostフォールバックを残す場合は以下)
-				// endpoint = "http://localhost:1319"
 				errors[i] = fmt.Errorf("endpoint not found for fdsc_id: %s", fdscID)
 				return
 			}

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -66,15 +65,40 @@ func CmdDownload() *cobra.Command {
 			}
 
 			// マップ化 (ChainID -> URL)
+			// 注意: KeyはChainIDとする (MDSC/FDSCの識別のためにChainIDを使う運用が前提)
 			endpointMap := make(map[string]string)
-			for _, ep := range res.Endpoints {
-				endpointMap[ep.ChainId] = ep.ApiEndpoint
+			for _, info := range res.StorageInfos {
+				// ChainIDが空の場合はChannelIDを使うなどのフォールバックがあっても良いが、
+				// ここではChainIDが登録されていることを期待する
+				if info.ChainId != "" {
+					endpointMap[info.ChainId] = info.ApiEndpoint
+				}
+				// 念のためChannelIDでも引けるようにしておく(デバッグ用など)
+				endpointMap[info.ChannelId] = info.ApiEndpoint
 			}
 
-			// MDSCのURL特定
-			mdscURL, ok := endpointMap["mdsc"]
-			if !ok {
-				return fmt.Errorf("MDSC endpoint not found in registry. Please register it via 'tx register-storage'")
+			// MDSCのURL特定 (ChainID "mdsc" を想定)
+			// ※ 登録時に mdsc という ChainID で登録されている必要がある
+			// もし自動判別したい場合は ConnectionType == "mdsc" を探すロジックが必要
+			var mdscURL string
+
+			// ロジック変更: ConnectionType で検索
+			for _, info := range res.StorageInfos {
+				if info.ConnectionType == "mdsc" {
+					mdscURL = info.ApiEndpoint
+					break
+				}
+			}
+
+			// 見つからなければChainIDでフォールバック
+			if mdscURL == "" {
+				if url, ok := endpointMap["mdsc"]; ok {
+					mdscURL = url
+				}
+			}
+
+			if mdscURL == "" {
+				return fmt.Errorf("MDSC endpoint not found. Please register it via 'tx register-storage' with type 'mdsc' or chain-id 'mdsc'")
 			}
 			fmt.Printf("   -> Found MDSC at %s\n", mdscURL)
 
@@ -117,6 +141,8 @@ func CmdDownload() *cobra.Command {
 					defer wg.Done()
 
 					// FDSCのURL解決
+					// Manifest内の `FdscId` は Upload時に使用した ChannelID が入っていることが多い
+					// そのため、endpointMapで ChannelID -> URL の解決を試みる
 					fdscURL, ok := endpointMap[fdscID]
 					if !ok {
 						errChan <- fmt.Errorf("endpoint for %s not found in registry", fdscID)
@@ -133,14 +159,13 @@ func CmdDownload() *cobra.Command {
 					defer fResp.Body.Close()
 
 					// --- Debugging Response ---
-					fmt.Printf("\n[DEBUG] Fragment: %s\n", fragID)
-					fmt.Printf("Status: %s\n", fResp.Status)
-					// fmt.Printf("Headers: %v\n", fResp.Header) // ヘッダーが多すぎる場合はコメントアウト
+					// fmt.Printf("\n[DEBUG] Fragment: %s\n", fragID)
+					// fmt.Printf("Status: %s\n", fResp.Status)
 
-					// ボディを読み出して表示し、元に戻す
-					bodyBytes, _ := io.ReadAll(fResp.Body)
-					fmt.Printf("Body: %s\n", string(bodyBytes))
-					fResp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+					// ボディを読み出して表示し、元に戻す (デバッグ用: 必要なら有効化)
+					// bodyBytes, _ := io.ReadAll(fResp.Body)
+					// fmt.Printf("Body: %s\n", string(bodyBytes))
+					// fResp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 					// --------------------------
 
 					var fr FragmentResponse

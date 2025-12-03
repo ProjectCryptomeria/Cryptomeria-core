@@ -8,10 +8,11 @@ import (
 
 var _ sdk.Msg = &MsgRegisterStorage{}
 
-func NewMsgRegisterStorage(creator string, endpoints []*StorageEndpoint) *MsgRegisterStorage {
+// NewMsgRegisterStorage creates a new MsgRegisterStorage instance.
+func NewMsgRegisterStorage(creator string, storageInfos []*StorageInfo) *MsgRegisterStorage {
 	return &MsgRegisterStorage{
-		Creator:   creator,
-		Endpoints: endpoints,
+		Creator:      creator,
+		StorageInfos: storageInfos,
 	}
 }
 
@@ -21,17 +22,17 @@ func (msg *MsgRegisterStorage) ValidateBasic() error {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid creator address (%s)", err)
 	}
 
-	if len(msg.Endpoints) == 0 {
-		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "endpoints cannot be empty")
+	if len(msg.StorageInfos) == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "storage_infos cannot be empty")
 	}
 
-	for _, ep := range msg.Endpoints {
-		if ep.ChainId == "" {
-			return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "chain_id cannot be empty")
+	for _, info := range msg.StorageInfos {
+		if info.ChannelId == "" {
+			return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "channel_id cannot be empty")
 		}
-		if ep.ApiEndpoint == "" {
-			return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "api_endpoint cannot be empty")
-		}
+		// ChainIdやApiEndpointは更新時には空の場合があるため、ここでは必須チェックを緩和するか、
+		// あるいは登録時必須とするかは要件次第ですが、一旦最低限ChannelIDがあれば良しとします。
+		// もし完全新規登録を強制するならチェックを入れても良いですが、柔軟性のため外しておきます。
 	}
 
 	return nil

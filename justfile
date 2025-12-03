@@ -34,8 +34,6 @@ generate target:
 hot-reload-all: (hot-reload 'fdsc') (hot-reload 'mdsc') (hot-reload 'gwc')
     @echo "✅ Hot reload for all components complete!"
 
-# --- Fast Update Tasks ---
-
 # [高速開発用] バイナリをビルド・転送・再起動 (検証機能付き)
 hot-reload target:
     #!/usr/bin/env bash
@@ -146,7 +144,7 @@ build-chain target:
     # ターゲットの検証
     if [[ ! "{{target}}" =~ ^(fdsc|mdsc|gwc)$ ]]; then
         echo "❌ Error: Target '{{target}}' is not a valid chain project."
-        echo "   Allowed: fdsc, mdsc, gwc"
+        echo "   Allowed: fdsc, mdsc, gwc"
         exit 1
     fi
 
@@ -162,7 +160,7 @@ build-image target:
     # ターゲットの検証 (Relayerも含む)
     if [[ ! "{{target}}" =~ ^(fdsc|mdsc|gwc|relayer)$ ]]; then
         echo "❌ Error: Target '{{target}}' is unknown."
-        echo "   Allowed: fdsc, mdsc, gwc, relayer"
+        echo "   Allowed: fdsc, mdsc, gwc, relayer"
         exit 1
     fi
 
@@ -194,6 +192,7 @@ deploy chains=DEFAULT_CHAINS:
         --namespace {{NAMESPACE}} \
         --create-namespace \
         -f "$TEMP_VALUES_FILE"
+        --timeout 10m
 
 # デプロイされたアプリケーションと関連PVCをクラスタからアンインストール
 undeploy:
@@ -216,12 +215,60 @@ deploy-clean chains=DEFAULT_CHAINS:
     @just deploy {{chains}}
     @echo "✅ Redeployment complete (Namespace preserved)!"
 
-# データ（ブロックチェーンの状態）は維持したまま、バイナリや設定だけ更新
-update:
-    @echo "--> ♻️ Updating Helm release (Preserving data)..."
-    @helm upgrade {{HELM_RELEASE_NAME}} k8s/helm/raidchain --namespace {{NAMESPACE}}
-    @kubectl -n {{NAMESPACE}} rollout restart statefulset
-    @echo "✅ Update complete! Chain data preserved."
+# [更新] Helmリリースを更新し、指定したターゲット(または全て)を再起動
+# データ（ブロックチェーンの状態）は維持されます。
+# 使用例: just upgrade fdsc
+upgrade target="all" chains=DEFAULT_CHAINS:
+    #!/usr/bin/env bash
+    set -e
+    
+    # 1. ビルド (変更があった場合のため)
+    if [ "{{target}}" == "all" ]; then
+        echo "🏗️  Building all images..."
+        just build-image-all
+    else
+        echo "🏗️  Building image for {{target}}..."
+        just build-image {{target}}
+    fi
+
+    # 2. Valuesファイルの生成 (構成の一貫性を保つ)
+    TEMP_VALUES_FILE=".helm-temp-values.yaml"
+    trap 'rm -f -- "$TEMP_VALUES_FILE"' EXIT
+    ./scripts/helm/generate-values.sh {{chains}} > "$TEMP_VALUES_FILE"
+
+    echo "--> ♻️  Upgrading Helm release (Target: {{target}})..."
+    # Helm upgradeを実行 (構成変更があれば適用、なければConfigMap等の更新トリガー)
+    helm upgrade {{HELM_RELEASE_NAME}} k8s/helm/raidchain \
+        --namespace {{NAMESPACE}} \
+        -f "$TEMP_VALUES_FILE"
+
+    # 3. Podの再起動 (imagePullPolicy: Always または latestタグの再取得、Config反映のため)
+    if [ "{{target}}" == "all" ]; then
+        echo "--> 🔄 Restarting all statefulsets and deployments..."
+        kubectl -n {{NAMESPACE}} rollout restart statefulset
+        kubectl -n {{NAMESPACE}} rollout restart deployment
+    elif [ "{{target}}" == "relayer" ]; then
+        echo "--> 🔄 Restarting relayer..."
+        kubectl -n {{NAMESPACE}} rollout restart deployment -l app.kubernetes.io/component=relayer
+    else
+        # ターゲット名からコンポーネントラベルへ変換
+        COMPONENT=""
+        case "{{target}}" in
+            fdsc) COMPONENT="datastore" ;;
+            mdsc) COMPONENT="metastore" ;;
+            gwc)  COMPONENT="gateway" ;;
+            *)    
+                echo "⚠️  Unknown target '{{target}}', trying to restart by name..."
+                COMPONENT="{{target}}" 
+                ;;
+        esac
+        
+        echo "--> 🔄 Restarting statefulsets for component: $COMPONENT"
+        # componentラベルが一致するStatefulSetを再起動
+        kubectl -n {{NAMESPACE}} rollout restart statefulset -l app.kubernetes.io/component=$COMPONENT
+    fi
+
+    echo "✅ Upgrade complete!"
 
 # --- Development Tasks ---
 [parallel]

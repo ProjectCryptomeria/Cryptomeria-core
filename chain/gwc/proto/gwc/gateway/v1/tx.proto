@@ -6,6 +6,8 @@ import "cosmos/msg/v1/msg.proto";
 import "cosmos_proto/cosmos.proto";
 import "gogoproto/gogo.proto";
 import "gwc/gateway/v1/params.proto";
+// Import the new types definition
+import "gwc/gateway/v1/types.proto";
 
 option go_package = "gwc/x/gateway/types";
 
@@ -49,6 +51,7 @@ message MsgUpdateParamsResponse {}
 // MsgUpload defines the request type for uploading a file
 message MsgUpload {
   option (cosmos.msg.v1.signer) = "creator";
+
   string creator = 1;
   string filename = 2;
   bytes  data = 3;
@@ -59,13 +62,10 @@ message MsgUploadResponse {}
 // MsgRegisterStorage defines the request type for registering storage endpoints
 message MsgRegisterStorage {
   option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
-  repeated StorageEndpoint endpoints = 2;
-}
 
-message StorageEndpoint {
-  string chain_id = 1;
-  string api_endpoint = 2;
+  string creator = 1;
+  // Use StorageInfo directly to update connection details
+  repeated StorageInfo storage_infos = 2;
 }
 
 message MsgRegisterStorageResponse {}

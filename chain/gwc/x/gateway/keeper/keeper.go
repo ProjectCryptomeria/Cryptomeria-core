@@ -23,12 +23,12 @@ type Keeper struct {
 	Params collections.Item[types.Params]
 	Port   collections.Item[string]
 
-	// チャネル管理用ストア
+	// チャネル管理用ストア (検索用インデックスとして維持)
 	MetastoreChannel  collections.Item[string]
 	DatastoreChannels collections.KeySet[string]
 
-	// 追加: ChainID -> API URL のマップ
-	StorageEndpoints collections.Map[string, string]
+	// 変更: Key=ChannelID, Value=StorageInfo
+	StorageInfos collections.Map[string, types.StorageInfo]
 
 	ibcKeeperFn func() *ibckeeper.Keeper
 	bankKeeper  types.BankKeeper
@@ -65,8 +65,8 @@ func NewKeeper(
 		MetastoreChannel:  collections.NewItem(sb, types.MetastoreChannelKey, "metastore_channel", collections.StringValue),
 		DatastoreChannels: collections.NewKeySet(sb, types.DatastoreChannelKey, "datastore_channels", collections.StringKey),
 
-		// 追加: マップ初期化
-		StorageEndpoints: collections.NewMap(sb, types.StorageEndpointKey, "storage_endpoints", collections.StringKey, collections.StringValue),
+		// 変更: StorageInfosの初期化
+		StorageInfos: collections.NewMap(sb, types.StorageEndpointKey, "storage_infos", collections.StringKey, codec.CollValue[types.StorageInfo](cdc)),
 	}
 
 	schema, err := sb.Build()
@@ -98,24 +98,39 @@ func (k Keeper) RegisterChannel(ctx sdk.Context, portID, channelID string) error
 		"channel_id", channelID,
 		"counterparty_port", counterpartyPort)
 
+	var connectionType string
+
 	// ポート名で分岐して保存
 	switch counterpartyPort {
 	case "metastore":
+		connectionType = "mdsc"
 		// MDSCとして登録
 		if err := k.MetastoreChannel.Set(ctx, channelID); err != nil {
 			return err
 		}
-		ctx.Logger().Info("✅ Registered MDSC Channel", "channel_id", channelID)
+		ctx.Logger().Info("✅ Registered MDSC Channel Index", "channel_id", channelID)
 
 	case "datastore":
+		connectionType = "fdsc"
 		// FDSCとして登録 (Setに追加)
 		if err := k.DatastoreChannels.Set(ctx, channelID); err != nil {
 			return err
 		}
-		ctx.Logger().Info("✅ Registered FDSC Channel", "channel_id", channelID)
+		ctx.Logger().Info("✅ Registered FDSC Channel Index", "channel_id", channelID)
 
 	default:
 		ctx.Logger().Info("⚠️ Unknown counterparty port, skipping registration", "port", counterpartyPort)
+		return nil
+	}
+
+	// StorageInfoの初期化 (ChannelIDとTypeだけ保存、Endpoint等は後でTxで更新)
+	info := types.StorageInfo{
+		ChannelId:      channelID,
+		ConnectionType: connectionType,
+		// ChainId, ApiEndpoint はまだ不明なので空文字
+	}
+	if err := k.StorageInfos.Set(ctx, channelID, info); err != nil {
+		return fmt.Errorf("failed to initialize storage info: %w", err)
 	}
 
 	return nil
