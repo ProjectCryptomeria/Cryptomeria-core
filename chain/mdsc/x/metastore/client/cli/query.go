@@ -11,7 +11,7 @@ import (
 )
 
 // GetQueryCmd returns the cli query commands for this module
-func GetQueryCmd() *cobra.Command {
+func GetQueryCmd(queryRoute string) *cobra.Command {
 	// Group metastore queries under a subcommand
 	cmd := &cobra.Command{
 		Use:                        types.ModuleName,
@@ -23,6 +23,9 @@ func GetQueryCmd() *cobra.Command {
 
 	// 作成した手動コマンドを追加
 	cmd.AddCommand(CmdListManifest())
+
+	// デバッグ用コマンドを追加
+	cmd.AddCommand(CmdDebugJSON())
 
 	return cmd
 }
