@@ -75,8 +75,9 @@ echo "body { color: blue; }" > "$TEMP_DIR/$PROJECT_NAME/style.css"
 
 # Zip作成 (ディレクトリ構造を維持)
 current_dir=$(pwd)
-cd "$TEMP_DIR"
-zip -r "$ZIP_FILENAME" "$PROJECT_NAME"
+# ディレクトリの中に入ってからZipする
+cd "$TEMP_DIR/$PROJECT_NAME"
+zip -r "../$ZIP_FILENAME" .
 cd "$current_dir"
 
 # GWC PodにZipをコピー
@@ -89,8 +90,8 @@ log "🔗 Registering Storage Endpoints..."
 # Note: Using headless services for internal communication
 REGISTER_RES=$(kubectl exec -n "$NAMESPACE" "$GWC_POD" -- gwcd tx gateway register-storage \
     mdsc "http://raidchain-mdsc-headless:1317" \
-    fdsc "http://raidchain-fdsc-0-headless:1317" \
-    fdsc-1 "http://raidchain-fdsc-1-headless:1317" \
+    channel-1 "http://raidchain-fdsc-0-headless:1317" \
+    channel-2 "http://raidchain-fdsc-1-headless:1317" \
     --from $USER_NAME --chain-id $CHAIN_ID_GWC --keyring-backend test -y -o json)
 
 REGISTER_CODE=$(echo "$REGISTER_RES" | jq -r '.code')

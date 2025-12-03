@@ -2,6 +2,7 @@ package metastore
 
 import (
 	"fmt"
+	"strings"
 
 	errorsmod "cosmossdk.io/errors"
 
@@ -139,7 +140,21 @@ func (im IBCModule) OnRecvPacket(
 		}
 
 		// 3. Manifestの作成と保存
-		projectName := manifestData.Filename
+		// GWCからは "ProjectName/path/to/file" の形式で来るため、最初の "/" で分割する
+		fullPath := manifestData.Filename
+		parts := strings.SplitN(fullPath, "/", 2)
+
+		var projectName, fileKey string
+		if len(parts) == 2 {
+			projectName = parts[0]
+			fileKey = parts[1]
+		} else {
+			// 分割できない場合（ルート直下など）はそのまま使用
+			projectName = fullPath
+			fileKey = fullPath
+		}
+
+		ctx.Logger().Info("Receiving Manifest Packet", "full_path", fullPath, "project", projectName, "file_key", fileKey)
 
 		manifest, err := im.keeper.Manifest.Get(ctx, projectName)
 		if err != nil { // 新規作成
@@ -147,18 +162,14 @@ func (im IBCModule) OnRecvPacket(
 				ProjectName: projectName,
 				Version:     "1.0.0",
 				Creator:     "ibc-user",
-				// 修正: ポインタ型のマップで初期化
-				Files: make(map[string]*types.FileInfo),
+				Files:       make(map[string]*types.FileInfo),
 			}
-			// 修正: アドレス(&)を代入
-			manifest.Files[manifestData.Filename] = &fileInfo
+			manifest.Files[fileKey] = &fileInfo
 		} else { // 更新
 			if manifest.Files == nil {
-				// 修正: ポインタ型のマップで初期化
 				manifest.Files = make(map[string]*types.FileInfo)
 			}
-			// 修正: アドレス(&)を代入
-			manifest.Files[manifestData.Filename] = &fileInfo
+			manifest.Files[fileKey] = &fileInfo
 		}
 
 		// 保存
@@ -167,7 +178,7 @@ func (im IBCModule) OnRecvPacket(
 		}
 
 		// デバッグログ
-		fmt.Printf("\n[DEBUG] Manifest Saved: %+v\n", manifest)
+		fmt.Printf("\n[DEBUG] Manifest Saved: Project=%s, FileKey=%s\n", projectName, fileKey)
 
 		return channeltypes.NewResultAcknowledgement([]byte{byte(1)})
 

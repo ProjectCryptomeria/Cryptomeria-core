@@ -223,7 +223,24 @@ EOF
         FDSC_SERVICE="${RELEASE_NAME}-${FDSC_ID}-headless"
         FDSC_FULL_NAME="${FDSC_SERVICE}.${POD_NAMESPACE}.svc.cluster.local"
         FDSC_ENDPOINT="http://${FDSC_FULL_NAME}:${API_PORT}"
+        
+        # 1. 既存の登録 (チェーンID -> URL)
         REGISTRATION_ARGS="$REGISTRATION_ARGS $FDSC_ID $FDSC_ENDPOINT"
+
+        # 2. IBCチャネルIDの登録 (チャネルID -> URL) [修正箇所]
+        # パス名からチャネル情報を取得
+        PATH_NAME="${PATH_PREFIX}-${GWC_ID}-to-${FDSC_ID}"
+        
+        # rly paths show を JSON で取得し、src.channel_id (GWC側のチャネル) を抽出
+        CHANNEL_INFO=$(rly paths show "$PATH_NAME" --json 2>/dev/null || echo "")
+        CHANNEL_ID=$(echo "$CHANNEL_INFO" | jq -r '.src.channel_id // empty')
+
+        if [ -n "$CHANNEL_ID" ]; then
+            echo "--> Found Channel ID for $FDSC_ID: $CHANNEL_ID -> $FDSC_ENDPOINT"
+            REGISTRATION_ARGS="$REGISTRATION_ARGS $CHANNEL_ID $FDSC_ENDPOINT"
+        else
+            echo "⚠️ Warning: Could not resolve Channel ID for $PATH_NAME. 'On-chain Web' feature might fail."
+        fi
     done
 
     if [ -n "$REGISTRATION_ARGS" ]; then

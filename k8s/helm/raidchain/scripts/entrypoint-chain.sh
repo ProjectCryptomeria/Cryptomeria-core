@@ -98,7 +98,7 @@ fi
 # --- ノードの起動 (ホットリロード対応) ---
 
 # 実行するコマンドライン引数を変数に格納
-START_CMD="$CHAIN_BINARY start --home $CHAIN_HOME --minimum-gas-prices=0$DENOM --log_level info --log_format json"
+START_CMD="$CHAIN_BINARY start --home $CHAIN_HOME --minimum-gas-prices=0$DENOM --log_level error --log_format json"
 
 if [ "$DEV_MODE" = "true" ]; then
     echo "=================================================="

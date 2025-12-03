@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync"
 
+	"gwc/x/gateway/types" // 追加
+
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/gorilla/mux"
 )
@@ -38,26 +40,34 @@ func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req
 		filePath = "index.html" // Default to index.html
 	}
 
-	// 2. Resolve Manifest from MDSC
-	// For PoC, we assume MDSC is running on localhost:1318 or use a registered endpoint if available.
-	// We try to find an endpoint for "mdsc".
-	// ctx := sdk.Context{}.WithContext(req.Context()) // Note: This is a hollow context, might need a proper one if accessing store.
-	// However, accessing Keeper.StorageEndpoints requires a valid SDK Context with StoreKey.
-	// In a standard HTTP handler, we don't have a block context.
-	// We can use the clientCtx to query, but Keeper methods need sdk.Context.
-	// If we use the Keeper directly, we need a context with the store.
-	// Since we are inside the App, we might be able to get a context, but usually queries are done via ABCI Query.
-	// BUT, here we are inside the node process.
-	// Actually, `k.StorageEndpoints.Get` reads from the KVStore.
-	// We can't easily get a store-bound context here without `clientCtx.QueryABCI`.
-	// So we should use `clientCtx` to query the state of GWC itself to find endpoints?
-	// OR, since this is a "Web Server Mode" running ON the node, maybe we can access the store?
-	// Accessing store requires `app.CommitMultiStore().CacheMultiStore()...` or similar.
-	// It's safer to use `clientCtx` to query the local node's state via ABCI.
-
-	// SIMPLIFICATION FOR POC:
-	// Use configuration passed from AppOptions
+	// --- 0. Dynamic Configuration Loading (Fix) ---
+	// ストアに保存されたエンドポイント情報を動的に取得してConfigを上書きする
+	queryClient := types.NewQueryClient(clientCtx)
+	res, err := queryClient.StorageEndpoints(req.Context(), &types.QueryStorageEndpointsRequest{})
 	
+	// ローカルの上書き用マップを作成 (元のマップを汚染しないため)
+	dynamicFDSC := make(map[string]string)
+	// 初期値としてConfigの値をコピー
+	for k, v := range config.FDSCEndpoints {
+		dynamicFDSC[k] = v
+	}
+
+	if err == nil {
+		for _, ep := range res.Endpoints {
+			if ep.ChainId == "mdsc" {
+				config.MDSCEndpoint = ep.ApiEndpoint
+			} else {
+				// FDSCの場合、ChainId (例: "channel-1" or "fdsc") をキーとして登録
+				dynamicFDSC[ep.ChainId] = ep.ApiEndpoint
+			}
+		}
+	} else {
+		fmt.Printf("Warning: Failed to query dynamic storage endpoints: %v\n", err)
+	}
+	// Configの参照先を新しいマップに切り替え
+	config.FDSCEndpoints = dynamicFDSC
+
+	// 2. Resolve Manifest from MDSC
 	mdscEndpoint := config.MDSCEndpoint
 	if mdscEndpoint == "" {
 		mdscEndpoint = "http://localhost:1318" // Default fallback
@@ -102,7 +112,6 @@ func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req
 	}
 
 	// 3. Fetch Fragments from FDSCs
-	// Use configuration
 	fdscEndpoints := config.FDSCEndpoints
 	if len(fdscEndpoints) == 0 {
 		// Default fallback
@@ -123,8 +132,12 @@ func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req
 			defer wg.Done()
 			endpoint, ok := fdscEndpoints[fdscID]
 			if !ok {
-				// Fallback or error
-				endpoint = "http://localhost:1319"
+				// マップに見つからない場合のエラーハンドリング
+				// ハードコードされたデフォルトにはフォールバックせず、エラーとする
+				// (ただしテストのためにlocalhostフォールバックを残す場合は以下)
+				// endpoint = "http://localhost:1319"
+				errors[i] = fmt.Errorf("endpoint not found for fdsc_id: %s", fdscID)
+				return
 			}
 
 			fragURL := fmt.Sprintf("%s/fdsc/datastore/v1/fragment/%s", endpoint, fragID)
