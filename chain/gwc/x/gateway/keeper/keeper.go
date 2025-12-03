@@ -32,6 +32,9 @@ type Keeper struct {
 
 	ibcKeeperFn func() *ibckeeper.Keeper
 	bankKeeper  types.BankKeeper
+
+	// Config
+	ChunkSize int
 }
 
 func NewKeeper(

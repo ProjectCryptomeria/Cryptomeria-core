@@ -77,13 +77,28 @@ if [ ! -d "$CHAIN_HOME/config" ]; then
     
     sed -i '/\[grpc-web\]/,/\[/{s/enable = false/enable = true/}' "$APP_TOML"
 
+    # --- GWC Specific Configuration ---
+    if [ "$CHAIN_APP_NAME" = "gwc" ]; then
+        echo "--- Configuring GWC endpoints in app.toml ---"
+        cat <<EOF >> "$APP_TOML"
+
+[gwc]
+mdsc_endpoint = "http://raidchain-mdsc-headless:1317"
+chunk_size = 10240
+[gwc.fdsc_endpoints]
+fdsc = "http://raidchain-fdsc-0-headless:1317"
+fdsc-0 = "http://raidchain-fdsc-0-headless:1317"
+fdsc-1 = "http://raidchain-fdsc-1-headless:1317"
+EOF
+    fi
+
     echo "--- Initialization complete for $CHAIN_ID ---"
 fi
 
 # --- ノードの起動 (ホットリロード対応) ---
 
 # 実行するコマンドライン引数を変数に格納
-START_CMD="$CHAIN_BINARY start --home $CHAIN_HOME --minimum-gas-prices=0$DENOM --log_level error --log_format json"
+START_CMD="$CHAIN_BINARY start --home $CHAIN_HOME --minimum-gas-prices=0$DENOM --log_level info --log_format json"
 
 if [ "$DEV_MODE" = "true" ]; then
     echo "=================================================="

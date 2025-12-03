@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -41,7 +42,19 @@ func CmdUpload() *cobra.Command {
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			argFilename := args[0]
-			argData := []byte(args[1])
+			var argData []byte
+
+			// Check if data argument starts with @, indicating a file path
+			if len(args[1]) > 0 && args[1][0] == '@' {
+				filePath := args[1][1:]
+				var err error
+				argData, err = os.ReadFile(filePath)
+				if err != nil {
+					return fmt.Errorf("failed to read file %s: %w", filePath, err)
+				}
+			} else {
+				argData = []byte(args[1])
+			}
 
 			clientCtx, err := client.GetClientTxContext(cmd)
 			if err != nil {

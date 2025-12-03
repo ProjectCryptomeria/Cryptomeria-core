@@ -53,6 +53,7 @@ func initFixture(t *testing.T) *fixture {
 		},
 		nil,
 	)
+	k.ChunkSize = 1024 // Set chunk size for tests
 
 	// Initialize params
 	if err := k.Params.Set(ctx, types.DefaultParams()); err != nil {

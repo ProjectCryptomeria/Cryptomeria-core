@@ -3,7 +3,9 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"gwc/x/gateway/types"
 
@@ -41,55 +43,152 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 		return nil, fmt.Errorf("MDSC channel not found. make sure MDSC is connected via IBC: %w", err)
 	}
 
-	// (B) FDSCチャネルの取得
+	// (B) FDSCチャネルの取得 (全リスト取得)
+	var fdscChannels []string
 	iter, err := k.Keeper.DatastoreChannels.Iterate(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer iter.Close()
 
-	if !iter.Valid() {
-		return nil, fmt.Errorf("no FDSC channels found. make sure at least one FDSC is connected via IBC")
+	for ; iter.Valid(); iter.Next() {
+		channelID, err := iter.Key()
+		if err != nil {
+			return nil, err
+		}
+		fdscChannels = append(fdscChannels, channelID)
 	}
 
-	fdscChannel, err := iter.Key()
-	if err != nil {
-		return nil, err
+	if len(fdscChannels) == 0 {
+		return nil, fmt.Errorf("no FDSC channels found. make sure at least one FDSC is connected via IBC")
 	}
 
 	ctx.Logger().Info("Resolved IBC Channels",
 		"mdsc_channel", mdscChannel,
-		"fdsc_channel", fdscChannel)
+		"fdsc_channels", fdscChannels)
 
-	// --- 定数定義 ---
+	// --- Zip判定と処理分岐 ---
+	isZip := strings.HasSuffix(strings.ToLower(msg.Filename), ".zip")
+
+	// Use configurable ChunkSize
+	chunkSize := k.ChunkSize
+	if chunkSize <= 0 {
+		chunkSize = 10 * 1024 // Default 10KB
+	}
+
+	if isZip {
+		return k.processZipUpload(ctx, msg, mdscChannel, fdscChannels, chunkSize)
+	} else {
+		return k.processSingleFileUpload(ctx, msg, mdscChannel, fdscChannels, chunkSize)
+	}
+}
+
+func (k msgServer) processZipUpload(ctx sdk.Context, msg *types.MsgUpload, mdscChannel string, fdscChannels []string, chunkSize int) (*types.MsgUploadResponse, error) {
+	ctx.Logger().Info("Processing Zip Upload")
+
 	const (
-		ChunkSize       = 1024 * 10 // 10KB
 		TimeoutSeconds  = 600
-		FDSC_ID_DEFAULT = "fdsc-0"
+		FDSC_ID_DEFAULT = "fdsc" // 簡易ID
 	)
 
-	// --- データの分割 (Sharding) ---
-	dataLen := len(msg.Data)
-	totalChunks := dataLen / ChunkSize
-	if dataLen%ChunkSize != 0 {
+	processedFiles, err := ProcessZipData(msg.Data, chunkSize)
+	if err != nil {
+		return nil, err
+	}
+
+	projectName := GetProjectNameFromZipFilename(msg.Filename)
+
+	for _, pFile := range processedFiles {
+		// ファイルごとの処理 (Distribution)
+		var fragmentMappings []*types.PacketFragmentMapping
+
+		for i, chunkData := range pFile.Chunks {
+			fragmentIDNum := uint64(ctx.BlockTime().UnixNano()) + uint64(i)
+			fragmentIDStr := strconv.FormatUint(fragmentIDNum, 10)
+
+			packetData := types.GatewayPacketData{
+				Packet: &types.GatewayPacketData_FragmentPacket{
+					FragmentPacket: &types.FragmentPacket{
+						Id:   fragmentIDNum,
+						Data: chunkData,
+					},
+				},
+			}
+
+			timeoutTimestamp := uint64(ctx.BlockTime().UnixNano()) + uint64(TimeoutSeconds*1_000_000_000)
+
+			// Round-Robin Selection
+			targetChannel := fdscChannels[i%len(fdscChannels)]
+
+			_, err := k.Keeper.TransmitGatewayPacketData(
+				ctx,
+				packetData,
+				"gateway",
+				targetChannel,
+				clienttypes.ZeroHeight(),
+				timeoutTimestamp,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("failed to send fragment packet %d for %s: %w", i, pFile.Filename, err)
+			}
+
+			fragmentMappings = append(fragmentMappings, &types.PacketFragmentMapping{
+				FdscId:     targetChannel,
+				FragmentId: fragmentIDStr,
+			})
+
+			ctx.Logger().Info("Sent FragmentPacket", "file", pFile.Filename, "chunk_index", i, "fragment_id", fragmentIDStr)
+		}
+
+		// ManifestPacket送信 (ファイルごと)
+		fullPath := filepath.Join(projectName, pFile.Filename)
+
+		err = k.sendManifestPacket(ctx, mdscChannel, fullPath, uint64(len(pFile.Content)), "application/octet-stream", fragmentMappings)
+		if err != nil {
+			return nil, fmt.Errorf("failed to send manifest packet for %s: %w", pFile.Filename, err)
+		}
+	}
+
+	return &types.MsgUploadResponse{}, nil
+}
+
+func (k msgServer) processSingleFileUpload(ctx sdk.Context, msg *types.MsgUpload, mdscChannel string, fdscChannels []string, chunkSize int) (*types.MsgUploadResponse, error) {
+	fragmentMappings, err := k.distributeFile(ctx, msg.Data, fdscChannels, chunkSize)
+	if err != nil {
+		return nil, err
+	}
+
+	err = k.sendManifestPacket(ctx, mdscChannel, msg.Filename, uint64(len(msg.Data)), "application/octet-stream", fragmentMappings)
+	if err != nil {
+		return nil, err
+	}
+
+	return &types.MsgUploadResponse{}, nil
+}
+
+func (k msgServer) distributeFile(ctx sdk.Context, data []byte, fdscChannels []string, chunkSize int) ([]*types.PacketFragmentMapping, error) {
+	const (
+		TimeoutSeconds  = 600
+		FDSC_ID_DEFAULT = "fdsc" // 簡易ID
+	)
+
+	dataLen := len(data)
+	totalChunks := dataLen / chunkSize
+	if dataLen%chunkSize != 0 {
 		totalChunks++
 	}
 
-	ctx.Logger().Info("Sharding data", "total_chunks", totalChunks)
-
-	// マニフェスト用情報の保存リスト
 	var fragmentMappings []*types.PacketFragmentMapping
 
-	// --- パケット送信ループ (FDSCへ) ---
 	for i := 0; i < totalChunks; i++ {
-		start := i * ChunkSize
-		end := start + ChunkSize
+		start := i * chunkSize
+		end := start + chunkSize
 		if end > dataLen {
 			end = dataLen
 		}
-		chunkData := msg.Data[start:end]
+		chunkData := data[start:end]
 
-		fragmentIDNum := uint64(ctx.BlockTime().UnixNano()) + uint64(i)
+		fragmentIDNum := uint64(ctx.BlockTime().UnixNano()) + uint64(i) // 簡易ユニークID生成
 		fragmentIDStr := strconv.FormatUint(fragmentIDNum, 10)
 
 		packetData := types.GatewayPacketData{
@@ -103,12 +202,14 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 
 		timeoutTimestamp := uint64(ctx.BlockTime().UnixNano()) + uint64(TimeoutSeconds*1_000_000_000)
 
-		// IBCパケット送信 (To FDSC)
+		// Round-Robin Selection
+		targetChannel := fdscChannels[i%len(fdscChannels)]
+
 		_, err := k.Keeper.TransmitGatewayPacketData(
 			ctx,
 			packetData,
 			"gateway",
-			fdscChannel,
+			targetChannel,
 			clienttypes.ZeroHeight(),
 			timeoutTimestamp,
 		)
@@ -117,29 +218,31 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 		}
 
 		fragmentMappings = append(fragmentMappings, &types.PacketFragmentMapping{
-			FdscId:     FDSC_ID_DEFAULT,
+			FdscId:     targetChannel, // チャネルIDをFDSC IDとして使用
 			FragmentId: fragmentIDStr,
 		})
-
-		ctx.Logger().Info("Sent FragmentPacket", "chunk_index", i, "fragment_id", fragmentIDStr)
 	}
 
-	// --- マニフェスト送信 (To MDSC) ---
+	return fragmentMappings, nil
+}
+
+func (k msgServer) sendManifestPacket(ctx sdk.Context, mdscChannel string, filename string, size uint64, mimeType string, fragments []*types.PacketFragmentMapping) error {
+	const TimeoutSeconds = 600
+
 	manifestPacket := types.GatewayPacketData{
 		Packet: &types.GatewayPacketData_ManifestPacket{
 			ManifestPacket: &types.ManifestPacket{
-				Filename:  msg.Filename,
-				FileSize:  uint64(dataLen),
-				MimeType:  "application/octet-stream",
-				Fragments: fragmentMappings,
+				Filename:  filename,
+				FileSize:  size,
+				MimeType:  mimeType,
+				Fragments: fragments,
 			},
 		},
 	}
 
 	timeoutTimestamp := uint64(ctx.BlockTime().UnixNano()) + uint64(TimeoutSeconds*1_000_000_000)
 
-	// IBCパケット送信 (To MDSC)
-	_, err = k.Keeper.TransmitGatewayPacketData(
+	_, err := k.Keeper.TransmitGatewayPacketData(
 		ctx,
 		manifestPacket,
 		"gateway",
@@ -147,13 +250,7 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 		clienttypes.ZeroHeight(),
 		timeoutTimestamp,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send manifest packet: %w", err)
-	}
-
-	ctx.Logger().Info("Sent ManifestPacket", "filename", msg.Filename, "fragments_count", len(fragmentMappings))
-
-	return &types.MsgUploadResponse{}, nil
+	return err
 }
 
 // TransmitGatewayPacketData sends the packet over IBC

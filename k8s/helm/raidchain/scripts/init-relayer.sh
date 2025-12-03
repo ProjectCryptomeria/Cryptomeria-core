@@ -35,9 +35,11 @@ if [ ! -f "$RELAYER_HOME/config/config.yaml" ]; then
     # --- 1. チェーン設定の追加 ---
     echo "--- Adding chain configurations ---"
     for CHAIN_ID in $CHAIN_IDS; do
-        POD_HOSTNAME="${RELEASE_NAME}-${CHAIN_ID}-0"
-        RPC_ADDR="http://${POD_HOSTNAME}.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local:26657"
-        GRPC_ADDR="${POD_HOSTNAME}.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local:9090"
+        # Use specific headless service for each chain (created by service.yaml)
+        # Format: raidchain-gwc-headless.raidchain.svc.cluster.local
+        SERVICE_NAME="${RELEASE_NAME}-${CHAIN_ID}-headless"
+        RPC_ADDR="http://${SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local:26657"
+        GRPC_ADDR="${SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local:9090"
         TMP_JSON_FILE="${TMP_DIR}/${CHAIN_ID}.json"
         
         cat > "$TMP_JSON_FILE" <<EOF
@@ -108,7 +110,8 @@ EOF
     # --- 5. 全チェーンの準備待機 ---
     echo "--- Waiting for all chains to be ready... ---"
     for CHAIN_ID in $CHAIN_IDS; do
-        RPC_ADDR="http://${RELEASE_NAME}-${CHAIN_ID}-0.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local:26657"
+        SERVICE_NAME="${RELEASE_NAME}-${CHAIN_ID}-headless"
+        RPC_ADDR="http://${SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local:26657"
         echo "--> Checking $CHAIN_ID at $RPC_ADDR"
         ATTEMPTS=0; MAX_ATTEMPTS=60
         until [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; do
@@ -203,19 +206,22 @@ EOF
     # --- 7. ストレージエンドポイントの自動登録 ---
     echo "--- Auto-Registering Storage Endpoints via On-chain Tx ---"
 
-    GWC_FULL_NAME="${RELEASE_NAME}-${GWC_ID}-0.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local"
+    GWC_SERVICE="${RELEASE_NAME}-${GWC_ID}-headless"
+    GWC_FULL_NAME="${GWC_SERVICE}.${POD_NAMESPACE}.svc.cluster.local"
     RPC_NODE="http://${GWC_FULL_NAME}:26657"
     API_PORT="1317"
     REGISTRATION_ARGS=""
 
     if [ -n "$MDSC_ID" ]; then
-        MDSC_FULL_NAME="${RELEASE_NAME}-${MDSC_ID}-0.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local"
+        MDSC_SERVICE="${RELEASE_NAME}-${MDSC_ID}-headless"
+        MDSC_FULL_NAME="${MDSC_SERVICE}.${POD_NAMESPACE}.svc.cluster.local"
         MDSC_ENDPOINT="http://${MDSC_FULL_NAME}:${API_PORT}"
         REGISTRATION_ARGS="$REGISTRATION_ARGS $MDSC_ID $MDSC_ENDPOINT"
     fi
 
     for FDSC_ID in $FDSC_IDS; do
-        FDSC_FULL_NAME="${RELEASE_NAME}-${FDSC_ID}-0.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local"
+        FDSC_SERVICE="${RELEASE_NAME}-${FDSC_ID}-headless"
+        FDSC_FULL_NAME="${FDSC_SERVICE}.${POD_NAMESPACE}.svc.cluster.local"
         FDSC_ENDPOINT="http://${FDSC_FULL_NAME}:${API_PORT}"
         REGISTRATION_ARGS="$REGISTRATION_ARGS $FDSC_ID $FDSC_ENDPOINT"
     done
