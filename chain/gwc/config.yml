@@ -1,27 +1,49 @@
 version: 1
 validation: sovereign
 default_denom: uatom
-accounts: 
-- name: alice
-  coins:
-  - 20000token
-  - 200000000uatom
-- name: bob
-  coins:
-  - 10000token
-  - 100000000uatom
+accounts:
+  - name: alice
+    coins:
+      - 20000token
+      - 200000000uatom
+  - name: bob
+    coins:
+      - 10000token
+      - 100000000uatom
 client:
   openapi:
     path: docs/static/openapi.json
 faucet:
   name: bob
   coins:
-  - 5token
-  - 100000stake
+    - 5token
+    - 100000stake
 validators:
-- name: alice
-  bonded: 100000000uatom
-- name: validator1
-  bonded: 200000000uatom
-- name: validator2
-  bonded: 100000000uatom
+  - name: alice
+    bonded: 100000000uatom
+    config:
+      rpc:
+        # トランザクション受信時のボディサイズ制限を緩和 (200MB)
+        max_body_bytes: 209715200
+  - name: validator1
+    bonded: 200000000uatom
+  - name: validator2
+    bonded: 100000000uatom
+# Genesisパラメータの上書き: ブロックチェーンのコンセンサスレベルでの制限解除
+genesis:
+  consensus:
+    params:
+      block:
+        # ブロックサイズ制限: 200MB (1Byte * 1024 * 1024 * 200)
+        max_bytes: "209715200"
+        # ガス制限: 無制限 (-1)
+        max_gas: "-1"
+  app_state:
+    gov:
+      params:
+        # 開発用: 投票期間等を短縮
+        min_deposit:
+          - amount: "10000000"
+            denom: "stake"
+        max_deposit_period: "172800s"
+        voting_period: "172800s"
