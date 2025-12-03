@@ -22,10 +22,8 @@ func GetQueryCmd(queryRoute string) *cobra.Command {
 	}
 
 	// 作成した手動コマンドを追加
+	cmd.AddCommand(CmdParams())
 	cmd.AddCommand(CmdListManifest())
-
-	// デバッグ用コマンドを追加
-	cmd.AddCommand(CmdDebugJSON())
-
+	cmd.AddCommand(CmdGetManifest())
 	return cmd
 }
