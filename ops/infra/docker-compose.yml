@@ -1,0 +1,114 @@
+version: '3.8'
+
+x-chain-common: &chain-common
+  image: ubuntu:22.04 # ベースイメージ (実際には各チェーンのビルド済みイメージを指定してください)
+  entrypoint: ./scripts/init-chain.sh
+  volumes:
+    - ./scripts:/scripts:ro
+    - ./mnemonics:/etc/mnemonics:ro
+  environment:
+    - DEV_MODE=true
+    - OUTPUT=json
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:26657/status"]
+    interval: 5s
+    timeout: 5s
+    retries: 10
+    start_period: 10s
+
+services:
+  # ===========================================================================
+  # Chains
+  # ===========================================================================
+  gwc:
+    <<: *chain-common
+    image: raidchain/gwc:latest
+    container_name: gwc
+    hostname: gwc
+    environment:
+      - CHAIN_INSTANCE_NAME=gwc
+      - CHAIN_APP_NAME=gwc
+      # 他のチェーンへのエンドポイント定義 (Docker DNS)
+      - MDSC_ENDPOINT=http://mdsc:1317
+      - FDSC_0_ENDPOINT=http://fdsc-0:1317
+    volumes:
+      - ./data/gwc:/home/gwc/.gwc
+      - ./scripts:/scripts:ro
+      - ./mnemonics:/etc/mnemonics:ro
+    ports:
+      - "30067:1317"  # API
+      - "30057:26657" # RPC
+      - "9090:9090"   # gRPC
+
+  mdsc:
+    <<: *chain-common
+    image: raidchain/mdsc:latest
+    container_name: mdsc
+    hostname: mdsc
+    environment:
+      - CHAIN_INSTANCE_NAME=mdsc
+      - CHAIN_APP_NAME=mdsc
+    volumes:
+      - ./data/mdsc:/home/mdsc/.mdsc
+      - ./scripts:/scripts:ro
+      - ./mnemonics:/etc/mnemonics:ro
+    ports:
+      - "26658:26657" # RPC (Host port offset)
+      - "1318:1317"   # API
+
+  fdsc-0:
+    <<: *chain-common
+    image: raidchain/fdsc:latest
+    container_name: fdsc-0
+    hostname: fdsc-0
+    environment:
+      - CHAIN_INSTANCE_NAME=fdsc-0
+      - CHAIN_APP_NAME=fdsc
+    volumes:
+      - ./data/fdsc-0:/home/fdsc/.fdsc
+      - ./scripts:/scripts:ro
+      - ./mnemonics:/etc/mnemonics:ro
+    ports:
+      - "26659:26657" # RPC
+      - "1319:1317"   # API
+
+  # ===========================================================================
+  # Relayer
+  # ===========================================================================
+  relayer:
+    image: raidchain/relayer:latest
+    container_name: relayer
+    hostname: relayer
+    entrypoint: ./scripts/init-relayer.sh
+    environment:
+      # Docker Composeのサービス名(ホスト名)を指定
+      - CHAIN_NAMES_CSV=gwc,mdsc,fdsc-0
+    volumes:
+      - ./data/relayer:/home/relayer/.relayer
+      - ./scripts:/scripts:ro
+      - ./mnemonics:/etc/relayer/mnemonics:ro
+    depends_on:
+      gwc:
+        condition: service_healthy
+      mdsc:
+        condition: service_healthy
+      fdsc-0:
+        condition: service_healthy
+
+  # ===========================================================================
+  # Post-Init Jobs (Registrar)
+  # ===========================================================================
+  registrar:
+    image: raidchain/gwc:latest
+    container_name: registrar
+    entrypoint: /scripts/init-register.sh
+    environment:
+      - GWC_ID=gwc
+      - CHAIN_NAMES_CSV=gwc,mdsc,fdsc-0
+      - RPC_NODE=http://gwc:26657
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./mnemonics:/etc/mnemonics:ro
+    depends_on:
+      relayer:
+        condition: service_started # リレイヤー起動後に実行
