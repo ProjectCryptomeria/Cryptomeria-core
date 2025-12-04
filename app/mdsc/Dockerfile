@@ -10,15 +10,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	&& apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ユーザーを作成 (ホームディレクトリ -m も作成)
-RUN groupadd fdsc && useradd fdsc -g fdsc -s /bin/bash -m
+RUN groupadd mdsc && useradd mdsc -g mdsc -s /bin/bash -m
 
 # ユーザーを切り替え
-USER fdsc
-WORKDIR /home/fdsc
+USER mdsc
+WORKDIR /home/mdsc
 
 # ローカルでビルドしたバイナリをユーザーのホームディレクトリ配下のbinにコピー
-# --chown を指定して、fdscユーザーが書き込み権限を持つようにする
-COPY --chown=fdsc:fdsc dist/fdscd /home/fdsc/bin/fdscd
+# --chown を指定して、mdscユーザーが書き込み権限を持つようにする
+COPY --chown=mdsc:mdsc ./dist/mdscd /home/mdsc/bin/mdscd
 
 # PATHを通す
-ENV PATH="/home/fdsc/bin:${PATH}"
+ENV PATH="/home/mdsc/bin:${PATH}"

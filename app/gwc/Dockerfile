@@ -10,15 +10,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	&& apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ユーザーを作成 (ホームディレクトリ -m も作成)
-RUN groupadd mdsc && useradd mdsc -g mdsc -s /bin/bash -m
+RUN groupadd gwc && useradd gwc -g gwc -s /bin/bash -m
 
 # ユーザーを切り替え
-USER mdsc
-WORKDIR /home/mdsc
+USER gwc
+WORKDIR /home/gwc
 
 # ローカルでビルドしたバイナリをユーザーのホームディレクトリ配下のbinにコピー
-# --chown を指定して、mdscユーザーが書き込み権限を持つようにする
-COPY --chown=mdsc:mdsc dist/mdscd /home/mdsc/bin/mdscd
+# --chown を指定して、gwcユーザーが書き込み権限を持つようにする
+COPY --chown=gwc:gwc ./dist/gwcd /home/gwc/bin/gwcd
 
 # PATHを通す
-ENV PATH="/home/mdsc/bin:${PATH}"
+ENV PATH="/home/gwc/bin:${PATH}"

@@ -149,7 +149,7 @@ build-chain target:
     fi
 
     echo "🏗️  Compiling binary for {{target}}..."
-    cd chain/{{target}} && ignite chain build -o ../../dist --skip-proto
+    cd chain/{{target}} && ignite chain build -o ./dist --skip-proto
     echo "✅ Binary compiled: dist/{{target}}d"
 
 # [ステップ2] Dockerイメージをビルドする

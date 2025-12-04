@@ -10,15 +10,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	&& apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ユーザーを作成 (ホームディレクトリ -m も作成)
-RUN groupadd gwc && useradd gwc -g gwc -s /bin/bash -m
+RUN groupadd fdsc && useradd fdsc -g fdsc -s /bin/bash -m
 
 # ユーザーを切り替え
-USER gwc
-WORKDIR /home/gwc
+USER fdsc
+WORKDIR /home/fdsc
 
 # ローカルでビルドしたバイナリをユーザーのホームディレクトリ配下のbinにコピー
-# --chown を指定して、gwcユーザーが書き込み権限を持つようにする
-COPY --chown=gwc:gwc dist/gwcd /home/gwc/bin/gwcd
+# --chown を指定して、fdscユーザーが書き込み権限を持つようにする
+COPY --chown=fdsc:fdsc ./dist/fdscd /home/fdsc/bin/fdscd
 
 # PATHを通す
-ENV PATH="/home/gwc/bin:${PATH}"
+ENV PATH="/home/fdsc/bin:${PATH}"
