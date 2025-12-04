@@ -1,8 +1,10 @@
 version: '3.8'
 
 x-chain-common: &chain-common
-  image: ubuntu:22.04 # ベースイメージ (実際には各チェーンのビルド済みイメージを指定してください)
-  entrypoint: ./scripts/init-chain.sh
+  # ベースイメージは各サービスの build/image 設定で上書きされます
+  image: ubuntu:22.04
+  # コンテナ内のパスを指定 (/scripts はボリュームマウントされているため)
+  entrypoint: /scripts/entrypoint-chain.sh
   volumes:
     - ./scripts:/scripts:ro
     - ./mnemonics:/etc/mnemonics:ro
@@ -23,6 +25,9 @@ services:
   gwc:
     <<: *chain-common
     image: raidchain/gwc:latest
+    build:
+      context: .
+      dockerfile: build/gwc/Dockerfile
     container_name: gwc
     hostname: gwc
     environment:
@@ -43,6 +48,9 @@ services:
   mdsc:
     <<: *chain-common
     image: raidchain/mdsc:latest
+    build:
+      context: .
+      dockerfile: build/mdsc/Dockerfile
     container_name: mdsc
     hostname: mdsc
     environment:
@@ -53,12 +61,15 @@ services:
       - ./scripts:/scripts:ro
       - ./mnemonics:/etc/mnemonics:ro
     ports:
-      - "26658:26657" # RPC (Host port offset)
+      - "26658:26657" # RPC
       - "1318:1317"   # API
 
   fdsc-0:
     <<: *chain-common
     image: raidchain/fdsc:latest
+    build:
+      context: .
+      dockerfile: build/fdsc/Dockerfile
     container_name: fdsc-0
     hostname: fdsc-0
     environment:
@@ -77,9 +88,12 @@ services:
   # ===========================================================================
   relayer:
     image: raidchain/relayer:latest
+    build:
+      context: .
+      dockerfile: build/relayer/Dockerfile
     container_name: relayer
     hostname: relayer
-    entrypoint: ./scripts/init-relayer.sh
+    entrypoint: /scripts/init-relayer.sh
     environment:
       # Docker Composeのサービス名(ホスト名)を指定
       - CHAIN_NAMES_CSV=gwc,mdsc,fdsc-0
@@ -99,6 +113,7 @@ services:
   # Post-Init Jobs (Registrar)
   # ===========================================================================
   registrar:
+    # GWCと同じイメージを使用 (gwcサービスでビルドされたものを使う)
     image: raidchain/gwc:latest
     container_name: registrar
     entrypoint: /scripts/init-register.sh
@@ -110,5 +125,7 @@ services:
       - ./scripts:/scripts:ro
       - ./mnemonics:/etc/mnemonics:ro
     depends_on:
+      gwc:
+        condition: service_healthy
       relayer:
-        condition: service_started # リレイヤー起動後に実行
+        condition: service_started
