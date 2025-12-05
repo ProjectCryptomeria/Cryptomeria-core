@@ -1,0 +1,52 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "raidchain.fullname" . }}-register-storage
+  annotations:
+    # Helm hookを使って、インストール/アップグレード後に実行
+    "helm.sh/hook": post-install,post-upgrade
+    # 以前の実行が残っていたら、新しいJobの作成前に削除
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  # リレイヤーの処理が遅延する可能性があるため、十分なリトライ回数と期間を設定
+  backoffLimit: 15 
+#   ttlSecondsAfterFinished: 30
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: raidchain
+        app.kubernetes.io/component: registrar
+    spec:
+      # JobはGWCとリレイヤーのキーが必要なため、GWCのServiceAccountとmnemonicsを使用
+      serviceAccountName: {{ include "raidchain.fullname" . }}-sa
+      restartPolicy: OnFailure
+      containers:
+        - name: registrar
+          # GWCと同じイメージを使う (gwcdバイナリが含まれているため)
+          image: "{{ .Values.chainTypes.gwc.repository }}:{{ .Values.chainTypes.gwc.tag }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["/bin/bash", "/scripts/init-register.sh"]
+          env:
+            - name: GWC_ID
+              value: "gwc"
+            # CHAIN_NAMES_CSVを渡し、スクリプト内で期待される全チェーン名を知る
+            - name: CHAIN_NAMES_CSV
+              value: {{ range $i, $chain := .Values.chains }}{{ if $i }},{{ end }}{{ $chain.name }}{{ end }}
+            - name: RELEASE_NAME
+              value: {{ .Release.Name | quote }}
+            - name: RPC_NODE
+              # GWCのHeadless ServiceへのURL
+              value: "http://{{ include "raidchain.fullname" . }}-gwc-headless:26657"
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+            - name: mnemonics
+              mountPath: /etc/mnemonics
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ include "raidchain.fullname" . }}-scripts
+            defaultMode: 0755
+        - name: mnemonics
+          secret:
+            secretName: {{ include "raidchain.fullname" . }}-mnemonics

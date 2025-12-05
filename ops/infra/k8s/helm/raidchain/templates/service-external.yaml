@@ -1,0 +1,33 @@
+{{- /* values.yamlで external.enabled が true の場合のみ、以下のリソースを作成 */}}
+{{- if .Values.service.external.enabled }}
+
+{{- /* .Values.chains リストをループ処理 */}}
+{{- range $index, $chain := .Values.chains }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "raidchain.fullname" $ }}-{{ .name }}-headless
+  labels:
+      app.kubernetes.io/name: raidchain
+      app.kubernetes.io/category: chain
+      app.kubernetes.io/instance: {{ .name }}
+      app.kubernetes.io/component: {{ .type }}
+spec:
+  # Serviceの種類をNodePortに設定
+  type: NodePort
+  ports:
+    - name: rpc
+      # コンテナ側のポート
+      port: 26657
+      targetPort: 26657
+    - name: api
+      # コンテナ側のポート
+      port: 1317
+      targetPort: 1317
+  # このサービスが通信を転送する対象のPodを選択
+  selector:
+    # chain-statefulset.yamlで定義されているPodラベルと一致させる
+    app.kubernetes.io/instance: {{ .name }}
+{{- end }}
+{{- end }}
