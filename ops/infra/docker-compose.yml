@@ -116,7 +116,7 @@ services:
     # GWCと同じイメージを使用 (gwcサービスでビルドされたものを使う)
     image: raidchain/gwc:latest
     container_name: registrar
-    entrypoint: /scripts/init-register.sh
+    entrypoint: /scripts/init-registrar.sh
     environment:
       - GWC_ID=gwc
       - CHAIN_NAMES_CSV=gwc,mdsc,fdsc-0
