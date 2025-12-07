@@ -1,0 +1,3 @@
+[submodule "util/Raidchain-WebUI"]
+	path = util/Raidchain-WebUI
+	url = https://github.com/syugeeeeeeeeeei/Raidchain-WebUI.git
