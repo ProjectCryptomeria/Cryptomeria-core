@@ -1,3 +1,3 @@
-[submodule "util/Raidchain-WebUI"]
-	path = util/Raidchain-WebUI
-	url = https://github.com/syugeeeeeeeeeei/Raidchain-WebUI.git
+[submodule "util/Cryptomeria-WebUI"]
+	path = util/Cryptomeria-WebUI
+	url = https://github.com/syugeeeeeeeeeei/Cryptomeria-WebUI.git
