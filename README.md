@@ -40,7 +40,6 @@ graph TD
 ## 🔄 データフロー詳細
 
 ### ⬆️ アップロードフロー (Write)
-
 クライアントからアップロードされたデータは、以下の順序で処理され、永続化されます。
 
 1.  **Ingest (受信)**: GWCがクライアントからトランザクションとしてデータを受け取ります（ファイル単体、ディレクトリ、またはZIPファイル）。
@@ -49,7 +48,6 @@ graph TD
 4.  **Manifest Indexing (インデックス化)**: 「どのFDSCに、どのファイルの、どのフラグメントを保存したか」という構造情報をまとめた **Manifest Data** を生成し、**MDSC (Manifest Data Store Chain)** へIBCパケットで送信・保存します。
 
 ### ⬇️ ダウンロードフロー (Read)
-
 Webブラウザ等からのアクセス時は、逆の手順でデータが復元されます。
 
 1.  **Resolve (解決)**: GWCがリクエストされたパスに基づき、**MDSC** から Manifest Data を **HTTPリクエスト** で取得します。
@@ -57,31 +55,28 @@ Webブラウザ等からのアクセス時は、逆の手順でデータが復�
 3.  **Reconstruct (復元)**: GWCがフラグメントを結合して元のファイルを復元し、HTTPレスポンスとしてユーザーに返却します。
 
 ## 🔌 統合モジュール
-
 本リポジトリは以下のコンポーネントをGit Submoduleとして統合しています。
 
-  * **[apps/webui](https://github.com/projectcryptomeria/cryptomeria-webui)**: システム全体の運用・監視・実験を行うための管理コンソール。
-  * **[apps/ts-controller](https://github.com/projectcryptomeria/cryptomeria-tscontroller)**: (Legacy) アップロード戦略のプロトタイピング用CLIツール。
+* **[apps/webui](https://github.com/projectcryptomeria/cryptomeria-webui)**: システム全体の運用・監視・実験を行うための管理コンソール。
+* **[apps/ts-controller](https://github.com/projectcryptomeria/cryptomeria-tscontroller)**: (Legacy) アップロード戦略のプロトタイピング用CLIツール。
 
 ## 🛠️ インフラストラクチャ (`ops/`)
 
 Kubernetes上へのデプロイと運用を自動化するためのコード資産が含まれています。
 
-  * **Helm Charts**: `ops/infra/k8s/helm` - 全チェーンとRelayerの一括デプロイ定義。
-  * **CDK8s**: `ops/infra/cdk8s` - TypeScriptによるインフラ構成管理。
-  * **Scripts**: `ops/scripts` - チェーンのScaffold、E2Eテスト、ベンチマーク用スクリプト。
+* **Helm Charts**: `ops/infra/k8s/helm` - 全チェーンとRelayerの一括デプロイ定義。
+* **CDK8s**: `ops/infra/cdk8s` - TypeScriptによるインフラ構成管理。
+* **Scripts**: `ops/scripts` - チェーンのScaffold、E2Eテスト、ベンチマーク用スクリプト。
 
 ## 🚀 開発の始め方
 
 ### 前提条件
-
 開発には以下のツールが必要です（DevContainerの使用を推奨）。
-
-  * Go 1.22+
-  * Ignite CLI
-  * Node.js & Yarn
-  * Docker & Kubernetes (Minikube/Kind)
-  * **[Just](https://github.com/casey/just)** (Task Runner)
+* Go 1.22+
+* Ignite CLI
+* Node.js & Yarn
+* Docker & Kubernetes (Minikube/Kind)
+* **[Just](https://github.com/casey/just)** (Task Runner)
 
 ### セットアップとビルド
 
@@ -89,7 +84,7 @@ Kubernetes上へのデプロイと運用を自動化するためのコード資�
 
 ```bash
 # Clone repository
-git clone --recursive https://github.com/projectcryptomeria/cryptomeria-core.git
+git clone --recursive [https://github.com/projectcryptomeria/cryptomeria-core.git](https://github.com/projectcryptomeria/cryptomeria-core.git)
 cd cryptomeria-core
 
 # Check available commands
@@ -98,13 +93,47 @@ just --list
 
 ### 主なコマンド (via Justfile)
 
+本プロジェクトではタスクランナー `just` を使用して、開発・デプロイ・テストの全工程を効率化しています。
+
+#### 🔄 Workflow (一括操作)
 | Command | Description |
 | :--- | :--- |
-| `just install` | 依存関係のインストールと初期セットアップを行います。 |
-| `just build` | 全てのチェーンバイナリ（gwcd, mdscd, fdscd）をビルドします。 |
-| `just proto-gen` | Protobufファイルの生成と型定義の更新を行います。 |
-| `just dev-up` | ローカルKubernetes環境へシステム全体をデプロイします（Skaffold/Helm）。 |
-| `just test-e2e` | `ops/scripts/test` 内の統合テストを実行し、チェーン間の連携を確認します。 |
+| `just all-in-one [chains=N]` | **完全リセット＆セットアップ**: 既存環境の削除、全バイナリ/Dockerビルド、Kubernetesデプロイを一気通貫で実行します。`chains`でFDSCのノード数を指定可能（デフォルト: 2）。 |
+
+#### 🏗️ Build & Generate (ビルド)
+| Command | Description |
+| :--- | :--- |
+| `just generate-all` | 全チェーン（FDSC, MDSC, GWC）のProtobufコード生成（`ignite generate proto-go`）を一括実行します。 |
+| `just build-all` | 全コンポーネント（チェーン3種 + Relayer）のバイナリとDockerイメージを並列ビルドします。 |
+| `just build <target>` | 指定したターゲット（`fdsc`, `mdsc`, `gwc`, `relayer`）のみのバイナリとDockerイメージをビルドします。 |
+
+#### ☁️ Operations (インフラ・デプロイ)
+| Command | Description |
+| :--- | :--- |
+| `just deploy [chains=N]` | Helmを使用してクラスタへデプロイします。FDSCのレプリカ数を指定可能です。 |
+| `just deploy-clean [chains=N]` | Namespace（永続ボリューム含む）を維持したまま、リソースを再デプロイして状態をリセットします。高速な反復開発向け。 |
+| `just upgrade <target>` | 指定したコンポーネントのHelmリリースを更新し、Podをローリング再起動します（データは維持されます）。 |
+| `just undeploy` | アプリケーションとPVC（データ）を削除します。 |
+| `just clean-k8s` | NamespaceごとKubernetesリソースを完全に削除します（完全初期化用）。 |
+
+#### ⚡ Development (高速開発)
+| Command | Description |
+| :--- | :--- |
+| `just hot-reload <target>` | **ホットリロード**: ローカルでビルドしたバイナリを実行中のPodに直接転送し、プロセスを再起動します（Dockerビルド不要で高速）。 |
+| `just scaffold <target>` | 新しいチェーンのひな形（Scaffold）を生成します。 |
+
+#### 🎮 Controller (実験・操作)
+| Command | Description |
+| :--- | :--- |
+| `just ctl-install` | コントローラー（TScontroller）の依存関係をインストールします。 |
+| `just ctl-exp` | TScontrollerを対話モードで起動し、アップロード実験シナリオを実行します。 |
+| `just ctl-monitor` | 指定チェーンのブロック生成やMempoolをリアルタイム監視します。 |
+
+#### 🧪 Testing (テスト)
+| Command | Description |
+| :--- | :--- |
+| `just upload-test` | `poc-upload-test.sh` を実行し、システムへのデータアップロードを検証します。 |
+| `just download-test` | `poc-download-test.sh` を実行し、データのダウンロードと復元を検証します。 |
 
 ## 📂 ディレクトリ構造
 
@@ -113,21 +142,25 @@ cryptomeria-core/
 ├── apps/               # アプリケーションコード
 │   ├── gwc/            # Gateway Chain (Ignite App)
 │   ├── mdsc/           # Manifest Data Store Chain (Ignite App)
-│   └── fdsc/           # Fragment Data Store Chain (Ignite App)
+│   ├── fdsc/           # Fragment Data Store Chain (Ignite App)
+│   ├── webui/          # WebUI (Submodule)
+│   └── ts-controller/  # Legacy Controller (Submodule)
 ├── ops/                # 運用・インフラコード
 │   ├── infra/          # Helm Charts, CDK8s
 │   └── scripts/        # テスト、Scaffold用スクリプト
-├── submodules/         # サブモジュール
-│   ├── webui/          # WebUI (Submodule)
-│   └── ts-controller/  # Legacy Controller (Submodule)
 ├── docs/               # 設計資料、仕様書
 └── justfile            # タスクランナー定義
 ```
 
 ## 🔗 関連リポジトリ
 
-  * **[Cryptomeria WebUI](https://github.com/projectcryptomeria/cryptomeria-webui)**
-  * **[Cryptomeria TScontroller](https://github.com/projectcryptomeria/cryptomeria-tscontroller)**
+* **[Cryptomeria WebUI](https://github.com/projectcryptomeria/cryptomeria-webui)**
+* **[Cryptomeria TScontroller](https://github.com/projectcryptomeria/cryptomeria-tscontroller)**
+
+---
 <div align="center">
-<sub>Managed by Project Cryptomeria</sub>
+  <sub>Managed by Project Cryptomeria</sub>
+</div>
+<div align="center">
+  <sub>Managed by Project Cryptomeria</sub>
 </div>
