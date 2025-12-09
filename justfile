@@ -148,7 +148,7 @@ build-chain target:
     fi
 
     echo "🏗️  Compiling binary for {{target}}..."
-    cd apps/{{target}} && ignite chain build -o ./dist --skip-proto
+    cd apps/{{target}} && ignite chain build -o dist/ --skip-proto
     echo "✅ Binary compiled: dist/{{target}}d"
 
 # [ステップ2] Dockerイメージをビルドする
@@ -156,6 +156,7 @@ build-chain target:
 build-image target:
     #!/usr/bin/env bash
     set -e
+    BASE_DIR=$(pwd)
     # ターゲットの検証 (Relayerも含む)
     if [[ ! "{{target}}" =~ ^(fdsc|mdsc|gwc|relayer)$ ]]; then
         echo "❌ Error: Target '{{target}}' is unknown."
@@ -164,16 +165,16 @@ build-image target:
     fi
 
     echo "🐳 Building Docker image for {{target}}..."
-    
-    # Dockerfileの存在確認
+    TARGET_DIR="apps/{{target}}"
     DOCKERFILE="apps/{{target}}/Dockerfile"
     if [ ! -f "$DOCKERFILE" ]; then
         echo "❌ Error: Dockerfile not found at $DOCKERFILE"
         exit 1
     fi
-
-    docker build -t "{{PROJECT_NAME}}/{{target}}:latest" -f "$DOCKERFILE" .
+    cd "$TARGET_DIR"
+    docker build -t "{{PROJECT_NAME}}/{{target}}:latest" -f "./Dockerfile" .
     echo "✅ Image built: {{PROJECT_NAME}}/{{target}}:latest"
+    cd "$BASE_DIR"
 
 # --- Kubernetes Tasks ---
 
@@ -182,15 +183,22 @@ build-image target:
 deploy chains=DEFAULT_CHAINS:
     #!/usr/bin/env sh
     set -e
+    OPS_SCRIPT_DIR="./ops/scripts"
+    OPS_HELM_CHART_DIR="./ops/infra/k8s/helm/{{PROJECT_NAME}}"
+    
     echo "--> 🚀 Deploying with {{chains}} FDSC node(s)..."
+    
     TEMP_VALUES_FILE=".helm-temp-values.yaml"
+    
     trap 'rm -f -- "$TEMP_VALUES_FILE"' EXIT
-    ./scripts/helm/generate-values.sh {{chains}} > "$TEMP_VALUES_FILE"
-    helm dependency update k8s/helm/{{PROJECT_NAME}}
-    helm install {{PROJECT_NAME}} k8s/helm/{{PROJECT_NAME}} \
+    "$OPS_SCRIPT_DIR/helm/generate-values.sh" {{chains}} > "$TEMP_VALUES_FILE"
+    
+    helm dependency update "$OPS_HELM_CHART_DIR"
+    
+    helm install {{PROJECT_NAME}} "$OPS_HELM_CHART_DIR" \
         --namespace {{PROJECT_NAME}} \
         --create-namespace \
-        -f "$TEMP_VALUES_FILE"
+        -f "$TEMP_VALUES_FILE" \
         --timeout 10m
 
 # デプロイされたアプリケーションと関連PVCをクラスタからアンインストール
