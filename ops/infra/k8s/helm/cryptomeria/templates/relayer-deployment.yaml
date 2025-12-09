@@ -1,12 +1,12 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "raidchain.fullname" . }}-relayer
+  name: {{ include "cryptomeria.fullname" . }}-relayer
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: raidchain
+      app.kubernetes.io/name: cryptomeria
       app.kubernetes.io/instance: rly-0
       app.kubernetes.io/component: relayer
   template:
@@ -14,7 +14,7 @@ spec:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
-        app.kubernetes.io/name: raidchain
+        app.kubernetes.io/name: cryptomeria
         app.kubernetes.io/instance: rly-0
         app.kubernetes.io/component: relayer
     spec:
@@ -25,7 +25,7 @@ spec:
           command: ["/bin/sh", "-c", "/scripts/init-relayer.sh"]
           env:
             - name: HEADLESS_SERVICE_NAME
-              value: {{ include "raidchain.fullname" . }}-chain-headless
+              value: {{ include "cryptomeria.fullname" . }}-chain-headless
             - name: CHAIN_NAMES_CSV
               # "data-0,data-1,..." のようなCSV文字列を動的に生成
               value: {{ range $i, $chain := .Values.chains }}{{ if $i }},{{ end }}{{ $chain.name }}{{ end }}
@@ -39,8 +39,8 @@ spec:
       volumes:
         - name: scripts
           configMap:
-            name: {{ include "raidchain.fullname" . }}-scripts
+            name: {{ include "cryptomeria.fullname" . }}-scripts
             defaultMode: 0755
         - name: mnemonics
           secret:
-            secretName: {{ include "raidchain.fullname" . }}-mnemonics
+            secretName: {{ include "cryptomeria.fullname" . }}-mnemonics

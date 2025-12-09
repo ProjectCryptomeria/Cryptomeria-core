@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "raidchain.fullname" . }}-mnemonic-generator
+  name: {{ include "cryptomeria.fullname" . }}-mnemonic-generator
   namespace: {{ .Release.Namespace }}
   annotations:
     "helm.sh/hook": "pre-install,pre-upgrade"
@@ -10,7 +10,7 @@ metadata:
 spec:
   template:
     spec:
-      serviceAccountName: {{ include "raidchain.fullname" . }}-sa
+      serviceAccountName: {{ include "cryptomeria.fullname" . }}-sa
       restartPolicy: Never
       containers:
         - name: generator
@@ -22,7 +22,7 @@ spec:
             - |
               set -ex
 
-              SECRET_NAME="{{ include "raidchain.fullname" . }}-mnemonics"
+              SECRET_NAME="{{ include "cryptomeria.fullname" . }}-mnemonics"
               SECRET_FILE="/tmp/secret.yaml"
               
               echo "--- Installing dependencies for mnemonic generation ---"

@@ -3,20 +3,20 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "raidchain.fullname" $ }}-{{ .name }}
+  name: {{ include "cryptomeria.fullname" $ }}-{{ .name }}
 spec:
-  serviceName: {{ include "raidchain.fullname" $ }}-chain-headless
+  serviceName: {{ include "cryptomeria.fullname" $ }}-chain-headless
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: raidchain
+      app.kubernetes.io/name: cryptomeria
       app.kubernetes.io/category: chain
       app.kubernetes.io/instance: {{ .name }}
       app.kubernetes.io/component: {{ .type }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: raidchain
+        app.kubernetes.io/name: cryptomeria
         app.kubernetes.io/category: chain
         app.kubernetes.io/instance: {{ .name }}
         app.kubernetes.io/component: {{ .type }}
@@ -53,11 +53,11 @@ spec:
       volumes:
         - name: scripts
           configMap:
-            name: {{ include "raidchain.fullname" $ }}-scripts
+            name: {{ include "cryptomeria.fullname" $ }}-scripts
             defaultMode: 0755
         - name: mnemonics
           secret:
-            secretName: {{ include "raidchain.fullname" $ }}-mnemonics
+            secretName: {{ include "cryptomeria.fullname" $ }}-mnemonics
   volumeClaimTemplates:
     - metadata:
         name: data

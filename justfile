@@ -1,8 +1,7 @@
-# justfile for raidchain project
+# justfile for cryptomeria project
 
 # --- 変数定義 ---
-HELM_RELEASE_NAME := "raidchain"
-NAMESPACE         := "raidchain"
+PROJECT_NAME := "cryptomeria"
 DEFAULT_CHAINS    := "2"
 
 # justコマンドのデフォルトの挙動を設定。コマンド一覧を表示する。
@@ -14,8 +13,8 @@ default:
 # [一括実行] クリーンアップ、再生成、ビルド、デプロイを全て実行
 all-in-one chains=DEFAULT_CHAINS:
     @just clean-k8s
-    @just build
-    @just deploy-clean {{chains}}
+    @just build-all
+    @just deploy {{chains}}
     @echo "✅ All-in-one process complete!"
 
 # --- Go-Generated Tasks ---
@@ -58,20 +57,20 @@ hot-reload target:
 
     # 2. 実行中のPodを特定
     echo "   Injecting binary into Pod..."
-    POD=$(kubectl get pod -n {{NAMESPACE}} -l app.kubernetes.io/component={{target}} -o jsonpath="{.items[0].metadata.name}")
+    POD=$(kubectl get pod -n {{PROJECT_NAME}} -l app.kubernetes.io/component={{target}} -o jsonpath="{.items[0].metadata.name}")
     
     if [ -z "$POD" ]; then
-        echo "❌ Error: Pod for {{target}} not found in namespace {{NAMESPACE}}."
+        echo "❌ Error: Pod for {{target}} not found in namespace {{PROJECT_NAME}}."
         exit 1
     fi
     echo "   Target Pod: $POD"
 
     # 3. 新しいバイナリを転送
-    kubectl cp "$LOCAL_BINARY" {{NAMESPACE}}/$POD:/tmp/"$BINARY_NAME"_new
+    kubectl cp "$LOCAL_BINARY" {{PROJECT_NAME}}/$POD:/tmp/"$BINARY_NAME"_new
     
     # 4. コンテナ内で検証・置換・再起動
     echo "   Verifying and restarting process..."
-    kubectl exec -n {{NAMESPACE}} $POD -- /bin/bash -c "
+    kubectl exec -n {{PROJECT_NAME}} $POD -- /bin/bash -c "
         set -e
         # 転送されたファイルのハッシュ確認
         REMOTE_HASH=\$(md5sum /tmp/${BINARY_NAME}_new | awk '{print \$1}')
@@ -149,7 +148,7 @@ build-chain target:
     fi
 
     echo "🏗️  Compiling binary for {{target}}..."
-    cd chain/{{target}} && ignite chain build -o ./dist --skip-proto
+    cd apps/{{target}} && ignite chain build -o ./dist --skip-proto
     echo "✅ Binary compiled: dist/{{target}}d"
 
 # [ステップ2] Dockerイメージをビルドする
@@ -167,14 +166,14 @@ build-image target:
     echo "🐳 Building Docker image for {{target}}..."
     
     # Dockerfileの存在確認
-    DOCKERFILE="build/{{target}}/Dockerfile"
+    DOCKERFILE="apps/{{target}}/Dockerfile"
     if [ ! -f "$DOCKERFILE" ]; then
         echo "❌ Error: Dockerfile not found at $DOCKERFILE"
         exit 1
     fi
 
-    docker build -t "raidchain/{{target}}:latest" -f "$DOCKERFILE" .
-    echo "✅ Image built: raidchain/{{target}}:latest"
+    docker build -t "{{PROJECT_NAME}}/{{target}}:latest" -f "$DOCKERFILE" .
+    echo "✅ Image built: {{PROJECT_NAME}}/{{target}}:latest"
 
 # --- Kubernetes Tasks ---
 
@@ -187,9 +186,9 @@ deploy chains=DEFAULT_CHAINS:
     TEMP_VALUES_FILE=".helm-temp-values.yaml"
     trap 'rm -f -- "$TEMP_VALUES_FILE"' EXIT
     ./scripts/helm/generate-values.sh {{chains}} > "$TEMP_VALUES_FILE"
-    helm dependency update k8s/helm/raidchain
-    helm install {{HELM_RELEASE_NAME}} k8s/helm/raidchain \
-        --namespace {{NAMESPACE}} \
+    helm dependency update k8s/helm/{{PROJECT_NAME}}
+    helm install {{PROJECT_NAME}} k8s/helm/{{PROJECT_NAME}} \
+        --namespace {{PROJECT_NAME}} \
         --create-namespace \
         -f "$TEMP_VALUES_FILE"
         --timeout 10m
@@ -198,15 +197,15 @@ deploy chains=DEFAULT_CHAINS:
 undeploy:
     @echo "--> 🛑 Uninstalling Helm release..."
     @# --wait を追加: リソースが解放されるのを待ってから次に進む
-    @-helm uninstall {{HELM_RELEASE_NAME}} --namespace {{NAMESPACE}} --wait
+    @-helm uninstall {{PROJECT_NAME}} --namespace {{PROJECT_NAME}} --wait
     
     @echo "--> 🗑️ Deleting Persistent Volume Claims (Data)..."
     @# PVC（データ）を削除。これでチェーンの状態はリセットされます
-    @-kubectl -n {{NAMESPACE}} delete pvc -l app.kubernetes.io/name={{HELM_RELEASE_NAME}}
+    @-kubectl -n {{PROJECT_NAME}} delete pvc -l app.kubernetes.io/name={{PROJECT_NAME}}
     
     @echo "--> 🧹 Cleaning up stray Jobs..."
     @# Helmで管理しきれていないJobが残ることがあるので念のため削除
-    @-kubectl -n {{NAMESPACE}} delete jobs --all
+    @-kubectl -n {{PROJECT_NAME}} delete jobs --all
 
 # [高速化] Namespaceは残したまま、リソースとデータだけリセットして再デプロイ
 # 例: just deploy-clean 4
@@ -238,18 +237,18 @@ upgrade target="all" chains=DEFAULT_CHAINS:
 
     echo "--> ♻️  Upgrading Helm release (Target: {{target}})..."
     # Helm upgradeを実行 (構成変更があれば適用、なければConfigMap等の更新トリガー)
-    helm upgrade {{HELM_RELEASE_NAME}} k8s/helm/raidchain \
-        --namespace {{NAMESPACE}} \
+    helm upgrade {{PROJECT_NAME}} k8s/helm/{{PROJECT_NAME}} \
+        --namespace {{PROJECT_NAME}} \
         -f "$TEMP_VALUES_FILE"
 
     # 3. Podの再起動 (imagePullPolicy: Always または latestタグの再取得、Config反映のため)
     if [ "{{target}}" == "all" ]; then
         echo "--> 🔄 Restarting all statefulsets and deployments..."
-        kubectl -n {{NAMESPACE}} rollout restart statefulset
-        kubectl -n {{NAMESPACE}} rollout restart deployment
+        kubectl -n {{PROJECT_NAME}} rollout restart statefulset
+        kubectl -n {{PROJECT_NAME}} rollout restart deployment
     elif [ "{{target}}" == "relayer" ]; then
         echo "--> 🔄 Restarting relayer..."
-        kubectl -n {{NAMESPACE}} rollout restart deployment -l app.kubernetes.io/component=relayer
+        kubectl -n {{PROJECT_NAME}} rollout restart deployment -l app.kubernetes.io/component=relayer
     else
         # ターゲット名からコンポーネントラベルへ変換
         COMPONENT=""
@@ -265,7 +264,7 @@ upgrade target="all" chains=DEFAULT_CHAINS:
         
         echo "--> 🔄 Restarting statefulsets for component: $COMPONENT"
         # componentラベルが一致するStatefulSetを再起動
-        kubectl -n {{NAMESPACE}} rollout restart statefulset -l app.kubernetes.io/component=$COMPONENT
+        kubectl -n {{PROJECT_NAME}} rollout restart statefulset -l app.kubernetes.io/component=$COMPONENT
     fi
 
     echo "✅ Upgrade complete!"
@@ -293,8 +292,8 @@ scaffold-gwc:
 
 # Namespaceごと完全に消し去る（時間がかかるので非常時や終了時用）
 clean-k8s: undeploy
-    @echo "--> 🗑️ Deleting namespace {{NAMESPACE}} (This may take a while)..."
-    @kubectl delete namespace {{NAMESPACE}} --ignore-not-found
+    @echo "--> 🗑️ Deleting namespace {{PROJECT_NAME}} (This may take a while)..."
+    @kubectl delete namespace {{PROJECT_NAME}} --ignore-not-found
 
 # --- Controller Tasks ---
 

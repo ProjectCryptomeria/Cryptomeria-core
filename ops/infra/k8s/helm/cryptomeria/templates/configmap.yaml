@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   # チャート名とリリース名から一意な名前を生成
-  name: {{ include "raidchain.fullname" . }}-scripts
+  name: {{ include "cryptomeria.fullname" . }}-scripts
 data:
   # ファイル名をキーとし、ファイルの内容をバリューとする
   entrypoint-chain.sh: |-

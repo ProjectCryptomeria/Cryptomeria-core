@@ -11,8 +11,8 @@ fi
 # --- 変数定義 ---
 OLD_RELEASE=$1
 NEW_RELEASE=$2
-OLD_CHART_PATH="./k8s/helm/${OLD_RELEASE}"
-NEW_CHART_PATH="./k8s/helm/${NEW_RELEASE}"
+OLD_CHART_PATH="./ops/infra/k8s/helm/${OLD_RELEASE}"
+NEW_CHART_PATH="./ops/infra/k8s/helm/${NEW_RELEASE}"
 NAMESPACE="default" # 必要に応じて変更
 
 # --- メイン処理 ---
