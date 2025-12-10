@@ -171,7 +171,7 @@ EOF
             --src-port "$SRC_PORT" \
             --dst-port "$DST_PORT" \
             --order unordered \
-            --version "raidchain-1" || { echo "Failed to link path $P_NAME"; return 1; }
+            --version "cryptomeria-1" || { echo "Failed to link path $P_NAME"; return 1; }
             
         echo "✅ [Done] Path $P_NAME linked."
     }
