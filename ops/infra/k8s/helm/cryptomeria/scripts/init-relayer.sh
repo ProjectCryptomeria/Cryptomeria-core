@@ -112,7 +112,8 @@ EOF
         echo "--> Checking $CHAIN_ID at $RPC_ADDR"
         ATTEMPTS=0; MAX_ATTEMPTS=60
         until [ $ATTEMPTS -ge $MAX_ATTEMPTS ]; do
-            STATUS_RES=$(curl -s "${RPC_ADDR}/status")
+            #curlが失敗してもスクリプトを終了させず、空の結果として扱う
+            STATUS_RES=$(curl -s --connect-timeout 2 "${RPC_ADDR}/status" || echo "")
             HEIGHT=$(echo "$STATUS_RES" | jq -r '.result.sync_info.latest_block_height // "0"')
             
             # 【修正】1 -> 5 に変更 (IBC Proof生成に必要な高さを確保)

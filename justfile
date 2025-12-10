@@ -186,8 +186,29 @@ build-image target:
         echo "❌ Error: Dockerfile not found at $DOCKERFILE"
         exit 1
     fi
+
+    # --- Relayer用の事前準備 ---
+    if [ "{{target}}" == "relayer" ]; then
+        echo "   -> Copying gwcd binary to relayer context..."
+        # gwcのバイナリが存在するか確認
+        if [ ! -f "apps/gwc/dist/gwcd" ]; then
+             echo "❌ Error: gwcd binary not found at apps/gwc/dist/gwcd."
+             echo "   Please run 'just build-chain gwc' first."
+             exit 1
+        fi
+        # バイナリをビルドコンテキスト内にコピー
+        cp "apps/gwc/dist/gwcd" "$TARGET_DIR/gwcd"
+    fi
+    # --- 【追加ここまで】 ---
+
     cd "$TARGET_DIR"
     docker build -t "{{PROJECT_NAME}}/{{target}}:latest" -f "./Dockerfile" .
+    
+    # --- 事後処理 ---
+    if [ "{{target}}" == "relayer" ]; then
+        rm gwcd
+    fi
+
     echo "✅ Image built: {{PROJECT_NAME}}/{{target}}:latest"
     cd "$BASE_DIR"
 

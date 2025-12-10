@@ -29,13 +29,13 @@ chains:
 # 【修正】チェーンの種類定義を刷新
 chainTypes:
   gwc:
-    repository: raidchain/gwc
+    repository: cryptomeria/gwc
     tag: latest
   mdsc:
-    repository: raidchain/mdsc
+    repository: cryptomeria/mdsc
     tag: latest
   fdsc:
-    repository: raidchain/fdsc
+    repository: cryptomeria/fdsc
     tag: latest
 
 chain:
@@ -46,6 +46,6 @@ chain:
 # Relayer Configuration
 # =============================================================================
 relayer:
-  repository: raidchain/relayer
+  repository: cryptomeria/relayer
   tag: latest
   pullPolicy: IfNotPresent

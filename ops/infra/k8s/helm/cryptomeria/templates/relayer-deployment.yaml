@@ -22,7 +22,7 @@ spec:
         - name: relayer
           image: "{{ .Values.relayer.repository }}:{{ .Values.relayer.tag }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
-          command: ["/bin/sh", "-c", "/scripts/init-relayer.sh"]
+          command: ["/bin/sh", "-c", "echo '--- Listing /scripts ---'; ls -la /scripts/; echo '--- Checking bash ---'; ls -la /bin/bash; echo '--- Content of script ---'; cat /scripts/init-relayer.sh; echo '--- Executing ---'; /scripts/init-relayer.sh"]
           env:
             - name: HEADLESS_SERVICE_NAME
               value: {{ include "cryptomeria.fullname" . }}-chain-headless
