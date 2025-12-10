@@ -12,7 +12,7 @@ fi
 CHAIN_NAME=$1
 MODULE_NAME=$2
 CHAIN_DIR="chain/${CHAIN_NAME}"
-RELEASE_NAME=${3:-raidchain}
+RELEASE_NAME=${3:-cryptomeria}
 
 # --- メイン処理 ---
 if [ -d "$CHAIN_DIR" ]; then

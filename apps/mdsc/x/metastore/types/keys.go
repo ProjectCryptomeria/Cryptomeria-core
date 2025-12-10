@@ -15,7 +15,7 @@ const (
 	GovModuleName = "gov"
 
 	// Version defines the current version the IBC module supports
-	Version = "raidchain-1"
+	Version = "cryptomeria-1"
 
 	// PortID is the default port id that module binds to
 	PortID = "metastore"

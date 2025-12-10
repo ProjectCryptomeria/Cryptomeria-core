@@ -5,7 +5,7 @@ set -e
 CHAIN_NAMES_CSV=${CHAIN_NAMES_CSV}
 HEADLESS_SERVICE_NAME=${HEADLESS_SERVICE_NAME}
 POD_NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
-RELEASE_NAME=${RELEASE_NAME:-raidchain}
+RELEASE_NAME=${RELEASE_NAME:-cryptomeria}
 
 RELAYER_HOME="/home/relayer/.relayer"
 GWCD_HOME="/home/relayer/.gwc-client" # gwcd用のConfigディレクトリを分ける
@@ -156,24 +156,22 @@ EOF
         P_NAME=$1
         SRC_PORT=$2
         DST_PORT=$3
+
+        # --- 【追加】ランダム待機 (Jitter) ---
+        SLEEP_TIME=$(( RANDOM % 15 ))
+        echo "--> [Jitter] Sleeping ${SLEEP_TIME}s for $P_NAME..."
+        sleep $SLEEP_TIME
+        # ----------------------------------
+
         echo "--> [Start] Linking $P_NAME ($SRC_PORT <-> $DST_PORT)"
         
-        # 【修正】各ステップを retry でラップし、固定sleepを削除
-        
-        # 1. クライアント作成
-        retry rly transact clients "$P_NAME" --override || { echo "Failed to create clients for $P_NAME"; return 1; }
-        
-        # 2. コネクション作成
-        # 前のステップのブロックが含まれるのを待つ必要があるため、
-        # ここでリトライが数回走ることで、自動的に「必要最小限の待ち時間」になります。
-        retry rly transact connection "$P_NAME" || { echo "Failed to create connection for $P_NAME"; return 1; }
-        
-        # 3. チャネル作成
-        retry rly transact channel "$P_NAME" \
+        # 【修正】個別のステップをやめ、linkコマンドを一括実行する
+        # linkコマンドは成功時にconfigファイルを更新してくれるため、後続のID取得が成功します。
+        retry rly transact link "$P_NAME" \
             --src-port "$SRC_PORT" \
             --dst-port "$DST_PORT" \
             --order unordered \
-            --version "raidchain-1" || { echo "Failed to create channel for $P_NAME"; return 1; }
+            --version "raidchain-1" || { echo "Failed to link path $P_NAME"; return 1; }
             
         echo "✅ [Done] Path $P_NAME linked."
     }
@@ -209,27 +207,47 @@ EOF
     API_PORT="1317"
     REGISTRATION_ARGS=""
 
+    # 【追加】MDSCの登録引数作成 (チャネルIDを取得して追加)
     if [ -n "$MDSC_ID" ]; then
         MDSC_FULL_NAME="${RELEASE_NAME}-${MDSC_ID}-0.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local"
         MDSC_ENDPOINT="http://${MDSC_FULL_NAME}:${API_PORT}"
-        REGISTRATION_ARGS="$REGISTRATION_ARGS $MDSC_ID $MDSC_ENDPOINT"
+        
+        # リレイヤーからチャネルIDを取得
+        PATH_NAME="${PATH_PREFIX}-${GWC_ID}-to-${MDSC_ID}"
+        CHANNEL_ID=$(rly paths show "$PATH_NAME" --json | jq -r '.chains.src.channel_id')
+        
+        if [ -z "$CHANNEL_ID" ] || [ "$CHANNEL_ID" == "null" ]; then
+             echo "⚠️ Warning: Could not find channel ID for $PATH_NAME. Skipping registration."
+        else
+             # [channel-id] [chain-id] [url] の順に追加
+             REGISTRATION_ARGS="$REGISTRATION_ARGS $CHANNEL_ID $MDSC_ID $MDSC_ENDPOINT"
+        fi
     fi
 
+    # 【追加】FDSCの登録引数作成 (チャネルIDを取得して追加)
     for FDSC_ID in $FDSC_IDS; do
         FDSC_FULL_NAME="${RELEASE_NAME}-${FDSC_ID}-0.${HEADLESS_SERVICE_NAME}.${POD_NAMESPACE}.svc.cluster.local"
         FDSC_ENDPOINT="http://${FDSC_FULL_NAME}:${API_PORT}"
-        REGISTRATION_ARGS="$REGISTRATION_ARGS $FDSC_ID $FDSC_ENDPOINT"
+        
+        # リレイヤーからチャネルIDを取得
+        PATH_NAME="${PATH_PREFIX}-${GWC_ID}-to-${FDSC_ID}"
+        CHANNEL_ID=$(rly paths show "$PATH_NAME" --json | jq -r '.chains.src.channel_id')
+
+        if [ -z "$CHANNEL_ID" ] || [ "$CHANNEL_ID" == "null" ]; then
+             echo "⚠️ Warning: Could not find channel ID for $PATH_NAME. Skipping registration."
+        else
+             # [channel-id] [chain-id] [url] の順に追加
+             REGISTRATION_ARGS="$REGISTRATION_ARGS $CHANNEL_ID $FDSC_ID $FDSC_ENDPOINT"
+        fi
     done
 
     if [ -n "$REGISTRATION_ARGS" ]; then
-        # 【修正】rly chains execではなく、ローカルのgwcdを使用してTxを発行
+        # コマンド実行 (変更なし)
         TX_COMMAND="gwcd tx gateway register-storage $REGISTRATION_ARGS --from $KEY_NAME --chain-id $GWC_ID --keyring-backend test --home $GWCD_HOME --node $RPC_NODE -y --output json"
         echo "--> Submitting: $TX_COMMAND"
         
-        # 実行と結果取得
         TX_RESULT=$($TX_COMMAND 2>&1)
 
-        # 成功判定 (code: 0 が含まれているか)
         if echo "$TX_RESULT" | grep -q '"code":0'; then
             echo "✅ Storage Endpoints successfully registered."
         else
@@ -242,6 +260,9 @@ EOF
     echo "--- Waiting 5s for chain state stabilization after IBC setup ---"
     sleep 5 # 【修正】15秒から5秒に短縮（必要に応じて）
 fi
+
+exec rly chains list
+exec rly paths list
 
 # --- Relayerの起動 ---
 echo "--- Starting relayer ---"
