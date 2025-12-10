@@ -110,9 +110,24 @@ hot-reload target:
 # --- Build Tasks ---
 
 # [一括] 全てのコンポーネントをビルド (並列実行)
-[parallel]
-build-all: (build 'fdsc') (build 'mdsc') (build 'gwc') (build 'relayer')
-    @echo "✅ All components built successfully."
+# build-all コマンド
+build-all:
+    #!/usr/bin/env bash
+    set -e # エラーが発生したら即座に停止させる（安全のため）
+
+    echo "--- Building gwc, fdsc, mdsc in parallel ---"
+    # 末尾に & をつけることでバックグラウンド（並列）で実行
+    just build gwc &
+    just build fdsc &
+    just build mdsc &
+
+    # バックグラウンドのジョブが全て完了するのを待つ
+    wait
+
+    echo "--- All dependencies built. Building relayer ---"
+    # ここに到達した時点で gwc (gwcd) の生成は完了している
+    just build relayer
+    echo "✅ All components built successfully."
 
 # [一括] 全てのチェーンバイナリをビルド (並列実行)
 [parallel]

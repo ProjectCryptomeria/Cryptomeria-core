@@ -28,7 +28,7 @@ COPY --from=builder /bin/rly /usr/bin/rly
 # --- gwcdバイナリをコピー (Tx発行用) ---
 # ビルドコンテキスト(プロジェクトルート)の dist/gwcd をコピーします
 # これにより、リレイヤーコンテナが「GWCのリモコン」としての機能も持ちます
-COPY dist/gwcd /usr/bin/gwcd
+COPY ../gwc/dist/gwcd /usr/bin/gwcd
 
 # --- 非rootユーザーを作成・設定 ---
 RUN groupadd -r relayer && useradd -r -g relayer -m -d /home/relayer relayer
