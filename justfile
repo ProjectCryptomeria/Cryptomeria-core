@@ -33,10 +33,10 @@ start-system:
 	@echo "🚀 Starting System (Init -> Start -> Connect All)..."
 	@echo "1. Initializing Relayer config..."
 	@./ops/scripts/control/init-relayer.sh
-	@echo "2. Starting Relayer process..."
-	@./ops/scripts/control/start-relayer.sh
-	@echo "3. Connecting all chains..."
+	@echo "2. Connecting all chains..."
 	@./ops/scripts/control/connect-all.sh
+	@echo "3. Starting Relayer process..."
+	@./ops/scripts/control/start-relayer.sh
 	@echo "✅ System started successfully!"
 
 # [Connect New] 新規追加されたチェーンなどを個別に接続する

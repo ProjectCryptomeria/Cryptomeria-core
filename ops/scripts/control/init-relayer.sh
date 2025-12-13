@@ -8,11 +8,6 @@ HEADLESS_SERVICE="cryptomeria-chain-headless"
 DENOM="uatom"
 KEY_NAME="relayer"
 
-# 対象チェーンのリスト (配列)
-CHAINS=("gwc" "mdsc" "fdsc-0") 
-# ※必要に応じて fdsc-1, fdsc-2... を引数で増やせるように拡張可能ですが、
-#   まずはPhase2テストを通すために固定または最小構成にします。
-
 echo "=== Initializing Relayer Configuration (Control Script) ==="
 
 # 1. Relayer Podの特定
@@ -23,34 +18,52 @@ if [ -z "$RELAYER_POD" ]; then
     echo "❌ Error: Relayer pod not found in namespace '$NAMESPACE'."
     exit 1
 fi
-echo "   Target Pod: $RELAYER_POD"
+echo "    Target Pod: $RELAYER_POD"
 
-# 2. rly config init (冪等性を考慮)
-echo "--> ⚙️  Initializing config..."
-# すでに設定があるか確認
-if kubectl exec -n $NAMESPACE $RELAYER_POD -- test -f /home/relayer/.relayer/config/config.yaml; then
-    echo "   Config already exists. Skipping 'rly config init'."
-else
-    kubectl exec -n $NAMESPACE $RELAYER_POD -- rly config init --memo "Cryptomeria Relayer"
-    echo "   Initialized new config."
+# 2. 対象チェーンの動的検出 (category=chain を使用)
+echo "--> 🔍 Discovering target chains..."
+
+# app.kubernetes.io/category=chain のラベルを持つPodを全て検索し、
+# app.kubernetes.io/instance ラベル（チェーンID）を取得して重複排除・ソートする
+RAW_CHAINS=$(kubectl get pods -n $NAMESPACE \
+  -l 'app.kubernetes.io/category=chain' \
+  -o jsonpath='{range .items[*]}{.metadata.labels.app\.kubernetes\.io/instance}{"\n"}{end}' \
+  | sort | uniq)
+
+# 配列に変換
+CHAINS=($RAW_CHAINS)
+
+if [ ${#CHAINS[@]} -eq 0 ]; then
+    echo "❌ Error: No running chains found. Did you run 'just deploy'?"
+    exit 1
 fi
 
-# 3. チェーン設定の追加
+echo "    Found Chains: ${CHAINS[*]}"
+
+# 3. rly config init (冪等性を考慮)
+echo "--> ⚙️  Initializing config..."
+# 設定ファイルの存在確認
+if kubectl exec -n $NAMESPACE $RELAYER_POD -- test -f /home/relayer/.relayer/config/config.yaml; then
+    echo "    Config already exists. Skipping 'rly config init'."
+else
+    # rly config init は標準エラーに警告を出す可能性があるため、2>/dev/null で無視
+    kubectl exec -n $NAMESPACE $RELAYER_POD -- rly config init --memo "Cryptomeria Relayer" 2>/dev/null
+    echo "    Initialized new config."
+fi
+
+# 4. チェーン設定の追加
 echo "--> 🔗 Adding chain configurations..."
 
 for CHAIN_ID in "${CHAINS[@]}"; do
-    echo "   Processing: $CHAIN_ID"
+    echo "    Processing: $CHAIN_ID"
     
     # K8s内部DNS名の構築
-    # StatefulSetのPod名: [Release]-[Chain]-0
-    # Headless Service: [Release]-chain-headless
-    # FQDN: [PodName].[HeadlessService].[Namespace].svc.cluster.local
+    # 前提: Pod名は [Release]-[Instance]-0 の形式であること
     POD_HOSTNAME="${RELEASE_NAME}-${CHAIN_ID}-0"
     RPC_ADDR="http://${POD_HOSTNAME}.${HEADLESS_SERVICE}:26657"
     GRPC_ADDR="http://${POD_HOSTNAME}.${HEADLESS_SERVICE}:9090"
     
     # 設定JSONの生成
-    # EOFの展開を変数展開させるため、'EOF' ではなく EOF を使用
     CONFIG_JSON=$(cat <<EOF
 {
   "type": "cosmos",
@@ -76,14 +89,14 @@ EOF
     TMP_FILE="/tmp/${CHAIN_ID}.json"
     echo "$CONFIG_JSON" | kubectl exec -i -n $NAMESPACE $RELAYER_POD -- sh -c "cat > $TMP_FILE"
     
-    # チェーン追加コマンド実行 (すでに存在する場合はスキップするかエラーを許容する)
-    # rly chains add は上書きしないので、追加前にリストを確認するか、エラーを無視する
-    # ここでは grep で存在確認してから追加する丁寧な実装にします
-    if kubectl exec -n $NAMESPACE $RELAYER_POD -- rly chains list | grep -q "$CHAIN_ID"; then
-        echo "     -> Chain '$CHAIN_ID' already exists. Skipping."
+    # チェーン追加コマンド実行
+    # rly chains list が警告を出す可能性があるため、2>/dev/null で無視
+    if kubectl exec -n $NAMESPACE $RELAYER_POD -- rly chains list 2>/dev/null | grep -q "$CHAIN_ID"; then
+        echo "      -> Chain '$CHAIN_ID' already exists. Skipping."
     else
-        kubectl exec -n $NAMESPACE $RELAYER_POD -- rly chains add --file "$TMP_FILE"
-        echo "     -> Chain '$CHAIN_ID' added."
+        # rly chains add も標準エラーに警告を出す可能性があるため、2>/dev/null で無視
+        kubectl exec -n $NAMESPACE $RELAYER_POD -- rly chains add --file "$TMP_FILE" 2>/dev/null
+        echo "      -> Chain '$CHAIN_ID' added."
     fi
     
     # 一時ファイル削除
