@@ -1,10 +1,8 @@
-# cryptomeria/templates/chain/fdsc-statefulset.yaml
-
 {{- if .Values.fdsc }}
 {{- $count := int .Values.fdsc.replicas }}
 {{- range $i := until $count }}
 {{- $name := printf "fdsc" }}
 {{- $chain := merge (dict "name" $name "index" $i) $.Values.fdsc }}
-{{- include "cryptomeria.chain.statefulset-template" $chain }}
+{{- include "cryptomeria.chain.statefulset-template" (dict "Value" $chain "Release" $.Release "Values" $.Values "Chart" $.Chart) }}
 {{- end }}
 {{- end }}

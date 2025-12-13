@@ -16,7 +16,6 @@ INIT_FLAG="$CHAIN_HOME/init_complete_v4"
 MNEMONIC_DIR="/etc/mnemonics"
 
 # ★修正: Chain ID (インスタンス名) ベースのファイル名を参照する
-# Secret側で fdsc-0.local-admin.mnemonic のように生成されているため
 ADMIN_KEY_FILE="${MNEMONIC_DIR}/${CHAIN_ID}.local-admin.mnemonic"
 RELAYER_KEY_FILE="${MNEMONIC_DIR}/${CHAIN_ID}.relayer.mnemonic"
 
@@ -34,14 +33,26 @@ import_key_from_file() {
     
     if [ ! -f "$file" ]; then
         echo "❌ Error: Mnemonic file for '$name' not found at $file"
-        # デバッグ用にディレクトリ一覧を表示
         ls -l "$MNEMONIC_DIR"
         exit 1
     fi
 
     echo "   Importing key: $name from $file"
-    cat "$file" | $CHAIN_BINARY keys add $name --recover --keyring-backend=test --home "$CHAIN_HOME" >/dev/null 2>&1
-    $CHAIN_BINARY keys show $name -a --keyring-backend=test --home "$CHAIN_HOME"
+    
+    # 1. 鍵の復元: 標準出力と標準エラー出力を完全に破棄 (ノイズ対策)
+    cat "$file" | $CHAIN_BINARY keys add $name --recover --keyring-backend=test --home "$CHAIN_HOME" >/dev/null 2>/dev/null
+    
+    # 2. 復元直後にアドレスを JSON 形式で取得し、jq でクリーンなアドレスのみを抽出
+    local address=$($CHAIN_BINARY keys show $name --keyring-backend=test --home "$CHAIN_HOME" --output json 2>/dev/null | jq -r .address)
+    
+    if [ -z "$address" ]; then
+        echo "❌ Critical Error: Failed to retrieve clean address for key '$name'."
+        # デバッグログはノイズの原因になるため、ここでは省略
+        exit 1
+    fi
+
+    # 成功したアドレスのみを標準出力に出力して返す
+    echo "$address"
 }
 
 add_genesis_account() {
@@ -49,7 +60,7 @@ add_genesis_account() {
 }
 
 # =============================================================================
-# 🏗️ Setup Logic
+# 🏗️ Setup Logic (以下省略。変更なし)
 # =============================================================================
 
 step_init_chain() {
@@ -62,7 +73,7 @@ step_init_chain() {
 step_setup_accounts() {
     log_step "Setting up accounts from mnemonics..."
 
-    # 1. Local Admin
+    # 1. Local Admin (Validator)
     local admin_addr=$(import_key_from_file "local-admin" "$ADMIN_KEY_FILE")
     add_genesis_account "$admin_addr" "1000010000$DENOM"
 
@@ -114,7 +125,7 @@ step_configure_node() {
 }
 
 # =============================================================================
-# 🚀 Execution
+# 🚀 Execution (以下省略。変更なし)
 # =============================================================================
 
 if [ ! -f "$INIT_FLAG" ]; then

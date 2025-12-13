@@ -14,7 +14,7 @@ global:
 gwc:
   replicaCount: 1
   image:
-    repository: ghcr.io/projectcryptomeria/gwc
+    repository: cryptomeria/gwc
     tag: "latest"
     pullPolicy: IfNotPresent
   service:
@@ -32,7 +32,7 @@ gwc:
 mdsc:
   replicaCount: 1
   image:
-    repository: ghcr.io/projectcryptomeria/mdsc
+    repository: cryptomeria/mdsc
     tag: "latest"
     pullPolicy: IfNotPresent
   service:
@@ -51,7 +51,7 @@ fdsc:
   # Number of FDSC nodes (Shards)
   replicas: 1
   image:
-    repository: ghcr.io/projectcryptomeria/fdsc
+    repository: cryptomeria/fdsc
     tag: "latest"
     pullPolicy: IfNotPresent
   service:

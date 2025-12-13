@@ -1,8 +1,12 @@
 {{- define "cryptomeria.chain.statefulset-template" -}}
-{{- $chain := . -}}
+{{- $context := . -}}
+{{- $chain := .Value -}} # ★修正: 渡されたディクショナリの "Value" キーから設定オブジェクトを取得
+{{- $release := .Release -}}
 
 {{- $component := $chain.name -}}
-{{- if and (eq $chain.name "fdsc") (isset $chain "index") -}}
+
+{{- /* FDSCノード（fdsc-0, fdsc-1...）の場合、名前をインスタンスIDに置き換える */ -}}
+{{- if and (eq $chain.name "fdsc") (ge $chain.index 0) -}}
   {{- $component = printf "fdsc-%d" $chain.index -}}
 {{- end -}}
 
@@ -10,28 +14,29 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "cryptomeria.fullname" $ }}}-{{ $component }}
-  namespace: {{ $.Release.Namespace }}
+  name: {{ include "cryptomeria.fullname" $context }}-{{ $component }} # $context を使用
+  namespace: {{ $.Release.Namespace }} # $.Release はグローバルな Release オブジェクトを参照
   labels:
-    {{- include "cryptomeria.labels" $ | nindent 4 }}
+    {{- include "cryptomeria.labels" $context | nindent 4 }}
     app.kubernetes.io/component: {{ $chain.name }}
     app.kubernetes.io/category: chain
 spec:
-  serviceName: {{ include "cryptomeria.fullname" $ }}-{{ $chain.name }}-headless
+  serviceName: {{ include "cryptomeria.fullname" $context }}-{{ $chain.name }}-headless
   replicas: 1
   selector:
     matchLabels:
-      {{- include "cryptomeria.selectorLabels" $ | nindent 6 }}
+      {{- include "cryptomeria.selectorLabels" $context | nindent 6 }}
       app.kubernetes.io/component: {{ $chain.name }}
   template:
     metadata:
       labels:
-        {{- include "cryptomeria.selectorLabels" $ | nindent 8 }}
+        {{- include "cryptomeria.selectorLabels" $context | nindent 8 }}
         app.kubernetes.io/component: {{ $chain.name }}
         app.kubernetes.io/category: chain
     spec:
       containers:
         - name: chain
+          # Imageの参照は $chain から行うため問題なし
           image: "{{ $chain.image.repository }}:{{ $chain.image.tag }}"
           imagePullPolicy: {{ $chain.image.pullPolicy }}
           command: ["/bin/sh", "-c", "/scripts/entrypoint-chain.sh"]
@@ -62,11 +67,11 @@ spec:
       volumes:
         - name: scripts
           configMap:
-            name: {{ include "cryptomeria.fullname" $ }}-scripts
+            name: {{ include "cryptomeria.fullname" $context }}-scripts
             defaultMode: 0755
         - name: mnemonics
           secret:
-            secretName: {{ include "cryptomeria.fullname" $ }}-mnemonics
+            secretName: {{ include "cryptomeria.fullname" $context }}-mnemonics
   volumeClaimTemplates:
     - metadata:
         name: data
