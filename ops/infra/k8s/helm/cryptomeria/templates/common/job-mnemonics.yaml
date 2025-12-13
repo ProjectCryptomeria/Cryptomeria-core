@@ -27,7 +27,6 @@ spec:
               SECRET_FILE="/tmp/secret.yaml"
               
               echo "--- Installing dependencies for mnemonic generation ---"
-              # kubectlと@cosmjs/cryptoをインストール
               apk add --no-cache kubectl
               corepack enable
               yarn add @cosmjs/proto-signing
@@ -43,17 +42,10 @@ spec:
               type: Opaque
               stringData:
               EOF
-
-              {{- range .Values.chains }}
-              CHAIN_NAME="{{ .name }}"
-              echo "--> Generating mnemonic for ${CHAIN_NAME}..."
-              # controllerと全く同じロジックでニーモニックを生成
-              MNEMONIC=$(node -e "require('@cosmjs/proto-signing').DirectSecp256k1HdWallet.generate(24).then(wallet => console.log(wallet.mnemonic))")
               
-              cat <<EOF >> ${SECRET_FILE}
-                ${CHAIN_NAME}.mnemonic: "${MNEMONIC}"
-              EOF
-              {{- end }}
+              # 注: 以下は古い .Values.chains 構造に依存しているため、
+              # 動的生成を再度有効にする場合はここも新しい構造に合わせて修正する必要があります。
+              # 現在は enabled: false なのでスキップされます。
 
               echo "--- Applying Secret to the cluster ---"
               kubectl apply -f ${SECRET_FILE}

@@ -1,19 +1,24 @@
 # Default values for cryptomeria.
 # This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
 
-imagePullPolicy: IfNotPresent # 開発中は Always 推奨, 本番は IfNotPresent
+# --- Global Settings ---
+imagePullPolicy: IfNotPresent # 開発中は Always, 本番は IfNotPresent
 
-chains:
+# --- Chain Configuration ---
+
+# 1. Static Chains (常に1台構成のチェーン)
+staticChains:
   - name: gwc
     type: gwc
   - name: mdsc
     type: mdsc
-  - name: fdsc-0
-    type: fdsc
-  - name: fdsc-1
-    type: fdsc
 
+# 2. Scalable Chains (台数を変更可能なチェーン)
+fdsc:
+  replicas: 2 # デフォルトのレプリカ数 (just deploy N で上書き可能)
+  type: fdsc
+
+# 3. Docker Images
 chainTypes:
   gwc:
     repository: cryptomeria/gwc
@@ -25,30 +30,33 @@ chainTypes:
     repository: cryptomeria/fdsc
     tag: latest
 
+# --- Relayer Configuration ---
 relayer:
   repository: cryptomeria/relayer
   tag: latest
-  # 【追加】リレイヤーの永続化設定
   storage:
     size: 1Gi
 
-# 全チェーン共通の設定
+# --- Common Storage Settings ---
 chain:
   storage:
     size: 1Gi
 
-# 環境変数 (共通)
+# --- Environment Variables ---
 env:
   - name: CHAIN_ID_PREFIX
     value: "cryptomeria"
 
-# 💡 静的ニーモニック設定 (PoC/テスト用 - 本番環境では非推奨)
+# --- Security / Mnemonics ---
+
+# 💡 静的ニーモニック設定 (PoC/テスト用)
+# Jobによる動的生成を行わず、以下の定義済みニーモニックを使用します。
+# Bip39ニーモニック生成サイト（https://bip39.dev/ja/）
 staticMnemonics:
-  # trueに設定すると、動的なJobによるニーモニック生成をスキップし、
-  # 以下の静的な値からSecretを作成します。
-  enabled: true 
-  chains:
-    - name: fdsc
-      mnemonic: "noise glove aim involve lemon stairs step junk easily drink else attitude sauce monster weapon donkey tobacco hope build exhaust birth accuse immune ordinary"
-    - name: mdsc
-      mnemonic: "finish betray cement cram furnace turkey cattle write bean fix snake place step apple sleep embody gift scale confirm youth design seed awful essay"
+  enabled: true
+  # GWC / MDSC 用 (固定)
+  gwc: "noise glove aim involve lemon stairs step junk easily drink else attitude sauce monster weapon donkey tobacco hope build exhaust birth accuse immune ordinary"
+  mdsc: "finish betray cement cram furnace turkey cattle write bean fix snake place step apple sleep embody gift scale confirm youth design seed awful essay"
+  # FDSC 用 (全ノード共通)
+  # 全てのFDSCノードでこの同一のニーモニックが使用されます。
+  fdsc: "behave school chest file fix apple magic decide iron lazy leader crunch roof settle service correct guilt sun size rapid labor tank bridge punch"
