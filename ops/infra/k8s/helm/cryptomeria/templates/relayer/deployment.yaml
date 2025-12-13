@@ -2,51 +2,47 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "cryptomeria.fullname" . }}-relayer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cryptomeria.labels" . | nindent 4 }}
+    app.kubernetes.io/component: relayer
 spec:
-  replicas: 1
+  replicas: {{ .Values.relayer.replicaCount }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: cryptomeria
-      app.kubernetes.io/instance: rly-0
+      {{- include "cryptomeria.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: relayer
   template:
     metadata:
-      annotations:
-        checksum/config: {{ include (print $.Template.BasePath "/common/configmap.yaml") . | sha256sum }}
       labels:
-        app.kubernetes.io/name: cryptomeria
-        app.kubernetes.io/instance: rly-0
+        {{- include "cryptomeria.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: relayer
     spec:
       containers:
         - name: relayer
-          image: "{{ .Values.relayer.repository }}:{{ .Values.relayer.tag }}"
-          imagePullPolicy: {{ .Values.imagePullPolicy }}
-          # 【修正】自動初期化スクリプトを実行せず、待機モード(Sleep infinity)で起動する
-          command: ["/bin/sh", "-c", "echo '--- Relayer Standby Mode ---'; echo 'Waiting for external configuration...'; sleep infinity"]
-          env:
-            - name: HEADLESS_SERVICE_NAME
-              value: {{ include "cryptomeria.fullname" . }}-chain-headless
-            - name: CHAIN_NAMES_CSV
-              value: {{ range $i, $chain := .Values.chains }}{{ if $i }},{{ end }}{{ $chain.name }}{{ end }}
-            - name: RELEASE_NAME
-              value: {{ .Release.Name | quote }}
+          image: "{{ .Values.relayer.image.repository }}:{{ .Values.relayer.image.tag }}"
+          imagePullPolicy: {{ .Values.relayer.image.pullPolicy }}
+          # 無限ループで待機 (外部スクリプトからの制御待ち)
+          command: ["/bin/sh", "-c"]
+          args: ["while true; do sleep 30; done;"]
           volumeMounts:
-            # 【修正】永続ボリュームのマウントを追加
-            - name: relayer-data
+            - name: data
               mountPath: /home/relayer/.relayer
-            - name: scripts
-              mountPath: /scripts
+            - name: config
+              mountPath: /home/relayer/.relayer/config
+            # ▼ 追加: ニーモニックSecretを読み取り専用でマウント
             - name: mnemonics
-              mountPath: /etc/relayer/mnemonics
+              mountPath: /etc/mnemonics
+              readOnly: true
+          resources:
+            {{- toYaml .Values.relayer.resources | nindent 12 }}
       volumes:
-        - name: relayer-data
+        - name: data
           persistentVolumeClaim:
             claimName: {{ include "cryptomeria.fullname" . }}-relayer-data
-        - name: scripts
-          configMap:
-            name: {{ include "cryptomeria.fullname" . }}-scripts
-            defaultMode: 0755
+        - name: config
+          emptyDir: {}
+        # ▼ 追加: Secret定義
         - name: mnemonics
           secret:
             secretName: {{ include "cryptomeria.fullname" . }}-mnemonics

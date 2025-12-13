@@ -1,0 +1,6 @@
+# cryptomeria/templates/chain/gwc-statefulset.yaml
+
+{{- if .Values.gwc }}
+{{- $chain := merge (dict "name" "gwc") .Values.gwc }}
+{{- include "cryptomeria.chain.statefulset-template" $chain }}
+{{- end }}

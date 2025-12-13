@@ -50,7 +50,7 @@ connect chain:
 # [復活: All-in-One] クリーンアップからデプロイ、起動まで一気に行う（開発リセット用）
 all-in-one chains=DEFAULT_CHAINS:
 	@echo "🔥 Running All-in-One Sequence..."
-	@just clean-k8s
+	@just clean
 	@just dev::build-all
 	@just deploy {{chains}}
 	@just start-system
@@ -58,7 +58,7 @@ all-in-one chains=DEFAULT_CHAINS:
 
 # [復活: Deploy Clean] データだけ消して再デプロイ（高速リセット）
 deploy-clean chains=DEFAULT_CHAINS:
-	@just undeploy
+	@just clean
 	@just deploy {{chains}}
 	@echo "✅ Redeployment complete (Namespace preserved)!"
 
@@ -87,6 +87,10 @@ status:
 # [Monitor] システムの健康状態を診断
 monitor:
 	@./ops/scripts/util/monitor-health.sh
+
+# [Accounts] 全チェーンのアカウントと残高一覧を表示
+accounts:
+	@./ops/scripts/util/list-accounts.sh
 
 # [Faucet] 任意のアドレスにミリオネアから送金
 faucet address amount="10000000uatom":

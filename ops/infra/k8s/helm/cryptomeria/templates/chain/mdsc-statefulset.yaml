@@ -1,0 +1,6 @@
+# cryptomeria/templates/chain/mdsc-statefulset.yaml
+
+{{- if .Values.mdsc }}
+{{- $chain := merge (dict "name" "mdsc") .Values.mdsc }}
+{{- include "cryptomeria.chain.statefulset-template" $chain }}
+{{- end }}

@@ -1,118 +1,130 @@
 #!/usr/bin/env bash
 set -e
 
-# --- 環境変数と設定 ---
-CHAIN_ID=${CHAIN_INSTANCE_NAME}
-CHAIN_APP_NAME=${CHAIN_APP_NAME:-datachain}
+# =============================================================================
+# 🛠️ Configuration
+# =============================================================================
+CHAIN_ID=${CHAIN_INSTANCE_NAME}      # e.g., fdsc-0, gwc
+CHAIN_APP_NAME=${CHAIN_APP_NAME}     # e.g., fdsc, gwc
 DENOM="uatom"
 USER_HOME="/home/$CHAIN_APP_NAME"
 CHAIN_HOME="$USER_HOME/.$CHAIN_APP_NAME"
 CHAIN_BINARY="${CHAIN_APP_NAME}d"
-MNEMONIC_FILE="/etc/mnemonics/${CHAIN_INSTANCE_NAME}.mnemonic"
+INIT_FLAG="$CHAIN_HOME/init_complete_v4"
 
-# --- 固定アカウント定義 (Phase 1 Requirement) ---
-MILLIONAIRE_MNEMONIC="veteran what limit claw lizard grab echo pull sunset rain charge honey grain fiction sister pink category car sugar vital special obvious opinion burden"
-LOCAL_ADMIN_MNEMONIC="absent error journey slot broccoli cross beef silver disorder air knife this oil camera response indicate pond inmate tunnel ostrich orbit change page bronze"
+# ニーモニックファイルのパス定義
+MNEMONIC_DIR="/etc/mnemonics"
 
-# --- 初期化完了フラグ ---
-# これが存在しない場合、初期化が不完全とみなしてやり直す
-INIT_FLAG="$CHAIN_HOME/init_complete_v1"
+# ★修正: Chain ID (インスタンス名) ベースのファイル名を参照する
+# Secret側で fdsc-0.local-admin.mnemonic のように生成されているため
+ADMIN_KEY_FILE="${MNEMONIC_DIR}/${CHAIN_ID}.local-admin.mnemonic"
+RELAYER_KEY_FILE="${MNEMONIC_DIR}/${CHAIN_ID}.relayer.mnemonic"
 
-# --- 初期化処理 ---
-if [ ! -f "$INIT_FLAG" ]; then
-    echo "--- ⚠️ No complete initialization found. Starting fresh setup for $CHAIN_ID... ---"
+# GWCのみ: MillionaireはChain ID (gwc) に紐づく
+MILLIONAIRE_KEY_FILE="${MNEMONIC_DIR}/${CHAIN_ID}.millionaire.mnemonic"
+
+# =============================================================================
+# 🧩 Helper Functions
+# =============================================================================
+log_step() { echo "--> $1"; }
+
+import_key_from_file() {
+    local name=$1
+    local file=$2
     
-    # 既存の不完全なデータを削除 (重要)
+    if [ ! -f "$file" ]; then
+        echo "❌ Error: Mnemonic file for '$name' not found at $file"
+        # デバッグ用にディレクトリ一覧を表示
+        ls -l "$MNEMONIC_DIR"
+        exit 1
+    fi
+
+    echo "   Importing key: $name from $file"
+    cat "$file" | $CHAIN_BINARY keys add $name --recover --keyring-backend=test --home "$CHAIN_HOME" >/dev/null 2>&1
+    $CHAIN_BINARY keys show $name -a --keyring-backend=test --home "$CHAIN_HOME"
+}
+
+add_genesis_account() {
+    $CHAIN_BINARY genesis add-genesis-account "$1" "$2" --home "$CHAIN_HOME"
+}
+
+# =============================================================================
+# 🏗️ Setup Logic
+# =============================================================================
+
+step_init_chain() {
+    log_step "Initializing chain: $CHAIN_ID"
     rm -rf "$CHAIN_HOME/config" "$CHAIN_HOME/data" "$CHAIN_HOME/keyring-test"
     mkdir -p "$CHAIN_HOME"
+    $CHAIN_BINARY init "$CHAIN_ID" --chain-id "$CHAIN_ID" --home "$CHAIN_HOME" >/dev/null 2>&1
+}
 
-    echo "--- Initializing chain: $CHAIN_ID (type: $CHAIN_APP_NAME) ---"
-    $CHAIN_BINARY init "$CHAIN_ID" --chain-id "$CHAIN_ID" --home "$CHAIN_HOME"
+step_setup_accounts() {
+    log_step "Setting up accounts from mnemonics..."
 
-    # 1. 鍵の復元
-    SHARED_MNEMONIC=$(cat "$MNEMONIC_FILE")
-    
-    echo "$SHARED_MNEMONIC" | $CHAIN_BINARY keys add validator --recover --keyring-backend=test --home "$CHAIN_HOME" --hd-path "m/44'/118'/0'/0/0"
-    echo "$SHARED_MNEMONIC" | $CHAIN_BINARY keys add relayer --recover --keyring-backend=test --home "$CHAIN_HOME" --hd-path "m/44'/118'/0'/0/1"
-    echo "$SHARED_MNEMONIC" | $CHAIN_BINARY keys add creator --recover --keyring-backend=test --home "$CHAIN_HOME" --hd-path "m/44'/118'/0'/0/2"
+    # 1. Local Admin
+    local admin_addr=$(import_key_from_file "local-admin" "$ADMIN_KEY_FILE")
+    add_genesis_account "$admin_addr" "1000010000$DENOM"
 
-    VALIDATOR_ADDR=$($CHAIN_BINARY keys show validator -a --keyring-backend=test --home "$CHAIN_HOME")
-    RELAYER_ADDR=$($CHAIN_BINARY keys show relayer -a --keyring-backend=test --home "$CHAIN_HOME")
-    CREATOR_ADDR=$($CHAIN_BINARY keys show creator -a --keyring-backend=test --home "$CHAIN_HOME")
+    # 2. Relayer
+    local relayer_addr=$(import_key_from_file "relayer" "$RELAYER_KEY_FILE")
+    add_genesis_account "$relayer_addr" "1000000$DENOM"
 
-    # 2. Millionaireアカウントの追加
-    echo "--- Importing Millionaire Account ---"
-    echo "$MILLIONAIRE_MNEMONIC" | $CHAIN_BINARY keys add millionaire --recover --keyring-backend=test --home "$CHAIN_HOME"
-    MILLIONAIRE_ADDR=$($CHAIN_BINARY keys show millionaire -a --keyring-backend=test --home "$CHAIN_HOME")
-    
-    # 3. Local Adminアカウントの追加
-    echo "--- Importing Local Admin Account ---"
-    echo "$LOCAL_ADMIN_MNEMONIC" | $CHAIN_BINARY keys add local-admin --recover --keyring-backend=test --home "$CHAIN_HOME"
-    LOCAL_ADMIN_ADDR=$($CHAIN_BINARY keys show local-admin -a --keyring-backend=test --home "$CHAIN_HOME")
+    # 3. Millionaire (GWC Only)
+    if [ "$CHAIN_APP_NAME" == "gwc" ]; then
+        local millionaire_addr=$(import_key_from_file "millionaire" "$MILLIONAIRE_KEY_FILE")
+        echo "   💰 Allocating 100B uatom to Millionaire..."
+        add_genesis_account "$millionaire_addr" "100000000000$DENOM"
+    fi
+}
 
-    # 4. Genesisへのアカウント追加
-    $CHAIN_BINARY genesis add-genesis-account "$VALIDATOR_ADDR" 1000000000000"$DENOM" --home "$CHAIN_HOME"
-    $CHAIN_BINARY genesis add-genesis-account "$MILLIONAIRE_ADDR" 100000000000"$DENOM" --home "$CHAIN_HOME"
-    $CHAIN_BINARY genesis add-genesis-account "$LOCAL_ADMIN_ADDR" 10000"$DENOM" --home "$CHAIN_HOME"
-    $CHAIN_BINARY genesis add-genesis-account "$RELAYER_ADDR" 100000000000"$DENOM" --home "$CHAIN_HOME"
-    $CHAIN_BINARY genesis add-genesis-account "$CREATOR_ADDR" 100000000000"$DENOM" --home "$CHAIN_HOME"
-
-    # Gentxの生成と収集 (ここが失敗すると再起動時にループしていた)
-    echo "--- Generating Gentx ---"
-    $CHAIN_BINARY genesis gentx validator 1000000000"$DENOM" \
+step_create_validator() {
+    log_step "Generating Gentx (Validator: local-admin)..."
+    $CHAIN_BINARY genesis gentx local-admin "1000000000$DENOM" \
         --keyring-backend=test \
         --chain-id "$CHAIN_ID" \
-        --home "$CHAIN_HOME" 2>&1
+        --home "$CHAIN_HOME" 2>&1 >/dev/null
 
-    echo "--- Collecting Gentxs ---"
-    $CHAIN_BINARY genesis collect-gentxs --home "$CHAIN_HOME" 2>&1
-
-    echo "--- Validating genesis file ---"
+    log_step "Collecting Gentxs..."
+    $CHAIN_BINARY genesis collect-gentxs --home "$CHAIN_HOME" 2>&1 >/dev/null
     $CHAIN_BINARY genesis validate --home "$CHAIN_HOME"
+}
 
-    # 設定ファイルの書き換え
-    CONFIG_TOML="$CHAIN_HOME/config/config.toml"
-    APP_TOML="$CHAIN_HOME/config/app.toml"
+step_configure_node() {
+    log_step "Configuring node (sed)..."
+    local config_toml="$CHAIN_HOME/config/config.toml"
+    local app_toml="$CHAIN_HOME/config/app.toml"
     
-    sed -i 's/laddr = "tcp:\/\/127.0.0.1:26657"/laddr = "tcp:\/\/0.0.0.0:26657"/' "$CONFIG_TOML"
-    sed -i 's/cors_allowed_origins = \[\]/cors_allowed_origins = \["\*"\]/' "$CONFIG_TOML"
-    sed -i 's/^max_body_bytes = .*/max_body_bytes = 10737418240/' "$CONFIG_TOML"
-    sed -i 's/^max_tx_bytes = .*/max_tx_bytes = 10737418240/' "$CONFIG_TOML"
-    sed -i 's/^size = .*/size = 50000/' "$CONFIG_TOML"
-    sed -i 's/^max_txs_bytes = .*/max_txs_bytes = 10737418240/' "$CONFIG_TOML"
-    sed -i 's/^timeout_broadcast_tx_commit = .*/timeout_broadcast_tx_commit = "60s"/' "$CONFIG_TOML"
+    sed -i 's/laddr = "tcp:\/\/127.0.0.1:26657"/laddr = "tcp:\/\/0.0.0.0:26657"/' "$config_toml"
+    sed -i 's/cors_allowed_origins = \[\]/cors_allowed_origins = \["\*"\]/' "$config_toml"
+    sed -i 's/^timeout_broadcast_tx_commit = .*/timeout_broadcast_tx_commit = "60s"/' "$config_toml"
+    
+    sed -i '/\[api\]/,/\[/{s/enable = false/enable = true/}' "$app_toml"
+    sed -i '/\[api\]/,/\[/{s/address = "tcp:\/\/localhost:1317"/address = "tcp:\/\/0.0.0.0:1317"/}' "$app_toml"
+    sed -i '/\[grpc\]/,/\[/{s/enable = false/enable = true/}' "$app_toml"
+    sed -i '/\[grpc-web\]/,/\[/{s/enable = false/enable = true/}' "$app_toml"
+    
+    # Large TX support
+    sed -i 's/^max_body_bytes = .*/max_body_bytes = 10737418240/' "$config_toml"
+    sed -i 's/^max_tx_bytes = .*/max_tx_bytes = 10737418240/' "$config_toml"
+    sed -i 's/^max_txs_bytes = .*/max_txs_bytes = 10737418240/' "$config_toml"
+    sed -i '/\[api\]/a max-request-body-size = 10737418240' "$app_toml"
+    sed -i 's/^max-recv-msg-size = .*/max-recv-msg-size = "10737418240"/' "$app_toml"
+    sed -i 's/^max-send-msg-size = .*/max-send-msg-size = "10737418240"/' "$app_toml"
+}
 
-    sed -i '/\[api\]/,/\[/{s/enable = false/enable = true/}' "$APP_TOML"
-    sed -i '/\[api\]/,/\[/{s/address = "tcp:\/\/localhost:1317"/address = "tcp:\/\/0.0.0.0:1317"/}' "$APP_TOML"
-    sed -i '/\[api\]/a max-request-body-size = 10737418240' "$APP_TOML"
-    sed -i '/\[grpc\]/,/\[/{s/enable = false/enable = true/}' "$APP_TOML"
-    sed -i 's/^max-recv-msg-size = .*/max-recv-msg-size = "10737418240"/' "$APP_TOML"
-    sed -i 's/^max-send-msg-size = .*/max-send-msg-size = "10737418240"/' "$APP_TOML"
-    sed -i '/\[grpc-web\]/,/\[/{s/enable = false/enable = true/}' "$APP_TOML"
+# =============================================================================
+# 🚀 Execution
+# =============================================================================
 
-    # 全て成功したらフラグを作成
+if [ ! -f "$INIT_FLAG" ]; then
+    step_init_chain
+    step_setup_accounts
+    step_create_validator
+    step_configure_node
     touch "$INIT_FLAG"
-    echo "--- Initialization complete for $CHAIN_ID ---"
+    echo "--- ✅ Initialization complete ---"
 fi
 
-# --- ノードの起動 ---
-START_CMD="$CHAIN_BINARY start --home $CHAIN_HOME --minimum-gas-prices=0$DENOM --log_level error --log_format json"
-
-if [ "$DEV_MODE" = "true" ]; then
-    echo "=================================================="
-    echo "🚧 DEVELOPMENT MODE: Hot Reload Enabled"
-    echo "=================================================="
-    while true; do
-        echo "--> 🚀 Starting node for $CHAIN_ID..."
-        $START_CMD &
-        PID=$!
-        wait $PID || true
-        EXIT_CODE=$?
-        echo "--> ⚠️  Node process exited with code $EXIT_CODE."
-        echo "--> 🔄 Restarting in 1 second..."
-        sleep 1
-    done
-else
-    echo "--- Starting node for $CHAIN_ID (Production) ---"
-    exec $START_CMD
-fi
+echo "--- Starting node for $CHAIN_ID ---"
+exec $CHAIN_BINARY start --home $CHAIN_HOME --minimum-gas-prices=0$DENOM --log_level error --log_format json

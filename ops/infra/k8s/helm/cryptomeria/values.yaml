@@ -1,62 +1,103 @@
-# Default values for cryptomeria.
-# This is a YAML-formatted file.
+# =============================================================================
+# Global Configurations
+# =============================================================================
+global:
+  namespace: cryptomeria
 
-# --- Global Settings ---
-imagePullPolicy: IfNotPresent # 開発中は Always, 本番は IfNotPresent
+# =============================================================================
+# Component Configurations
+# =============================================================================
 
-# --- Chain Configuration ---
+# -----------------------------------------------------------------------------
+# 1. Gateway Chain (GWC)
+# -----------------------------------------------------------------------------
+gwc:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/projectcryptomeria/gwc
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    rpcPort: 26657
+    apiPort: 1317
+    grpcPort: 9090
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources: {}
 
-# 1. Static Chains (常に1台構成のチェーン)
-staticChains:
-  - name: gwc
-    type: gwc
-  - name: mdsc
-    type: mdsc
+# -----------------------------------------------------------------------------
+# 2. Metadata Store Chain (MDSC)
+# -----------------------------------------------------------------------------
+mdsc:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/projectcryptomeria/mdsc
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    rpcPort: 26657
+    apiPort: 1317
+    grpcPort: 9090
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources: {}
 
-# 2. Scalable Chains (台数を変更可能なチェーン)
+# -----------------------------------------------------------------------------
+# 3. File Data Store Chain (FDSC) - Scalable
+# -----------------------------------------------------------------------------
 fdsc:
-  replicas: 2 # デフォルトのレプリカ数 (just deploy N で上書き可能)
-  type: fdsc
+  # Number of FDSC nodes (Shards)
+  replicas: 1
+  image:
+    repository: ghcr.io/projectcryptomeria/fdsc
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    rpcPort: 26657
+    apiPort: 1317
+    grpcPort: 9090
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources: {}
 
-# 3. Docker Images
-chainTypes:
-  gwc:
-    repository: cryptomeria/gwc
-    tag: latest
-  mdsc:
-    repository: cryptomeria/mdsc
-    tag: latest
-  fdsc:
-    repository: cryptomeria/fdsc
-    tag: latest
-
-# --- Relayer Configuration ---
+# -----------------------------------------------------------------------------
+# 4. IBC Relayer (Go Relayer)
+# -----------------------------------------------------------------------------
 relayer:
-  repository: cryptomeria/relayer
-  tag: latest
-  storage:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/cosmos/relayer
+    tag: "v2.5.2"
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: true
     size: 1Gi
+  resources: {}
 
-# --- Common Storage Settings ---
-chain:
-  storage:
-    size: 1Gi
-
-# --- Environment Variables ---
-env:
-  - name: CHAIN_ID_PREFIX
-    value: "cryptomeria"
-
-# --- Security / Mnemonics ---
+# =============================================================================
+# Network / Security
+# =============================================================================
 
 # 💡 静的ニーモニック設定 (PoC/テスト用)
-# Jobによる動的生成を行わず、以下の定義済みニーモニックを使用します。
-# Bip39ニーモニック生成サイト（https://bip39.dev/ja/）
+# 本番環境では false にし、External Secret Operator等を使用することを推奨
 staticMnemonics:
   enabled: true
-  # GWC / MDSC 用 (固定)
-  gwc: "noise glove aim involve lemon stairs step junk easily drink else attitude sauce monster weapon donkey tobacco hope build exhaust birth accuse immune ordinary"
-  mdsc: "finish betray cement cram furnace turkey cattle write bean fix snake place step apple sleep embody gift scale confirm youth design seed awful essay"
-  # FDSC 用 (全ノード共通)
-  # 全てのFDSCノードでこの同一のニーモニックが使用されます。
-  fdsc: "behave school chest file fix apple magic decide iron lazy leader crunch roof settle service correct guilt sun size rapid labor tank bridge punch"
+  
+  # --- GWC: 全役役揃い踏み ---
+  gwc:
+    localAdmin: "noise glove aim involve lemon stairs step junk easily drink else attitude sauce monster weapon donkey tobacco hope build exhaust birth accuse immune ordinary"
+    relayer: "veteran what limit claw lizard grab echo pull sunset rain charge honey grain fiction sister pink category car sugar vital special obvious opinion burden"
+    millionaire: "absent error journey slot broccoli cross beef silver disorder air knife this oil camera response indicate pond inmate tunnel ostrich orbit change page bronze"
+
+  # --- MDSC: AdminとRelayer ---
+  mdsc:
+    localAdmin: "finish betray cement cram furnace turkey cattle write bean fix snake place step apple sleep embody gift scale confirm youth design seed awful essay"
+    relayer: "behave school chest file fix apple magic decide iron lazy leader crunch roof settle service correct guilt sun size rapid labor tank bridge punch"
+
+  # --- FDSC: 全ノード共通設定 ([決定事項 1-2]準拠) ---
+  fdsc:
+    localAdmin: "market outdoor spec verify ocean convince select near bachelor bracket verify business"
+    relayer: "identify inspire poverty urge wave churn electric shift friend craft warm blur"

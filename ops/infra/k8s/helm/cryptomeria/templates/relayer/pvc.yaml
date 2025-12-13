@@ -1,16 +1,17 @@
+{{- if .Values.relayer.persistence.enabled }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: {{ include "cryptomeria.fullname" . }}-relayer-data
+  namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/name: cryptomeria
+    {{- include "cryptomeria.labels" . | nindent 4 }}
     app.kubernetes.io/component: relayer
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: {{ .Values.relayer.storage.size }}
-  {{- if .Values.relayer.storage.className }}
-  storageClassName: {{ .Values.relayer.storage.className }}
-  {{- end }}
+      # ▼ 修正: .Values.relayer.storage.size -> .Values.relayer.persistence.size
+      storage: {{ .Values.relayer.persistence.size }}
+{{- end }}
