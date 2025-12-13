@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "cryptomeria.fullname" . }}-relayer-data
+  labels:
+    app.kubernetes.io/name: cryptomeria
+    app.kubernetes.io/component: relayer
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.relayer.storage.size }}
+  {{- if .Values.relayer.storage.className }}
+  storageClassName: {{ .Values.relayer.storage.className }}
+  {{- end }}

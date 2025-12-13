@@ -1,51 +1,46 @@
-# =============================================================================
-# Global Settings
-# =============================================================================
-imagePullPolicy: IfNotPresent
-env:
-  - name: DEV_MODE
-    value: "true"
-# =============================================================================
-# Service Configuration
-# =============================================================================
-service:
-  external:
-    enabled: true
-    startPortRpc: 30057
-    startPortApi: 30067
+# Default values for cryptomeria.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
 
-# =============================================================================
-# Chain Node Configuration
-# =============================================================================
-# generate-values.sh で上書きされますが、デフォルト値としても新しい構成にしておきます
+imagePullPolicy: IfNotPresent # 開発中は Always 推奨, 本番は IfNotPresent
+
 chains:
   - name: gwc
-    type: gwc
+    type: gateway
   - name: mdsc
-    type: mdsc
+    type: metastore
+  # FDSCの数はコマンドライン引数などで動的に増やす想定
+  # generate-values.sh で上書きされる
   - name: fdsc-0
-    type: fdsc
+    type: datastore
+  - name: fdsc-1
+    type: datastore
 
-# 【修正】チェーンの種類定義を刷新
 chainTypes:
-  gwc:
+  gateway:
     repository: cryptomeria/gwc
     tag: latest
-  mdsc:
+  metastore:
     repository: cryptomeria/mdsc
     tag: latest
-  fdsc:
+  datastore:
     repository: cryptomeria/fdsc
     tag: latest
 
-chain:
-  storage:
-    size: 10Gi
-
-# =============================================================================
-# Relayer Configuration
-# =============================================================================
 relayer:
   repository: cryptomeria/relayer
   tag: latest
-  pullPolicy: IfNotPresent
+  # 【追加】リレイヤーの永続化設定
+  storage:
+    size: 1Gi
+
+# 全チェーン共通の設定
+chain:
+  storage:
+    size: 1Gi
+    className: standard
+
+# 環境変数 (共通)
+env:
+  - name: CHAIN_ID_PREFIX
+    value: "cryptomeria"

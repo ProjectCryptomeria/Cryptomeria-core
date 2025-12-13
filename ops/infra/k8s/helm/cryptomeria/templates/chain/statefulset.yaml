@@ -25,7 +25,7 @@ spec:
         - name: chain
           {{- $chainType := index $.Values.chainTypes .type }}
           image: "{{ $chainType.repository }}:{{ $chainType.tag }}"
-          imagePullPolicy: Never
+          imagePullPolicy: {{ $.Values.imagePullPolicy}}
           command: ["/bin/sh", "-c", "/scripts/entrypoint-chain.sh"]
           env:
             - name: CHAIN_APP_NAME

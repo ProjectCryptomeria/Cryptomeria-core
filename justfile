@@ -313,6 +313,9 @@ upgrade target="all" chains=DEFAULT_CHAINS:
 
     echo "✅ Upgrade complete!"
 
+template:
+    @helm template {{PROJECT_NAME}} ops/infra/k8s/helm/{{PROJECT_NAME}} -n {{PROJECT_NAME}}
+
 # --- Development Tasks ---
 [parallel]
 scaffold-all: (scaffold 'fdsc') (scaffold 'mdsc') (scaffold 'gwc')

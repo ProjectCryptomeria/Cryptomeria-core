@@ -12,7 +12,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/config: {{ include (print $.Template.BasePath "/common/configmap.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/name: cryptomeria
         app.kubernetes.io/instance: rly-0
@@ -22,21 +22,27 @@ spec:
         - name: relayer
           image: "{{ .Values.relayer.repository }}:{{ .Values.relayer.tag }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
-          command: ["/bin/sh", "-c", "echo '--- Listing /scripts ---'; ls -la /scripts/; echo '--- Checking bash ---'; ls -la /bin/bash; echo '--- Content of script ---'; cat /scripts/init-relayer.sh; echo '--- Executing ---'; /scripts/init-relayer.sh"]
+          # 【修正】自動初期化スクリプトを実行せず、待機モード(Sleep infinity)で起動する
+          command: ["/bin/sh", "-c", "echo '--- Relayer Standby Mode ---'; echo 'Waiting for external configuration...'; sleep infinity"]
           env:
             - name: HEADLESS_SERVICE_NAME
               value: {{ include "cryptomeria.fullname" . }}-chain-headless
             - name: CHAIN_NAMES_CSV
-              # "data-0,data-1,..." のようなCSV文字列を動的に生成
               value: {{ range $i, $chain := .Values.chains }}{{ if $i }},{{ end }}{{ $chain.name }}{{ end }}
             - name: RELEASE_NAME
               value: {{ .Release.Name | quote }}
           volumeMounts:
+            # 【修正】永続ボリュームのマウントを追加
+            - name: relayer-data
+              mountPath: /home/relayer/.relayer
             - name: scripts
               mountPath: /scripts
             - name: mnemonics
               mountPath: /etc/relayer/mnemonics
       volumes:
+        - name: relayer-data
+          persistentVolumeClaim:
+            claimName: {{ include "cryptomeria.fullname" . }}-relayer-data
         - name: scripts
           configMap:
             name: {{ include "cryptomeria.fullname" . }}-scripts
