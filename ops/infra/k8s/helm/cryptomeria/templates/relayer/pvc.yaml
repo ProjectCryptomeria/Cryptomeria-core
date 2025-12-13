@@ -12,6 +12,5 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      # ▼ 修正: .Values.relayer.storage.size -> .Values.relayer.persistence.size
       storage: {{ .Values.relayer.persistence.size }}
 {{- end }}

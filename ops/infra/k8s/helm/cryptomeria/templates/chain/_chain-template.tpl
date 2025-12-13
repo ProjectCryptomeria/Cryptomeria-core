@@ -7,7 +7,7 @@
 
 {{- /* FDSCノード（fdsc-0, fdsc-1...）の場合、名前をインスタンスIDに置き換える */ -}}
 {{- if and (eq $chain.name "fdsc") (ge $chain.index 0) -}}
-  {{- $component = printf "fdsc-%d" $chain.index -}}
+{{- $component = printf "fdsc-%d" $chain.index -}}
 {{- end -}}
 
 ---

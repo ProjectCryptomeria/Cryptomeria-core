@@ -107,7 +107,7 @@ step_setup_accounts() {
         echo "❌ Failed to setup local-admin account. Exiting."
         exit 1
     fi
-    add_genesis_account "$admin_addr" "100000000000000$DENOM"
+    add_genesis_account "$admin_addr" "1000000000000$DENOM"
 
     # 2. Relayer
     local relayer_addr=$(import_key_from_file "relayer" "$RELAYER_KEY_FILE")
@@ -115,7 +115,7 @@ step_setup_accounts() {
         echo "❌ Failed to setup relayer account. Exiting."
         exit 1
     fi
-    add_genesis_account "$relayer_addr" "10000000000$DENOM"
+    add_genesis_account "$relayer_addr" "100000$DENOM"
 
     # # 3. Millionaire (GWC Only)
     # if [ "$CHAIN_APP_NAME" == "gwc" ]; then
@@ -131,7 +131,7 @@ step_setup_accounts() {
 
 step_create_validator() {
     log_step "Generating Gentx (Validator: local-admin)..."
-    $CHAIN_BINARY genesis gentx local-admin "100000$DENOM" \
+    $CHAIN_BINARY genesis gentx local-admin "10000000$DENOM" \
         --keyring-backend=test \
         --chain-id "$CHAIN_ID" \
         --home "$CHAIN_HOME" 2>&1 >/dev/null
