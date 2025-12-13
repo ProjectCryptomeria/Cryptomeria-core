@@ -15,7 +15,7 @@ INIT_FLAG="$CHAIN_HOME/init_complete_v4"
 # ニーモニックファイルのパス定義
 MNEMONIC_DIR="/etc/mnemonics"
 
-# ★修正: Chain ID (インスタンス名) ベースのファイル名を参照する
+# Chain ID (インスタンス名) ベースのファイル名を参照する
 ADMIN_KEY_FILE="${MNEMONIC_DIR}/${CHAIN_ID}.local-admin.mnemonic"
 RELAYER_KEY_FILE="${MNEMONIC_DIR}/${CHAIN_ID}.relayer.mnemonic"
 
@@ -31,36 +31,63 @@ import_key_from_file() {
     local name=$1
     local file=$2
     
+    # ログは標準エラー出力へ (変数に入れないため)
     if [ ! -f "$file" ]; then
-        echo "❌ Error: Mnemonic file for '$name' not found at $file"
-        ls -l "$MNEMONIC_DIR"
-        exit 1
+        echo "❌ Error: Mnemonic file for '$name' not found at $file" >&2
+        ls -l "$MNEMONIC_DIR" >&2
+        return 1
     fi
 
-    echo "   Importing key: $name from $file"
+    echo "   Importing key: $name from $file" >&2
     
-    # 1. 鍵の復元: 標準出力と標準エラー出力を完全に破棄 (ノイズ対策)
-    cat "$file" | $CHAIN_BINARY keys add $name --recover --keyring-backend=test --home "$CHAIN_HOME" >/dev/null 2>/dev/null
+    # 一時ファイルを使ってログをキャプチャ (成功時は捨て、失敗時は表示)
+    local tmp_log=$(mktemp)
+
+    # 1. 鍵の復元
+    if ! cat "$file" | $CHAIN_BINARY keys add $name --recover --keyring-backend=test --home "$CHAIN_HOME" >"$tmp_log" 2>&1; then
+        echo "❌ Critical Error: Failed to add key '$name'." >&2
+        cat "$tmp_log" >&2
+        rm -f "$tmp_log"
+        return 1
+    fi
     
-    # 2. 復元直後にアドレスを JSON 形式で取得し、jq でクリーンなアドレスのみを抽出
-    local address=$($CHAIN_BINARY keys show $name --keyring-backend=test --home "$CHAIN_HOME" --output json 2>/dev/null | jq -r .address)
-    
-    if [ -z "$address" ]; then
-        echo "❌ Critical Error: Failed to retrieve clean address for key '$name'."
-        # デバッグログはノイズの原因になるため、ここでは省略
-        exit 1
+    # 2. アドレス取得
+    # -a フラグは使わず、--output json のみを使用
+    if ! $CHAIN_BINARY keys show $name --keyring-backend=test --home "$CHAIN_HOME" --output json >"$tmp_log" 2>&1; then
+        echo "❌ Critical Error: Failed to show key '$name'." >&2
+        cat "$tmp_log" >&2
+        rm -f "$tmp_log"
+        return 1
     fi
 
-    # 成功したアドレスのみを標準出力に出力して返す
+    # jq でパース
+    local address=$(cat "$tmp_log" | jq -r .address)
+    rm -f "$tmp_log"
+
+    if [ -z "$address" ] || [ "$address" == "null" ]; then
+        echo "❌ Critical Error: Parsed address is empty or null for '$name'." >&2
+        return 1
+    fi
+
+    # 成功したアドレスのみを標準出力に返す
     echo "$address"
+    return 0
 }
 
 add_genesis_account() {
-    $CHAIN_BINARY genesis add-genesis-account "$1" "$2" --home "$CHAIN_HOME"
+    local addr=$1
+    local amount=$2
+    
+    if [ -z "$addr" ]; then
+        echo "❌ Error: Attempted to add genesis account with empty address" >&2
+        exit 1
+    fi
+
+    $CHAIN_BINARY genesis add-genesis-account "$addr" "$amount" --home "$CHAIN_HOME"
 }
 
 # =============================================================================
-# 🏗️ Setup Logic (以下省略。変更なし)
+# 🏗️ Setup Logic
 # =============================================================================
 
 step_init_chain() {
@@ -75,15 +102,28 @@ step_setup_accounts() {
 
     # 1. Local Admin (Validator)
     local admin_addr=$(import_key_from_file "local-admin" "$ADMIN_KEY_FILE")
+    # ★重要: サブシェルでのエラーを検知してメインスクリプトを止める
+    if [ -z "$admin_addr" ]; then
+        echo "❌ Failed to setup local-admin account. Exiting."
+        exit 1
+    fi
     add_genesis_account "$admin_addr" "1000010000$DENOM"
 
     # 2. Relayer
     local relayer_addr=$(import_key_from_file "relayer" "$RELAYER_KEY_FILE")
+    if [ -z "$relayer_addr" ]; then
+        echo "❌ Failed to setup relayer account. Exiting."
+        exit 1
+    fi
     add_genesis_account "$relayer_addr" "1000000$DENOM"
 
     # 3. Millionaire (GWC Only)
     if [ "$CHAIN_APP_NAME" == "gwc" ]; then
         local millionaire_addr=$(import_key_from_file "millionaire" "$MILLIONAIRE_KEY_FILE")
+        if [ -z "$millionaire_addr" ]; then
+            echo "❌ Failed to setup millionaire account. Exiting."
+            exit 1
+        fi
         echo "   💰 Allocating 100B uatom to Millionaire..."
         add_genesis_account "$millionaire_addr" "100000000000$DENOM"
     fi
@@ -125,7 +165,7 @@ step_configure_node() {
 }
 
 # =============================================================================
-# 🚀 Execution (以下省略。変更なし)
+# 🚀 Execution
 # =============================================================================
 
 if [ ! -f "$INIT_FLAG" ]; then

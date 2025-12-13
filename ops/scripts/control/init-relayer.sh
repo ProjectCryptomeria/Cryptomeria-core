@@ -25,6 +25,7 @@ add_chain_config() {
         return
     fi
 
+    # chain_idが "fdsc-0" の場合、pod_hostnameは "cryptomeria-fdsc-0-0" になります
     local pod_hostname="${RELEASE_NAME}-${chain_id}-0"
     local rpc_addr="http://${pod_hostname}.${HEADLESS_SERVICE}:26657"
     local grpc_addr="http://${pod_hostname}.${HEADLESS_SERVICE}:9090"
@@ -53,6 +54,46 @@ EOF
     rly_exec chains add --file "$tmp_file"
     pod_exec "$RELAYER_POD" rm "$tmp_file"
     log_success "Chain '$chain_id' added."
+}
+
+# [新規追加] 稼働中のFDSCノードのPod名からチェーンIDのリストを動的に取得する
+get_dynamic_fdsc_chains() {
+    log_step "Searching for running fdsc chain pods..."
+    
+    # FDSC Pod名を取得し、スペース区切りで処理
+    # 例: cryptomeria-fdsc-0-0 cryptomeria-fdsc-1-0
+    local FDSC_POD_NAMES
+    # 'app.kubernetes.io/component=fdsc' ラベルを持つPod名を取得
+    FDSC_POD_NAMES=$(kubectl get pod -n "$NAMESPACE" -l "app.kubernetes.io/component=fdsc" \
+        -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
+        
+    local CHAINS=()
+    
+    if [ -z "$FDSC_POD_NAMES" ]; then
+        log_warn "No 'fdsc' pods found in namespace '$NAMESPACE'. Falling back to 'fdsc-0'."
+        CHAINS+=("fdsc-0")
+    else
+        log_info "Found FDSC pods: $FDSC_POD_NAMES"
+        
+        # スペース区切りのPod名からチェーンID部分を抽出
+        for pod_name in $FDSC_POD_NAMES; do
+            # Pod名の形式: ${RELEASE_NAME}-${chain_id}-0
+            # chain_idを抽出 (例: cryptomeria-fdsc-0-0 -> fdsc-0)
+            local chain_id
+            # Pod名から "${RELEASE_NAME}-" と末尾の "-0" を削除
+            chain_id=$(echo "$pod_name" | sed "s/^${RELEASE_NAME}-//" | sed 's/-0$//')
+            
+            if [ -n "$chain_id" ]; then
+                CHAINS+=("$chain_id")
+            fi
+        done
+        
+        # 配列の重複を排除し、ソート (fdsc-0, fdsc-1... の順序を保証)
+        # Note: 'read -r -a'で配列に戻す前に一度echoで文字列に戻すため、ここではソートとユニーク化は行いません。
+    fi
+
+    # 配列をスペース区切りの文字列として返す
+    echo "${CHAINS[@]}"
 }
 
 import_relayer_keys() {
@@ -98,8 +139,21 @@ ensure_relayer_pod
 # 1. Config初期化
 init_config
 
-# 2. チェーン追加
-CHAINS=("gwc" "mdsc" "fdsc-0")
+# 2. チェーン追加 (動的にFDSCチェーンを取得)
+CORE_CHAINS=("gwc" "mdsc")
+FDSC_CHAINS_STR=$(get_dynamic_fdsc_chains)
+
+# 動的チェーンリストを配列に変換し、コアチェーンと結合
+FDSC_CHAINS=()
+if [ -n "$FDSC_CHAINS_STR" ]; then
+    IFS=' ' read -r -a FDSC_CHAINS <<< "$FDSC_CHAINS_STR"
+fi
+
+# 全チェーンを結合 (gwc, mdsc, fdsc-0, fdsc-1...)
+CHAINS=("${CORE_CHAINS[@]}" "${FDSC_CHAINS[@]}")
+
+log_success "Total chains to configure: ${CHAINS[*]}"
+
 for chain in "${CHAINS[@]}"; do
     add_chain_config "$chain"
 done

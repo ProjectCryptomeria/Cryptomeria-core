@@ -69,8 +69,8 @@ fdsc:
 relayer:
   replicaCount: 1
   image:
-    repository: ghcr.io/cosmos/relayer
-    tag: "v2.5.2"
+    repository: cryptomeria/relayer
+    tag: "latest"
     pullPolicy: IfNotPresent
   persistence:
     enabled: true
@@ -99,5 +99,5 @@ staticMnemonics:
 
   # --- FDSC: 全ノード共通設定 ([決定事項 1-2]準拠) ---
   fdsc:
-    localAdmin: "market outdoor spec verify ocean convince select near bachelor bracket verify business"
-    relayer: "identify inspire poverty urge wave churn electric shift friend craft warm blur"
+    localAdmin: "poem cushion coffee heart early aunt gorilla garden close adjust mutual fault reduce foam lecture glide soup road fog aware sick change scrap uncle"
+    relayer: "sight damage wagon runway raccoon special reward desk extend raw muffin latin popular tackle eyebrow symbol possible exchange public hotel love into dutch joy"
