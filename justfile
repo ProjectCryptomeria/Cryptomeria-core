@@ -93,8 +93,11 @@ accounts:
 	@./ops/scripts/util/list-accounts.sh
 
 # [Faucet] 任意のアドレスにミリオネアから送金
-faucet address amount="10000000uatom":
-	@./ops/scripts/util/faucet.sh {{address}} {{amount}}
+# address: 送金先アドレス (必須)
+# amount: 送金額 (オプション、デフォルト値あり)
+# chain: 送金先チェーンID (オプション、省略時はGWCへのローカル送金)
+faucet address amount="10000000uatom" chain="":
+	@./ops/scripts/util/faucet.sh {{address}} {{amount}} {{chain}}
 
 # [Logs] 特定コンポーネントのログを表示
 logs target:
@@ -102,4 +105,5 @@ logs target:
 
 # [Shell] 特定のPod内でシェルを起動
 shell target:
-	@kubectl exec -it -n {{PROJECT_NAME}} deploy/{{PROJECT_NAME}}-{{target}} -- /bin/bash 2>/dev/null || kubectl exec -it -n {{PROJECT_NAME}} statefulset/{{PROJECT_NAME}}-{{target}} -- /bin/bash
+	@kubectl exec -it -n {{PROJECT_NAME}} deploy/{{PROJECT_NAME}}-{{target}} -- /bin/bash 2>/dev/null || \
+	kubectl exec -it -n {{PROJECT_NAME}} statefulset/{{PROJECT_NAME}}-{{target}} -- /bin/bash
