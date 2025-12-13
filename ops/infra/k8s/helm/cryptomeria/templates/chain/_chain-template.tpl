@@ -85,4 +85,4 @@ spec:
         resources:
           requests:
             storage: {{ $chain.persistence.size }}
-{{- end }}
+{{ end }}
