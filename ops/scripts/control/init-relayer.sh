@@ -1,77 +1,46 @@
 #!/bin/bash
 set -e
+source "$(dirname "$0")/lib/common.sh"
 
-# --- 設定 ---
-NAMESPACE=${NAMESPACE:-"cryptomeria"}
-RELEASE_NAME=${RELEASE_NAME:-"cryptomeria"}
-HEADLESS_SERVICE="cryptomeria-chain-headless"
-DENOM="uatom"
-KEY_NAME="relayer"
+# =============================================================================
+# Functions
+# =============================================================================
 
-echo "=== Initializing Relayer Configuration (Control Script) ==="
+init_config() {
+    log_step "Initializing config..."
+    if rly_exec test -f /home/relayer/.relayer/config/config.yaml; then
+        log_info "Config already exists. Skipping."
+    else
+        rly_exec config init --memo "Cryptomeria Relayer"
+        log_success "Initialized new config."
+    fi
+}
 
-# 1. Relayer Podの特定
-echo "--> 🔍 Finding Relayer Pod..."
-RELAYER_POD=$(kubectl get pod -n $NAMESPACE -l "app.kubernetes.io/component=relayer" -o jsonpath="{.items[0].metadata.name}")
+add_chain_config() {
+    local chain_id=$1
+    log_step "Adding config for: $chain_id"
 
-if [ -z "$RELAYER_POD" ]; then
-    echo "❌ Error: Relayer pod not found in namespace '$NAMESPACE'."
-    exit 1
-fi
-echo "    Target Pod: $RELAYER_POD"
+    # すでに存在すればスキップ
+    if rly_exec chains list | grep -q "$chain_id"; then
+        log_info "Chain '$chain_id' already configured."
+        return
+    fi
 
-# 2. 対象チェーンの動的検出 (category=chain を使用)
-echo "--> 🔍 Discovering target chains..."
+    # アドレス解決
+    local pod_hostname="${RELEASE_NAME}-${chain_id}-0"
+    local rpc_addr="http://${pod_hostname}.${HEADLESS_SERVICE}:26657"
+    local grpc_addr="http://${pod_hostname}.${HEADLESS_SERVICE}:9090"
 
-# app.kubernetes.io/category=chain のラベルを持つPodを全て検索し、
-# app.kubernetes.io/instance ラベル（チェーンID）を取得して重複排除・ソートする
-RAW_CHAINS=$(kubectl get pods -n $NAMESPACE \
-  -l 'app.kubernetes.io/category=chain' \
-  -o jsonpath='{range .items[*]}{.metadata.labels.app\.kubernetes\.io/instance}{"\n"}{end}' \
-  | sort | uniq)
-
-# 配列に変換
-CHAINS=($RAW_CHAINS)
-
-if [ ${#CHAINS[@]} -eq 0 ]; then
-    echo "❌ Error: No running chains found. Did you run 'just deploy'?"
-    exit 1
-fi
-
-echo "    Found Chains: ${CHAINS[*]}"
-
-# 3. rly config init (冪等性を考慮)
-echo "--> ⚙️  Initializing config..."
-# 設定ファイルの存在確認
-if kubectl exec -n $NAMESPACE $RELAYER_POD -- test -f /home/relayer/.relayer/config/config.yaml; then
-    echo "    Config already exists. Skipping 'rly config init'."
-else
-    # rly config init は標準エラーに警告を出す可能性があるため、2>/dev/null で無視
-    kubectl exec -n $NAMESPACE $RELAYER_POD -- rly config init --memo "Cryptomeria Relayer" 2>/dev/null
-    echo "    Initialized new config."
-fi
-
-# 4. チェーン設定の追加
-echo "--> 🔗 Adding chain configurations..."
-
-for CHAIN_ID in "${CHAINS[@]}"; do
-    echo "    Processing: $CHAIN_ID"
-    
-    # K8s内部DNS名の構築
-    # 前提: Pod名は [Release]-[Instance]-0 の形式であること
-    POD_HOSTNAME="${RELEASE_NAME}-${CHAIN_ID}-0"
-    RPC_ADDR="http://${POD_HOSTNAME}.${HEADLESS_SERVICE}:26657"
-    GRPC_ADDR="http://${POD_HOSTNAME}.${HEADLESS_SERVICE}:9090"
-    
-    # 設定JSONの生成
-    CONFIG_JSON=$(cat <<EOF
+    # Config JSON生成
+    local tmp_file="/tmp/${chain_id}.json"
+    cat <<EOF | kubectl exec -i -n "$NAMESPACE" "$RELAYER_POD" -- sh -c "cat > $tmp_file"
 {
   "type": "cosmos",
   "value": {
-    "key": "$KEY_NAME",
-    "chain-id": "$CHAIN_ID",
-    "rpc-addr": "$RPC_ADDR",
-    "grpc-addr": "$GRPC_ADDR",
+    "key": "$RELAYER_KEY",
+    "chain-id": "$chain_id",
+    "rpc-addr": "$rpc_addr",
+    "grpc-addr": "$grpc_addr",
     "account-prefix": "cosmos",
     "keyring-backend": "test",
     "gas-adjustment": 1.5,
@@ -83,24 +52,25 @@ for CHAIN_ID in "${CHAINS[@]}"; do
   }
 }
 EOF
-)
-    
-    # JSONをPod内の一時ファイルに書き込む
-    TMP_FILE="/tmp/${CHAIN_ID}.json"
-    echo "$CONFIG_JSON" | kubectl exec -i -n $NAMESPACE $RELAYER_POD -- sh -c "cat > $TMP_FILE"
-    
-    # チェーン追加コマンド実行
-    # rly chains list が警告を出す可能性があるため、2>/dev/null で無視
-    if kubectl exec -n $NAMESPACE $RELAYER_POD -- rly chains list 2>/dev/null | grep -q "$CHAIN_ID"; then
-        echo "      -> Chain '$CHAIN_ID' already exists. Skipping."
-    else
-        # rly chains add も標準エラーに警告を出す可能性があるため、2>/dev/null で無視
-        kubectl exec -n $NAMESPACE $RELAYER_POD -- rly chains add --file "$TMP_FILE" 2>/dev/null
-        echo "      -> Chain '$CHAIN_ID' added."
-    fi
-    
-    # 一時ファイル削除
-    kubectl exec -n $NAMESPACE $RELAYER_POD -- rm "$TMP_FILE"
+
+    rly_exec chains add --file "$tmp_file"
+    rly_exec rm "$tmp_file"
+    log_success "Chain '$chain_id' added."
+}
+
+# =============================================================================
+# Main Execution
+# =============================================================================
+echo "=== Initializing Relayer Configuration ==="
+ensure_relayer_pod
+
+# 1. Config初期化
+init_config
+
+# 2. チェーン追加 (リスト定義)
+CHAINS=("gwc" "mdsc" "fdsc-0")
+for chain in "${CHAINS[@]}"; do
+    add_chain_config "$chain"
 done
 
-echo "✅ Relayer configuration complete."
+log_success "Relayer configuration complete."

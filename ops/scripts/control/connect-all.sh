@@ -1,30 +1,29 @@
 #!/bin/bash
 set -e
-NAMESPACE=${NAMESPACE:-"cryptomeria"}
+source "$(dirname "$0")/lib/common.sh"
 
-echo "=== Auto-Connecting All Chains (Sequential) ==="
+echo "=== Auto-Connecting All Chains ==="
 
-# 1. GWC以外のチェーンPod（Running状態）をリストアップ
-# ラベル component が gwc, relayer 以外のものを抽出
-PODS=$(kubectl get pods -n $NAMESPACE -l 'app.kubernetes.io/component!=gwc,app.kubernetes.io/component!=relayer' --field-selector=status.phase=Running -o jsonpath='{range .items[*]}{.metadata.labels.app\.kubernetes\.io/component}{"\n"}{end}' | sort | uniq)
+# 1. ターゲットChainの自動検出
+# (gwc, relayer以外のPodの component ラベルを取得)
+TARGETS=$(kubectl get pods -n "$NAMESPACE" -l 'app.kubernetes.io/component!=gwc,app.kubernetes.io/component!=relayer' --field-selector=status.phase=Running -o jsonpath='{range .items[*]}{.metadata.labels.app\.kubernetes\.io/component}{"\n"}{end}' | sort | uniq)
 
-if [ -z "$PODS" ]; then
-    echo "⚠️  No target chains found."
+if [ -z "$TARGETS" ]; then
+    log_warn "No target chains found."
     exit 0
 fi
 
-# 2. 各チェーンに対して connect-chain.sh を実行
+# 2. 各コンポーネントのインスタンスごとに実行
 SCRIPT_DIR=$(dirname "$0")
-for CHAIN in $PODS; do
-    # Pod名からチェーンID（インスタンス名）を取得
-    INSTANCES=$(kubectl get pods -n $NAMESPACE -l "app.kubernetes.io/component=$CHAIN" -o jsonpath='{range .items[*]}{.metadata.labels.app\.kubernetes\.io/instance}{"\n"}{end}')
+
+for COMPONENT in $TARGETS; do
+    # StatefulSetインスタンス名 (例: fdsc-0, fdsc-1) を取得
+    INSTANCES=$(kubectl get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=$COMPONENT" -o jsonpath='{range .items[*]}{.metadata.labels.app\.kubernetes\.io/instance}{"\n"}{end}')
     
-    for ID in $INSTANCES; do
-        echo "------------------------------------------------"
-        echo "🚀 Connecting chain: $ID"
-        # 並列化(&)せず、直列実行する
-        "$SCRIPT_DIR/connect-chain.sh" "$ID"
+    for CHAIN_ID in $INSTANCES; do
+        log_step "Triggering connection for: $CHAIN_ID"
+        "$SCRIPT_DIR/connect-chain.sh" "$CHAIN_ID"
     done
 done
 
-echo "=== All connections processed ==="
+log_success "All connections processed."
