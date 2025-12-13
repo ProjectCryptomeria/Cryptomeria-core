@@ -20,8 +20,11 @@ metadata:
     {{- include "cryptomeria.labels" $context | nindent 4 }}
     app.kubernetes.io/component: {{ $chain.name }}
     app.kubernetes.io/category: chain
+    # 前回追加したラベル
+    app.kubernetes.io/instance: {{ $component }}
 spec:
-  serviceName: {{ include "cryptomeria.fullname" $context }}-{{ $chain.name }}-headless
+  # ▼▼▼ 修正: 個別のserviceNameではなく、共通のHeadless Serviceを指定 ▼▼▼
+  serviceName: {{ include "cryptomeria.fullname" $context }}-chain-headless
   replicas: 1
   selector:
     matchLabels:
@@ -33,6 +36,8 @@ spec:
         {{- include "cryptomeria.selectorLabels" $context | nindent 8 }}
         app.kubernetes.io/component: {{ $chain.name }}
         app.kubernetes.io/category: chain
+        # 前回追加したラベル
+        app.kubernetes.io/instance: {{ $component }}
     spec:
       containers:
         - name: chain
@@ -40,6 +45,7 @@ spec:
           image: "{{ $chain.image.repository }}:{{ $chain.image.tag }}"
           imagePullPolicy: {{ $chain.image.pullPolicy }}
           command: ["/bin/sh", "-c", "/scripts/entrypoint-chain.sh"]
+    
           env:
             - name: CHAIN_APP_NAME
               value: "{{ $chain.name }}"

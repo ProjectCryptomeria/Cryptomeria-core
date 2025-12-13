@@ -24,10 +24,11 @@ RELAYER_POD=$(kubectl get pod -n $NAMESPACE -l "app.kubernetes.io/component=rela
 GWC_POD=$(kubectl get pod -n $NAMESPACE -l "app.kubernetes.io/component=gwc" -o jsonpath="{.items[0].metadata.name}")
 
 # 3. 鍵と残高の確認
-KEY_NAME="rly-${TARGET_CHAIN}"
+KEY_NAME="relayer"
 echo "   Checking Key '$KEY_NAME' on Relayer..."
-if ! kubectl exec -n $NAMESPACE $RELAYER_POD -- rly keys show gwc "$KEY_NAME" > /dev/null 2>&1; then
-    echo "❌ Fail: Relayer key '$KEY_NAME' for gwc not found."
+# 【修正】gwcではなく、ターゲットチェーン(fdsc-0等)のキーを確認すべきです
+if ! kubectl exec -n $NAMESPACE $RELAYER_POD -- rly keys show "$TARGET_CHAIN" "$KEY_NAME" > /dev/null 2>&1; then
+    echo "❌ Fail: Relayer key '$KEY_NAME' for chain $TARGET_CHAIN not found."
     exit 1
 fi
 

@@ -18,7 +18,7 @@ else
     if kubectl exec -n $NAMESPACE $RELAYER_POD -- pgrep -f "rly start" > /dev/null; then
         echo "✅ Relayer Process: Active (Running)"
     else
-        echo "❌ Relayer Process: INACTIVE (Run 'just start-system' or 'just start-relayer')"
+        echo "❌ Relayer Process: INACTIVE (Run 'just start-system')"
     fi
 fi
 echo ""
