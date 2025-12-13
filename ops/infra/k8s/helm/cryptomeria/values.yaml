@@ -41,3 +41,14 @@ chain:
 env:
   - name: CHAIN_ID_PREFIX
     value: "cryptomeria"
+
+# 💡 静的ニーモニック設定 (PoC/テスト用 - 本番環境では非推奨)
+staticMnemonics:
+  # trueに設定すると、動的なJobによるニーモニック生成をスキップし、
+  # 以下の静的な値からSecretを作成します。
+  enabled: true 
+  chains:
+    - name: fdsc
+      mnemonic: "noise glove aim involve lemon stairs step junk easily drink else attitude sauce monster weapon donkey tobacco hope build exhaust birth accuse immune ordinary"
+    - name: mdsc
+      mnemonic: "finish betray cement cram furnace turkey cattle write bean fix snake place step apple sleep embody gift scale confirm youth design seed awful essay"

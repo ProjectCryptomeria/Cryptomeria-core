@@ -1,3 +1,4 @@
+{{- if not .Values.staticMnemonics.enabled }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -58,3 +59,4 @@ spec:
               kubectl apply -f ${SECRET_FILE}
               echo "--- Secret '${SECRET_NAME}' created/updated successfully ---"
   backoffLimit: 1
+{{- end }}
