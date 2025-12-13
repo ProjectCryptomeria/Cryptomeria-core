@@ -80,8 +80,7 @@ fi
 # 4. パス作成とリンク
 echo "--> 🔗 Linking Paths..."
 
-# 【重要】GWCのチェーン設定を更新して、今回の専用鍵を使うようにする
-# rly chains editが使えないため、delete -> add で上書きする
+# GWCのチェーン設定を更新して、今回の専用鍵を使うようにする
 echo "   Updating GWC chain config to use key: $GWC_KEY_NAME"
 
 POD_HOSTNAME="${RELEASE_NAME}-${GWC_CHAIN}-0"
@@ -109,7 +108,6 @@ GWC_CONFIG_JSON=$(cat <<EOF
 EOF
 )
 
-# 【修正】ファイル名を gwc.json にする (rlyはファイル名をチェーン名として使うため)
 TMP_FILE="/tmp/gwc.json"
 echo "$GWC_CONFIG_JSON" | kubectl exec -i -n $NAMESPACE $RELAYER_POD -- sh -c "cat > $TMP_FILE"
 kubectl exec -n $NAMESPACE $RELAYER_POD -- rly chains delete "$GWC_CHAIN" >/dev/null 2>&1 || true
@@ -133,7 +131,6 @@ fi
 echo "   Linking $PATH_GW..."
 kubectl exec -n $NAMESPACE $RELAYER_POD -- rly transact link "$PATH_GW" --src-port "$SRC_PORT" --dst-port "$DST_PORT_PREFIX" --version "cryptomeria-1" || echo "   (Link might already be open or failed)"
 
-# 【追加】Path間での待機 (IBCクライアント状態の整合性確保のため)
 echo "   Waiting 10s for client state sync..."
 sleep 10
 
@@ -151,12 +148,12 @@ kubectl exec -n $NAMESPACE $RELAYER_POD -- rly transact link "$PATH_TF" --src-po
 # 5. ストレージ登録
 echo "--> 📝 Registering Storage on GWC..."
 
-# チャネルIDの取得
-# チェーン名が正しく "gwc" になったので、このコマンドが通るはず
+# チャネルIDの取得 (jqを使ってJSONから抽出)
+# ポートが "gateway" かつ 相手チェーンが $TARGET_CHAIN であるものを検索し、最新のもの(tail -n 1)を取得
 RAW_CHANNELS=$(kubectl exec -n $NAMESPACE $RELAYER_POD -- rly q channels "$GWC_CHAIN")
-CHANNEL_ID=$(echo "$RAW_CHANNELS" | grep "$TARGET_CHAIN" | grep "channel-" | head -n 1 | awk '{print $2}')
+CHANNEL_ID=$(echo "$RAW_CHANNELS" | jq -r --arg target "$TARGET_CHAIN" 'select(.port_id=="gateway" and .counterparty.chain_id==$target) | .channel_id' | tail -n 1)
 
-if [ -z "$CHANNEL_ID" ]; then
+if [ -z "$CHANNEL_ID" ] || [ "$CHANNEL_ID" == "null" ]; then
     echo "⚠️ Warning: Could not find Channel ID for $TARGET_CHAIN. Registration skipped."
     echo "Debug: Raw Channels Output:"
     echo "$RAW_CHANNELS"
