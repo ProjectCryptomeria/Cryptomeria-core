@@ -6,24 +6,22 @@ imagePullPolicy: IfNotPresent # 開発中は Always 推奨, 本番は IfNotPrese
 
 chains:
   - name: gwc
-    type: gateway
+    type: gwc
   - name: mdsc
-    type: metastore
-  # FDSCの数はコマンドライン引数などで動的に増やす想定
-  # generate-values.sh で上書きされる
+    type: mdsc
   - name: fdsc-0
-    type: datastore
+    type: fdsc
   - name: fdsc-1
-    type: datastore
+    type: fdsc
 
 chainTypes:
-  gateway:
+  gwc:
     repository: cryptomeria/gwc
     tag: latest
-  metastore:
+  mdsc:
     repository: cryptomeria/mdsc
     tag: latest
-  datastore:
+  fdsc:
     repository: cryptomeria/fdsc
     tag: latest
 
@@ -38,7 +36,6 @@ relayer:
 chain:
   storage:
     size: 1Gi
-    className: standard
 
 # 環境変数 (共通)
 env:
