@@ -28,6 +28,14 @@ deploy chains=DEFAULT_CHAINS:
 		--set fdsc.replicas={{chains}} --timeout 10m
 	echo "✅ Infrastructure deployed. Run 'just start-system' next."
 
+# [Template] 生成されるYAMLを確認する (Dry Run)
+template chains=DEFAULT_CHAINS:
+	@echo "--> 📄 Rendering Helm template with {{chains}} FDSC node(s)..."
+	@helm dependency update "./ops/infra/k8s/helm/{{PROJECT_NAME}}" > /dev/null 2>&1
+	@helm template {{PROJECT_NAME}} "./ops/infra/k8s/helm/{{PROJECT_NAME}}" \
+		--namespace {{PROJECT_NAME}} \
+		--set fdsc.replicas={{chains}}
+
 # [Start] デプロイ済みの環境を初期化し、リレイヤー起動と全接続を行う。
 start-system:
 	@echo "🚀 Starting System (Init -> Start -> Connect All)..."

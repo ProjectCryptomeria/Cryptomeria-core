@@ -2,20 +2,16 @@
 set -e
 
 NAMESPACE="cryptomeria"
-MILLIONAIRE_MNEMONIC="verify sustain lumber boat ram change pupil happy index barely very fat clip bottom choose neglect hidden barely cheese canal drop cook obscure pottery"
 
 # --- Helper Functions ---
 wait_for_pod() {
     local component=$1
     echo "--> ⏳ Waiting for $component pod to be ready..."
     
-    # 最大60回(60秒)トライ
     for i in {1..60}; do
-        # Pod名を取得 (ラベルを修正: gateway -> gwc)
         POD_NAME=$(kubectl get pod -n $NAMESPACE -l "app.kubernetes.io/component=$component" -o jsonpath="{.items[0].metadata.name}" 2>/dev/null || echo "")
         
         if [ -n "$POD_NAME" ]; then
-            # Podが見つかったら、Runningかどうかチェック
             STATUS=$(kubectl get pod -n $NAMESPACE "$POD_NAME" -o jsonpath="{.status.phase}")
             if [ "$STATUS" == "Running" ]; then
                 echo "   ✅ Found running pod: $POD_NAME"
@@ -62,25 +58,26 @@ else
     exit 1
 fi
 
-# 2. GWCのPod特定とチェック (ラベル修正: gateway -> gwc)
+# 2. GWCのPod特定とチェック
 if wait_for_pod "gwc"; then
     GWC_POD=$(kubectl get pod -n $NAMESPACE -l "app.kubernetes.io/component=gwc" -o jsonpath="{.items[0].metadata.name}")
     
-    echo "--> Checking Millionaire Genesis Account..."
-    # ホームディレクトリの修正: /home/gateway/.gateway -> /home/gwc/.gwc
-    if kubectl exec -n $NAMESPACE $GWC_POD -- gwcd keys show millionaire --keyring-backend test --home /home/gwc/.gwc > /dev/null 2>&1; then
-        ADDR=$(kubectl exec -n $NAMESPACE $GWC_POD -- gwcd keys show millionaire -a --keyring-backend test --home /home/gwc/.gwc)
+    # ▼▼▼ 修正: local-admin の残高をチェック ▼▼▼
+    echo "--> Checking Local Admin Genesis Account..."
+    KEY_NAME="local-admin"
+    if kubectl exec -n $NAMESPACE $GWC_POD -- gwcd keys show $KEY_NAME --keyring-backend test --home /home/gwc/.gwc > /dev/null 2>&1; then
+        ADDR=$(kubectl exec -n $NAMESPACE $GWC_POD -- gwcd keys show $KEY_NAME -a --keyring-backend test --home /home/gwc/.gwc)
         BALANCE=$(kubectl exec -n $NAMESPACE $GWC_POD -- gwcd q bank balances $ADDR -o json | jq -r '.balances[] | select(.denom=="uatom") | .amount')
         
-        # 期待値: 1000億
-        EXPECTED="100000000000"
+        # 期待値: 10兆 (entrypoint-chain.shの設定値: 10000000000000)
+        EXPECTED="10000000000000"
         if [ "$BALANCE" == "$EXPECTED" ]; then
-            echo "✅ Pass: Millionaire account $ADDR has 100,000,000,000 uatom."
+            echo "✅ Pass: $KEY_NAME account $ADDR has correct balance ($BALANCE uatom)."
         else
-            echo "❌ Fail: Millionaire account balance is $BALANCE (Expected: $EXPECTED)."
+            echo "❌ Fail: $KEY_NAME account balance is $BALANCE (Expected: $EXPECTED)."
         fi
     else
-        echo "❌ Fail: Key 'millionaire' not found in GWC keyring."
+        echo "❌ Fail: Key '$KEY_NAME' not found in GWC keyring."
     fi
 else
     echo "❌ Skip: GWC pod not found or not running."

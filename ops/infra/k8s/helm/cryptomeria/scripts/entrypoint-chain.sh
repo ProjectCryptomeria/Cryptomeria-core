@@ -107,7 +107,7 @@ step_setup_accounts() {
         echo "❌ Failed to setup local-admin account. Exiting."
         exit 1
     fi
-    add_genesis_account "$admin_addr" "1000010000$DENOM"
+    add_genesis_account "$admin_addr" "10000000000000$DENOM"
 
     # 2. Relayer
     local relayer_addr=$(import_key_from_file "relayer" "$RELAYER_KEY_FILE")
@@ -115,23 +115,23 @@ step_setup_accounts() {
         echo "❌ Failed to setup relayer account. Exiting."
         exit 1
     fi
-    add_genesis_account "$relayer_addr" "1000000$DENOM"
+    add_genesis_account "$relayer_addr" "10000000000$DENOM"
 
-    # 3. Millionaire (GWC Only)
-    if [ "$CHAIN_APP_NAME" == "gwc" ]; then
-        local millionaire_addr=$(import_key_from_file "millionaire" "$MILLIONAIRE_KEY_FILE")
-        if [ -z "$millionaire_addr" ]; then
-            echo "❌ Failed to setup millionaire account. Exiting."
-            exit 1
-        fi
-        echo "   💰 Allocating 100B uatom to Millionaire..."
-        add_genesis_account "$millionaire_addr" "100000000000$DENOM"
-    fi
+    # # 3. Millionaire (GWC Only)
+    # if [ "$CHAIN_APP_NAME" == "gwc" ]; then
+    #     local millionaire_addr=$(import_key_from_file "millionaire" "$MILLIONAIRE_KEY_FILE")
+    #     if [ -z "$millionaire_addr" ]; then
+    #         echo "❌ Failed to setup millionaire account. Exiting."
+    #         exit 1
+    #     fi
+    #     echo "   💰 Allocating 100B uatom to Millionaire..."
+    #     add_genesis_account "$millionaire_addr" "100000000000$DENOM"
+    # fi
 }
 
 step_create_validator() {
     log_step "Generating Gentx (Validator: local-admin)..."
-    $CHAIN_BINARY genesis gentx local-admin "1000000000$DENOM" \
+    $CHAIN_BINARY genesis gentx local-admin "10000000000000$DENOM" \
         --keyring-backend=test \
         --chain-id "$CHAIN_ID" \
         --home "$CHAIN_HOME" 2>&1 >/dev/null

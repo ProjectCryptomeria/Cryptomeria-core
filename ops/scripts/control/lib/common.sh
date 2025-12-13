@@ -8,7 +8,9 @@ export RELEASE_NAME=${RELEASE_NAME:-"cryptomeria"}
 export HEADLESS_SERVICE="cryptomeria-chain-headless"
 export DENOM="uatom"
 export RELAYER_KEY="relayer"  # 共通鍵名
-export MILLIONAIRE_KEY="millionaire"
+
+# ▼▼▼ 変更: 資金源を local-admin に変更 ▼▼▼
+export MILLIONAIRE_KEY="local-admin"
 
 # =============================================================================
 # 📝 Logging Helper

@@ -1,6 +1,6 @@
 {{- define "cryptomeria.chain.statefulset-template" -}}
 {{- $context := . -}}
-{{- $chain := .Value -}} # ★修正: 渡されたディクショナリの "Value" キーから設定オブジェクトを取得
+{{- $chain := .Value -}}
 {{- $release := .Release -}}
 
 {{- $component := $chain.name -}}
@@ -14,34 +14,33 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "cryptomeria.fullname" $context }}-{{ $component }} # $context を使用
-  namespace: {{ $.Release.Namespace }} # $.Release はグローバルな Release オブジェクトを参照
+  name: {{ include "cryptomeria.fullname" $context }}-{{ $component }}
+  namespace: {{ $.Release.Namespace }}
   labels:
     {{- include "cryptomeria.labels" $context | nindent 4 }}
     app.kubernetes.io/component: {{ $chain.name }}
     app.kubernetes.io/category: chain
-    # 前回追加したラベル
     app.kubernetes.io/instance: {{ $component }}
 spec:
-  # ▼▼▼ 修正: 個別のserviceNameではなく、共通のHeadless Serviceを指定 ▼▼▼
   serviceName: {{ include "cryptomeria.fullname" $context }}-chain-headless
   replicas: 1
   selector:
     matchLabels:
       {{- include "cryptomeria.selectorLabels" $context | nindent 6 }}
       app.kubernetes.io/component: {{ $chain.name }}
+      # ▼▼▼ 修正: セレクタにもユニークなインスタンス名を追加して競合を回避 ▼▼▼
+      app.kubernetes.io/instance: {{ $component }}
   template:
     metadata:
       labels:
         {{- include "cryptomeria.selectorLabels" $context | nindent 8 }}
         app.kubernetes.io/component: {{ $chain.name }}
         app.kubernetes.io/category: chain
-        # 前回追加したラベル
+        # Pod側のラベル定義（これは前回既に追加済み）
         app.kubernetes.io/instance: {{ $component }}
     spec:
       containers:
         - name: chain
-          # Imageの参照は $chain から行うため問題なし
           image: "{{ $chain.image.repository }}:{{ $chain.image.tag }}"
           imagePullPolicy: {{ $chain.image.pullPolicy }}
           command: ["/bin/sh", "-c", "/scripts/entrypoint-chain.sh"]
@@ -86,4 +85,4 @@ spec:
         resources:
           requests:
             storage: {{ $chain.persistence.size }}
-{{- end -}}
+{{- end }}

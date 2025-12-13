@@ -3,10 +3,8 @@ kind: Service
 metadata:
   name: {{ include "cryptomeria.fullname" . }}-chain-headless
   labels:
-      app.kubernetes.io/name: cryptomeria
-      app.kubernetes.io/category: chain
-      app.kubernetes.io/instance: {{ .name }}
-      app.kubernetes.io/component: {{ .type }}  
+    {{- include "cryptomeria.labels" . | nindent 4 }}
+    app.kubernetes.io/category: chain
 spec:
   # Headless Serviceにするための設定
   clusterIP: None
@@ -19,5 +17,5 @@ spec:
       port: 1317
   # このラベルを持つPodをサービスの対象とする
   selector:
-    app.kubernetes.io/name: cryptomeria
+    {{- include "cryptomeria.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/category: chain

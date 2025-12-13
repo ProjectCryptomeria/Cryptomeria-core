@@ -1,8 +1,14 @@
 {{- if .Values.fdsc }}
 {{- $count := int .Values.fdsc.replicas }}
 {{- range $i := until $count }}
-{{- $name := printf "fdsc" }}
-{{- $chain := merge (dict "name" $name "index" $i) $.Values.fdsc }}
+{{- /* 1. 設定値をディープコピーして新しいオブジェクトを作成 (元のValuesへの影響を遮断) */ -}}
+{{- $chain := deepCopy $.Values.fdsc }}
+
+{{- /* 2. 個別のパラメータをセット */ -}}
+{{- $_ := set $chain "name" "fdsc" }}
+{{- $_ := set $chain "index" $i }}
+
+{{- /* 3. テンプレート呼び出し */ -}}
 {{- include "cryptomeria.chain.statefulset-template" (dict "Value" $chain "Release" $.Release "Values" $.Values "Chart" $.Chart) }}
 {{- end }}
 {{- end }}

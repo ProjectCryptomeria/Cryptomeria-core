@@ -54,7 +54,7 @@ create_link() {
         rly_exec paths new "$GWC_CHAIN" "$TARGET_CHAIN" "$path_name" --src-port "$src_port" --dst-port "$dst_port" --version "$version"
     fi
 
-    # ▼▼▼ 修正: リトライロジックを追加 ▼▼▼
+    # ▼▼▼ リトライロジック付きリンク作成 ▼▼▼
     local max_retries=5
     local count=1
     local success=0
@@ -62,7 +62,6 @@ create_link() {
     while [ $count -le $max_retries ]; do
         echo "   🔄 Attempt $count/$max_retries to link $path_name..."
         
-        # 成功したらループを抜ける
         if rly_exec transact link "$path_name" --src-port "$src_port" --dst-port "$dst_port" --version "$version"; then
             log_success "Path linked: $path_name"
             success=1
@@ -77,7 +76,6 @@ create_link() {
 
     if [ $success -eq 0 ]; then
         log_error "Failed to create link for $path_name after $max_retries attempts."
-        # set -e が効いていればここで止まるが、念のため exit
         exit 1
     fi
 }
@@ -94,7 +92,7 @@ register_storage_on_gwc() {
         return 0
     fi
     
-    # チャネルID取得のリトライ (リンク直後は反映に数秒かかる場合があるため)
+    # チャネルID取得のリトライ
     local channel_id=""
     for i in {1..5}; do
         local raw=$(rly_exec q channels "$GWC_CHAIN" 2>/dev/null | jq -s '.' || echo "[]")
@@ -115,9 +113,10 @@ register_storage_on_gwc() {
     log_info "Found Channel ID: $channel_id. Registering..."
     local target_endpoint="http://${RELEASE_NAME}-${TARGET_CHAIN}-0.${HEADLESS_SERVICE}:1317"
 
+    # ▼▼▼ 修正: local-admin からトランザクションを実行 ▼▼▼
     pod_exec "$gwc_pod" gwcd tx gateway register-storage \
         "$channel_id" "$TARGET_CHAIN" "$target_endpoint" \
-        --from "millionaire" --chain-id "$GWC_CHAIN" -y --keyring-backend test --home /home/gwc/.gwc || true
+        --from "local-admin" --chain-id "$GWC_CHAIN" -y --keyring-backend test --home /home/gwc/.gwc || true
 }
 
 # =============================================================================
@@ -135,7 +134,6 @@ if [[ "$TARGET_CHAIN" == *"mdsc"* ]]; then DST_PORT_PREFIX="metastore"; fi
 create_link "path-${GWC_CHAIN}-${TARGET_CHAIN}-gw" "gateway" "$DST_PORT_PREFIX" "cryptomeria-1"
 
 # Transfer Path
-# リトライ処理が入ったので、事前のSleepは短めでもOKだが、安定のため少し待つ
 sleep 5
 create_link "path-${GWC_CHAIN}-${TARGET_CHAIN}-tf" "transfer" "transfer" "ics20-1"
 
