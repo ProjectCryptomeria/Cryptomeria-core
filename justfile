@@ -115,3 +115,16 @@ logs target:
 shell target:
 	@kubectl exec -it -n {{PROJECT_NAME}} deploy/{{PROJECT_NAME}}-{{target}} -- /bin/bash 2>/dev/null || \
 	kubectl exec -it -n {{PROJECT_NAME}} statefulset/{{PROJECT_NAME}}-{{target}} -- /bin/bash
+
+
+# [Monitor] Mempool内のトランザクション数をリアルタイム監視 (Ctrl+Cで停止)
+monitor-mempool:
+    @watch -n 2 ./ops/scripts/util/monitor-mempool.sh
+
+# [Wallet] GWCにクライアント用ウォレットをインポート (対話モード)
+import-key name:
+    @./ops/scripts/util/import-client-key.sh {{name}}
+
+# [Scale] FDSCのノード数を指定した数に変更する (例: just scale 3)
+scale-fdsc count:
+    @./ops/scripts/control/scale-fdsc.sh {{count}}
