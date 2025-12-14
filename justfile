@@ -126,7 +126,7 @@ monitor-mempool:
     @watch -n 2 ./ops/scripts/util/monitor-mempool.sh
 
 # [Wallet] GWCにクライアント用ウォレットをインポート (対話モード)
-import-key name:
+add-account name:
     @./ops/scripts/util/import-client-key.sh {{name}}
 
 # [Scale] FDSCのノード数を指定した数に変更する (例: just scale 3)
