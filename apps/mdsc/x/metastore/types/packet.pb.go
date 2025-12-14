@@ -145,76 +145,8 @@ func (m *NoData) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_NoData proto.InternalMessageInfo
 
-// ManifestPacket (GWCと定義を一致させる)
-type ManifestPacket struct {
-	Filename string `protobuf:"bytes,1,opt,name=filename,proto3" json:"filename,omitempty"`
-	// 修正: size -> file_size
-	FileSize  uint64                   `protobuf:"varint,2,opt,name=file_size,json=fileSize,proto3" json:"file_size,omitempty"`
-	MimeType  string                   `protobuf:"bytes,3,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
-	Fragments []*PacketFragmentMapping `protobuf:"bytes,4,rep,name=fragments,proto3" json:"fragments,omitempty"`
-}
-
-func (m *ManifestPacket) Reset()         { *m = ManifestPacket{} }
-func (m *ManifestPacket) String() string { return proto.CompactTextString(m) }
-func (*ManifestPacket) ProtoMessage()    {}
-func (*ManifestPacket) Descriptor() ([]byte, []int) {
-	return fileDescriptor_7caca315c6fa3c38, []int{2}
-}
-func (m *ManifestPacket) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *ManifestPacket) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_ManifestPacket.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *ManifestPacket) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_ManifestPacket.Merge(m, src)
-}
-func (m *ManifestPacket) XXX_Size() int {
-	return m.Size()
-}
-func (m *ManifestPacket) XXX_DiscardUnknown() {
-	xxx_messageInfo_ManifestPacket.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_ManifestPacket proto.InternalMessageInfo
-
-func (m *ManifestPacket) GetFilename() string {
-	if m != nil {
-		return m.Filename
-	}
-	return ""
-}
-
-func (m *ManifestPacket) GetFileSize() uint64 {
-	if m != nil {
-		return m.FileSize
-	}
-	return 0
-}
-
-func (m *ManifestPacket) GetMimeType() string {
-	if m != nil {
-		return m.MimeType
-	}
-	return ""
-}
-
-func (m *ManifestPacket) GetFragments() []*PacketFragmentMapping {
-	if m != nil {
-		return m.Fragments
-	}
-	return nil
-}
-
+// PacketFragmentMapping defines the location of a fragment
+// (GWCのPacketFragmentMappingと一致)
 type PacketFragmentMapping struct {
 	FdscId     string `protobuf:"bytes,1,opt,name=fdsc_id,json=fdscId,proto3" json:"fdsc_id,omitempty"`
 	FragmentId string `protobuf:"bytes,2,opt,name=fragment_id,json=fragmentId,proto3" json:"fragment_id,omitempty"`
@@ -224,7 +156,7 @@ func (m *PacketFragmentMapping) Reset()         { *m = PacketFragmentMapping{} }
 func (m *PacketFragmentMapping) String() string { return proto.CompactTextString(m) }
 func (*PacketFragmentMapping) ProtoMessage()    {}
 func (*PacketFragmentMapping) Descriptor() ([]byte, []int) {
-	return fileDescriptor_7caca315c6fa3c38, []int{3}
+	return fileDescriptor_7caca315c6fa3c38, []int{2}
 }
 func (m *PacketFragmentMapping) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -267,39 +199,171 @@ func (m *PacketFragmentMapping) GetFragmentId() string {
 	return ""
 }
 
+// FileMetadata defines metadata for a single file within the project
+// (GWCのFileMetadataと一致)
+type FileMetadata struct {
+	MimeType  string                   `protobuf:"bytes,1,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
+	Size_     uint64                   `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
+	Fragments []*PacketFragmentMapping `protobuf:"bytes,3,rep,name=fragments,proto3" json:"fragments,omitempty"`
+}
+
+func (m *FileMetadata) Reset()         { *m = FileMetadata{} }
+func (m *FileMetadata) String() string { return proto.CompactTextString(m) }
+func (*FileMetadata) ProtoMessage()    {}
+func (*FileMetadata) Descriptor() ([]byte, []int) {
+	return fileDescriptor_7caca315c6fa3c38, []int{3}
+}
+func (m *FileMetadata) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *FileMetadata) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_FileMetadata.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *FileMetadata) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_FileMetadata.Merge(m, src)
+}
+func (m *FileMetadata) XXX_Size() int {
+	return m.Size()
+}
+func (m *FileMetadata) XXX_DiscardUnknown() {
+	xxx_messageInfo_FileMetadata.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_FileMetadata proto.InternalMessageInfo
+
+func (m *FileMetadata) GetMimeType() string {
+	if m != nil {
+		return m.MimeType
+	}
+	return ""
+}
+
+func (m *FileMetadata) GetSize_() uint64 {
+	if m != nil {
+		return m.Size_
+	}
+	return 0
+}
+
+func (m *FileMetadata) GetFragments() []*PacketFragmentMapping {
+	if m != nil {
+		return m.Fragments
+	}
+	return nil
+}
+
+// ManifestPacket defines the structure of the website/project
+// (GWCのManifestPacketと一致: Map構造を使用)
+type ManifestPacket struct {
+	ProjectName string `protobuf:"bytes,1,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
+	Version     string `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
+	// Map key is the relative path (e.g. "index.html", "assets/logo.png")
+	Files map[string]*FileMetadata `protobuf:"bytes,3,rep,name=files,proto3" json:"files,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+}
+
+func (m *ManifestPacket) Reset()         { *m = ManifestPacket{} }
+func (m *ManifestPacket) String() string { return proto.CompactTextString(m) }
+func (*ManifestPacket) ProtoMessage()    {}
+func (*ManifestPacket) Descriptor() ([]byte, []int) {
+	return fileDescriptor_7caca315c6fa3c38, []int{4}
+}
+func (m *ManifestPacket) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *ManifestPacket) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_ManifestPacket.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *ManifestPacket) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ManifestPacket.Merge(m, src)
+}
+func (m *ManifestPacket) XXX_Size() int {
+	return m.Size()
+}
+func (m *ManifestPacket) XXX_DiscardUnknown() {
+	xxx_messageInfo_ManifestPacket.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_ManifestPacket proto.InternalMessageInfo
+
+func (m *ManifestPacket) GetProjectName() string {
+	if m != nil {
+		return m.ProjectName
+	}
+	return ""
+}
+
+func (m *ManifestPacket) GetVersion() string {
+	if m != nil {
+		return m.Version
+	}
+	return ""
+}
+
+func (m *ManifestPacket) GetFiles() map[string]*FileMetadata {
+	if m != nil {
+		return m.Files
+	}
+	return nil
+}
+
 func init() {
 	proto.RegisterType((*MetastorePacketData)(nil), "mdsc.metastore.v1.MetastorePacketData")
 	proto.RegisterType((*NoData)(nil), "mdsc.metastore.v1.NoData")
-	proto.RegisterType((*ManifestPacket)(nil), "mdsc.metastore.v1.ManifestPacket")
 	proto.RegisterType((*PacketFragmentMapping)(nil), "mdsc.metastore.v1.PacketFragmentMapping")
+	proto.RegisterType((*FileMetadata)(nil), "mdsc.metastore.v1.FileMetadata")
+	proto.RegisterType((*ManifestPacket)(nil), "mdsc.metastore.v1.ManifestPacket")
+	proto.RegisterMapType((map[string]*FileMetadata)(nil), "mdsc.metastore.v1.ManifestPacket.FilesEntry")
 }
 
 func init() { proto.RegisterFile("mdsc/metastore/v1/packet.proto", fileDescriptor_7caca315c6fa3c38) }
 
 var fileDescriptor_7caca315c6fa3c38 = []byte{
-	// 342 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0x92, 0xcb, 0x4d, 0x29, 0x4e,
-	0xd6, 0xcf, 0x4d, 0x2d, 0x49, 0x2c, 0x2e, 0xc9, 0x2f, 0x4a, 0xd5, 0x2f, 0x33, 0xd4, 0x2f, 0x48,
-	0x4c, 0xce, 0x4e, 0x2d, 0xd1, 0x2b, 0x28, 0xca, 0x2f, 0xc9, 0x17, 0x12, 0x04, 0xc9, 0xeb, 0xc1,
-	0xe5, 0xf5, 0xca, 0x0c, 0x95, 0x16, 0x32, 0x72, 0x09, 0xfb, 0xc2, 0x04, 0x02, 0xc0, 0x8a, 0x5d,
-	0x12, 0x4b, 0x12, 0x85, 0x8c, 0xb9, 0xd8, 0xf2, 0xf2, 0x41, 0x2c, 0x09, 0x46, 0x05, 0x46, 0x0d,
-	0x6e, 0x23, 0x49, 0x3d, 0x0c, 0xbd, 0x7a, 0x7e, 0x60, 0x05, 0x1e, 0x0c, 0x41, 0x50, 0xa5, 0x42,
-	0xde, 0x5c, 0x7c, 0xb9, 0x89, 0x79, 0x99, 0x69, 0xa9, 0xc5, 0x25, 0x10, 0xa3, 0x24, 0x98, 0xc1,
-	0x9a, 0x15, 0xb1, 0x68, 0xf6, 0x45, 0x51, 0xe8, 0xc1, 0x10, 0x84, 0xa6, 0xd5, 0x89, 0x83, 0x8b,
-	0x0d, 0xe2, 0x78, 0x25, 0x0e, 0x2e, 0x36, 0x88, 0x55, 0x4a, 0xeb, 0x18, 0xb9, 0xf8, 0x50, 0x35,
-	0x0a, 0x49, 0x71, 0x71, 0xa4, 0x65, 0xe6, 0xa4, 0xe6, 0x25, 0xe6, 0xa6, 0x82, 0x9d, 0xca, 0x19,
-	0x04, 0xe7, 0x0b, 0x49, 0x73, 0x71, 0x82, 0xd8, 0xf1, 0xc5, 0x99, 0x55, 0xa9, 0x12, 0x4c, 0x0a,
-	0x8c, 0x1a, 0x2c, 0x10, 0xc9, 0xe0, 0xcc, 0x2a, 0xb0, 0x64, 0x6e, 0x66, 0x6e, 0x6a, 0x7c, 0x49,
-	0x65, 0x41, 0x2a, 0xd8, 0x9d, 0x9c, 0x41, 0x1c, 0x20, 0x81, 0x90, 0xca, 0x82, 0x54, 0x21, 0x37,
-	0x2e, 0xce, 0xb4, 0xa2, 0xc4, 0xf4, 0xdc, 0xd4, 0xbc, 0x92, 0x62, 0x09, 0x16, 0x05, 0x66, 0x0d,
-	0x6e, 0x23, 0x0d, 0x2c, 0x9e, 0x80, 0xb8, 0xc1, 0x0d, 0xaa, 0xd2, 0x37, 0xb1, 0xa0, 0x20, 0x33,
-	0x2f, 0x3d, 0x08, 0xa1, 0x55, 0x29, 0x90, 0x4b, 0x14, 0xab, 0x1a, 0x21, 0x71, 0x2e, 0xf6, 0xb4,
-	0x94, 0xe2, 0xe4, 0xf8, 0xcc, 0x14, 0xa8, 0xab, 0xd9, 0x40, 0x5c, 0xcf, 0x14, 0x21, 0x79, 0x2e,
-	0x6e, 0x98, 0x76, 0x90, 0x24, 0x13, 0x58, 0x92, 0x0b, 0x26, 0xe4, 0x99, 0xe2, 0x64, 0x70, 0xe2,
-	0x91, 0x1c, 0xe3, 0x85, 0x47, 0x72, 0x8c, 0x0f, 0x1e, 0xc9, 0x31, 0x4e, 0x78, 0x2c, 0xc7, 0x70,
-	0xe1, 0xb1, 0x1c, 0xc3, 0x8d, 0xc7, 0x72, 0x0c, 0x51, 0x62, 0xe0, 0xe8, 0xaf, 0x40, 0x4a, 0x00,
-	0x20, 0xbf, 0x15, 0x27, 0xb1, 0x81, 0x63, 0xdf, 0x18, 0x10, 0x00, 0x00, 0xff, 0xff, 0x8c, 0x43,
-	0xb3, 0x9e, 0x1f, 0x02, 0x00, 0x00,
+	// 430 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x84, 0x52, 0xc1, 0x8e, 0xd3, 0x30,
+	0x10, 0x8d, 0x37, 0xbb, 0xd9, 0x76, 0xb2, 0x5a, 0x81, 0x11, 0x10, 0x40, 0xca, 0xee, 0xe6, 0xd4,
+	0x03, 0x4a, 0xd9, 0xae, 0x90, 0x10, 0xc7, 0x0a, 0xaa, 0xad, 0x50, 0x2b, 0x88, 0xb8, 0xc0, 0xa5,
+	0x32, 0x89, 0x53, 0x99, 0xd6, 0x49, 0x14, 0x9b, 0x88, 0xf0, 0x03, 0x5c, 0xf9, 0x05, 0xfe, 0x86,
+	0x63, 0x8f, 0x1c, 0x51, 0x7b, 0xe5, 0x23, 0x90, 0x9d, 0x84, 0xb6, 0x10, 0x69, 0x6f, 0xf6, 0xbc,
+	0xf7, 0xc6, 0x6f, 0x9e, 0x07, 0x5c, 0x1e, 0x89, 0xb0, 0xcf, 0xa9, 0x24, 0x42, 0xa6, 0x39, 0xed,
+	0x17, 0x97, 0xfd, 0x8c, 0x84, 0x0b, 0x2a, 0xfd, 0x2c, 0x4f, 0x65, 0x8a, 0x6f, 0x2b, 0xdc, 0xff,
+	0x8b, 0xfb, 0xc5, 0xa5, 0xf7, 0x1d, 0xc1, 0x9d, 0x49, 0x53, 0x78, 0xad, 0xc9, 0x2f, 0x88, 0x24,
+	0xf8, 0x0a, 0xac, 0x24, 0x55, 0x27, 0x07, 0x9d, 0xa3, 0x9e, 0x3d, 0x78, 0xe0, 0xff, 0xa7, 0xf5,
+	0xa7, 0x9a, 0x70, 0x6d, 0x04, 0x35, 0x15, 0xbf, 0x82, 0x53, 0x4e, 0x12, 0x16, 0x53, 0x21, 0xab,
+	0x56, 0x8e, 0xa9, 0xc5, 0x17, 0x2d, 0xe2, 0xc9, 0x1e, 0xf1, 0xda, 0x08, 0xfe, 0x91, 0x0e, 0x3b,
+	0x60, 0x55, 0xe6, 0xbd, 0x0e, 0x58, 0xd5, 0x53, 0xde, 0x1b, 0xb8, 0x5b, 0xa1, 0xa3, 0x9c, 0xcc,
+	0x39, 0x4d, 0xe4, 0x84, 0x64, 0x19, 0x4b, 0xe6, 0xf8, 0x3e, 0x1c, 0xc7, 0x91, 0x08, 0x67, 0x2c,
+	0xd2, 0x7e, 0xbb, 0x81, 0xa5, 0xae, 0xe3, 0x08, 0x9f, 0x81, 0x1d, 0xd7, 0x5c, 0x05, 0x1e, 0x68,
+	0x10, 0x9a, 0xd2, 0x38, 0xf2, 0xbe, 0x22, 0x38, 0x19, 0xb1, 0x25, 0x55, 0x21, 0x44, 0x6a, 0x88,
+	0x47, 0xd0, 0xe5, 0x8c, 0xd3, 0x99, 0x2c, 0x33, 0x5a, 0x37, 0xeb, 0xa8, 0xc2, 0xdb, 0x32, 0xa3,
+	0x18, 0xc3, 0xa1, 0x60, 0x5f, 0xa8, 0xee, 0x73, 0x18, 0xe8, 0x33, 0x1e, 0x41, 0xb7, 0xe9, 0x27,
+	0x1c, 0xf3, 0xdc, 0xec, 0xd9, 0x83, 0x5e, 0xcb, 0xc0, 0xad, 0xc6, 0x83, 0xad, 0xd4, 0xfb, 0x8d,
+	0xe0, 0x74, 0x3f, 0x15, 0x7c, 0x01, 0x27, 0x59, 0x9e, 0x7e, 0xa4, 0xa1, 0x9c, 0x25, 0x84, 0x37,
+	0x76, 0xec, 0xba, 0x36, 0x25, 0x9c, 0x62, 0x07, 0x8e, 0x0b, 0x9a, 0x0b, 0x96, 0x26, 0xf5, 0x70,
+	0xcd, 0x15, 0x0f, 0xe1, 0x28, 0x66, 0x4b, 0xda, 0x78, 0x7a, 0x7c, 0xe3, 0x27, 0xf8, 0x2a, 0x07,
+	0xf1, 0x32, 0x91, 0x79, 0x19, 0x54, 0xd2, 0x87, 0xef, 0x00, 0xb6, 0x45, 0x7c, 0x0b, 0xcc, 0x05,
+	0x2d, 0x6b, 0x17, 0xea, 0x88, 0x9f, 0xc2, 0x51, 0x41, 0x96, 0x9f, 0xaa, 0x40, 0xec, 0xc1, 0x59,
+	0xcb, 0x1b, 0xbb, 0xe1, 0x06, 0x15, 0xfb, 0xf9, 0xc1, 0x33, 0x34, 0x7c, 0xf2, 0x63, 0xed, 0xa2,
+	0xd5, 0xda, 0x45, 0xbf, 0xd6, 0x2e, 0xfa, 0xb6, 0x71, 0x8d, 0xd5, 0xc6, 0x35, 0x7e, 0x6e, 0x5c,
+	0xe3, 0xfd, 0x3d, 0xbd, 0xc6, 0x9f, 0x77, 0x16, 0x59, 0xfd, 0x85, 0xf8, 0x60, 0xe9, 0x2d, 0xbe,
+	0xfa, 0x13, 0x00, 0x00, 0xff, 0xff, 0x8c, 0x45, 0x8a, 0xf1, 0xe7, 0x02, 0x00, 0x00,
 }
 
 func (m *MetastorePacketData) Marshal() (dAtA []byte, err error) {
@@ -399,62 +463,6 @@ func (m *NoData) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *ManifestPacket) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *ManifestPacket) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *ManifestPacket) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if len(m.Fragments) > 0 {
-		for iNdEx := len(m.Fragments) - 1; iNdEx >= 0; iNdEx-- {
-			{
-				size, err := m.Fragments[iNdEx].MarshalToSizedBuffer(dAtA[:i])
-				if err != nil {
-					return 0, err
-				}
-				i -= size
-				i = encodeVarintPacket(dAtA, i, uint64(size))
-			}
-			i--
-			dAtA[i] = 0x22
-		}
-	}
-	if len(m.MimeType) > 0 {
-		i -= len(m.MimeType)
-		copy(dAtA[i:], m.MimeType)
-		i = encodeVarintPacket(dAtA, i, uint64(len(m.MimeType)))
-		i--
-		dAtA[i] = 0x1a
-	}
-	if m.FileSize != 0 {
-		i = encodeVarintPacket(dAtA, i, uint64(m.FileSize))
-		i--
-		dAtA[i] = 0x10
-	}
-	if len(m.Filename) > 0 {
-		i -= len(m.Filename)
-		copy(dAtA[i:], m.Filename)
-		i = encodeVarintPacket(dAtA, i, uint64(len(m.Filename)))
-		i--
-		dAtA[i] = 0xa
-	}
-	return len(dAtA) - i, nil
-}
-
 func (m *PacketFragmentMapping) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
@@ -486,6 +494,118 @@ func (m *PacketFragmentMapping) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i -= len(m.FdscId)
 		copy(dAtA[i:], m.FdscId)
 		i = encodeVarintPacket(dAtA, i, uint64(len(m.FdscId)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *FileMetadata) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *FileMetadata) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *FileMetadata) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Fragments) > 0 {
+		for iNdEx := len(m.Fragments) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Fragments[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintPacket(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x1a
+		}
+	}
+	if m.Size_ != 0 {
+		i = encodeVarintPacket(dAtA, i, uint64(m.Size_))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.MimeType) > 0 {
+		i -= len(m.MimeType)
+		copy(dAtA[i:], m.MimeType)
+		i = encodeVarintPacket(dAtA, i, uint64(len(m.MimeType)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *ManifestPacket) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *ManifestPacket) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *ManifestPacket) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Files) > 0 {
+		for k := range m.Files {
+			v := m.Files[k]
+			baseI := i
+			if v != nil {
+				{
+					size, err := v.MarshalToSizedBuffer(dAtA[:i])
+					if err != nil {
+						return 0, err
+					}
+					i -= size
+					i = encodeVarintPacket(dAtA, i, uint64(size))
+				}
+				i--
+				dAtA[i] = 0x12
+			}
+			i -= len(k)
+			copy(dAtA[i:], k)
+			i = encodeVarintPacket(dAtA, i, uint64(len(k)))
+			i--
+			dAtA[i] = 0xa
+			i = encodeVarintPacket(dAtA, i, uint64(baseI-i))
+			i--
+			dAtA[i] = 0x1a
+		}
+	}
+	if len(m.Version) > 0 {
+		i -= len(m.Version)
+		copy(dAtA[i:], m.Version)
+		i = encodeVarintPacket(dAtA, i, uint64(len(m.Version)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.ProjectName) > 0 {
+		i -= len(m.ProjectName)
+		copy(dAtA[i:], m.ProjectName)
+		i = encodeVarintPacket(dAtA, i, uint64(len(m.ProjectName)))
 		i--
 		dAtA[i] = 0xa
 	}
@@ -548,32 +668,6 @@ func (m *NoData) Size() (n int) {
 	return n
 }
 
-func (m *ManifestPacket) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	l = len(m.Filename)
-	if l > 0 {
-		n += 1 + l + sovPacket(uint64(l))
-	}
-	if m.FileSize != 0 {
-		n += 1 + sovPacket(uint64(m.FileSize))
-	}
-	l = len(m.MimeType)
-	if l > 0 {
-		n += 1 + l + sovPacket(uint64(l))
-	}
-	if len(m.Fragments) > 0 {
-		for _, e := range m.Fragments {
-			l = e.Size()
-			n += 1 + l + sovPacket(uint64(l))
-		}
-	}
-	return n
-}
-
 func (m *PacketFragmentMapping) Size() (n int) {
 	if m == nil {
 		return 0
@@ -587,6 +681,58 @@ func (m *PacketFragmentMapping) Size() (n int) {
 	l = len(m.FragmentId)
 	if l > 0 {
 		n += 1 + l + sovPacket(uint64(l))
+	}
+	return n
+}
+
+func (m *FileMetadata) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.MimeType)
+	if l > 0 {
+		n += 1 + l + sovPacket(uint64(l))
+	}
+	if m.Size_ != 0 {
+		n += 1 + sovPacket(uint64(m.Size_))
+	}
+	if len(m.Fragments) > 0 {
+		for _, e := range m.Fragments {
+			l = e.Size()
+			n += 1 + l + sovPacket(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *ManifestPacket) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.ProjectName)
+	if l > 0 {
+		n += 1 + l + sovPacket(uint64(l))
+	}
+	l = len(m.Version)
+	if l > 0 {
+		n += 1 + l + sovPacket(uint64(l))
+	}
+	if len(m.Files) > 0 {
+		for k, v := range m.Files {
+			_ = k
+			_ = v
+			l = 0
+			if v != nil {
+				l = v.Size()
+				l += 1 + sovPacket(uint64(l))
+			}
+			mapEntrySize := 1 + len(k) + sovPacket(uint64(len(k))) + l
+			n += mapEntrySize + 1 + sovPacket(uint64(mapEntrySize))
+		}
 	}
 	return n
 }
@@ -767,173 +913,6 @@ func (m *NoData) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *ManifestPacket) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowPacket
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: ManifestPacket: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: ManifestPacket: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Filename", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPacket
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthPacket
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthPacket
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Filename = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field FileSize", wireType)
-			}
-			m.FileSize = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPacket
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.FileSize |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 3:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field MimeType", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPacket
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthPacket
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthPacket
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.MimeType = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 4:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Fragments", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPacket
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthPacket
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthPacket
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Fragments = append(m.Fragments, &PacketFragmentMapping{})
-			if err := m.Fragments[len(m.Fragments)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipPacket(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthPacket
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
 func (m *PacketFragmentMapping) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -1026,6 +1005,384 @@ func (m *PacketFragmentMapping) Unmarshal(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.FragmentId = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipPacket(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthPacket
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *FileMetadata) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowPacket
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: FileMetadata: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: FileMetadata: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MimeType", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPacket
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPacket
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPacket
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.MimeType = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Size_", wireType)
+			}
+			m.Size_ = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPacket
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Size_ |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Fragments", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPacket
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthPacket
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthPacket
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Fragments = append(m.Fragments, &PacketFragmentMapping{})
+			if err := m.Fragments[len(m.Fragments)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipPacket(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthPacket
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *ManifestPacket) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowPacket
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: ManifestPacket: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: ManifestPacket: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ProjectName", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPacket
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPacket
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPacket
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ProjectName = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Version", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPacket
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPacket
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPacket
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Version = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Files", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPacket
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthPacket
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthPacket
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Files == nil {
+				m.Files = make(map[string]*FileMetadata)
+			}
+			var mapkey string
+			var mapvalue *FileMetadata
+			for iNdEx < postIndex {
+				entryPreIndex := iNdEx
+				var wire uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowPacket
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					wire |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				fieldNum := int32(wire >> 3)
+				if fieldNum == 1 {
+					var stringLenmapkey uint64
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowPacket
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						stringLenmapkey |= uint64(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					intStringLenmapkey := int(stringLenmapkey)
+					if intStringLenmapkey < 0 {
+						return ErrInvalidLengthPacket
+					}
+					postStringIndexmapkey := iNdEx + intStringLenmapkey
+					if postStringIndexmapkey < 0 {
+						return ErrInvalidLengthPacket
+					}
+					if postStringIndexmapkey > l {
+						return io.ErrUnexpectedEOF
+					}
+					mapkey = string(dAtA[iNdEx:postStringIndexmapkey])
+					iNdEx = postStringIndexmapkey
+				} else if fieldNum == 2 {
+					var mapmsglen int
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowPacket
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						mapmsglen |= int(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					if mapmsglen < 0 {
+						return ErrInvalidLengthPacket
+					}
+					postmsgIndex := iNdEx + mapmsglen
+					if postmsgIndex < 0 {
+						return ErrInvalidLengthPacket
+					}
+					if postmsgIndex > l {
+						return io.ErrUnexpectedEOF
+					}
+					mapvalue = &FileMetadata{}
+					if err := mapvalue.Unmarshal(dAtA[iNdEx:postmsgIndex]); err != nil {
+						return err
+					}
+					iNdEx = postmsgIndex
+				} else {
+					iNdEx = entryPreIndex
+					skippy, err := skipPacket(dAtA[iNdEx:])
+					if err != nil {
+						return err
+					}
+					if (skippy < 0) || (iNdEx+skippy) < 0 {
+						return ErrInvalidLengthPacket
+					}
+					if (iNdEx + skippy) > postIndex {
+						return io.ErrUnexpectedEOF
+					}
+					iNdEx += skippy
+				}
+			}
+			m.Files[mapkey] = mapvalue
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

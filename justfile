@@ -116,6 +116,10 @@ shell target:
 	@kubectl exec -it -n {{PROJECT_NAME}} deploy/{{PROJECT_NAME}}-{{target}} -- /bin/bash 2>/dev/null || \
 	kubectl exec -it -n {{PROJECT_NAME}} statefulset/{{PROJECT_NAME}}-{{target}} -- /bin/bash
 
+# [Exec] 特定のPod内でコマンドを実行
+exec target *command:
+	@kubectl exec -it -n {{PROJECT_NAME}} deploy/{{PROJECT_NAME}}-{{target}} -- {{command}} 2>/dev/null || \
+	kubectl exec -it -n {{PROJECT_NAME}} statefulset/{{PROJECT_NAME}}-{{target}} -- {{command}}
 
 # [Monitor] Mempool内のトランザクション数をリアルタイム監視 (Ctrl+Cで停止)
 monitor-mempool:

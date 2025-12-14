@@ -5,41 +5,34 @@ source "$(dirname "$0")/lib/common.sh"
 echo "=== Phase 4-3: Zip Archive Upload Test ==="
 
 TARGET_CHAIN="fdsc-0"
+# ユニークなプロジェクト名を使用
+PROJECT_NAME="zip-site-project-$(date +%s)"
+VERSION="2.0.0"
 TEST_DIR="/tmp/phase4-zip-src"
 ZIP_NAME="archive.zip"
 LOCAL_ZIP="/tmp/$ZIP_NAME"
 REMOTE_ZIP="/tmp/$ZIP_NAME"
 
 # 1. データ作成 & Zip圧縮
-mkdir -p "$TEST_DIR"
-create_html_file "$TEST_DIR/page1.html" "Page1"
-create_html_file "$TEST_DIR/page2.html" "Page2"
+mkdir -p "$TEST_DIR/assets"
+create_html_file "$TEST_DIR/index.html" "HomePage"
+echo "body { background: #000; }" > "$TEST_DIR/assets/style.css"
 
-# Zip作成 (quiet mode)
-(cd "/tmp" && zip -r -q "$ZIP_NAME" "phase4-zip-src")
+(cd "$TEST_DIR" && zip -r -q "$LOCAL_ZIP" .)
+log_info "📦 Created Zip file."
 
-# 2. GWCへ転送
+# 2. GWCへ転送 & アップロード
 push_to_gwc "$LOCAL_ZIP" "$REMOTE_ZIP"
+upload_and_wait_v2 "$REMOTE_ZIP" "$TARGET_CHAIN" "$PROJECT_NAME" "$VERSION" 0
 
-# 3. アップロード
-upload_and_wait "$REMOTE_ZIP" "$TARGET_CHAIN"
+# 4. 検証 (Zip内のファイルが個別に復元できるか確認)
+log_step "🧪 Verifying extracted content from Zip..."
 
-# 4. 検証 (バイナリ一致確認)
-verify_data "$TARGET_CHAIN" "$LOCAL_ZIP"
+# A. index.html
+verify_data "$TARGET_CHAIN" "$TEST_DIR/index.html" "index.html" "$PROJECT_NAME"
 
-# 5. 解凍テスト (復元したZipが壊れていないか)
-log_step "🧪 Testing Zip Integrity..."
-# verify_data内で復元ロジックが完結しているため、再度手動で取得して解凍テストを行う
-RESTORED_ZIP="/tmp/restored_$ZIP_NAME"
-# FDSCからデータ取得
-JSON=$(pod_exec "$(get_chain_pod_name $TARGET_CHAIN)" fdscd q datastore list-fragment -o json)
-echo "$JSON" | jq -r '.fragment[-1].data' | base64 -d > "$RESTORED_ZIP"
+# B. assets/style.css
+verify_data "$TARGET_CHAIN" "$TEST_DIR/assets/style.css" "assets/style.css" "$PROJECT_NAME"
 
-if unzip -tq "$RESTORED_ZIP"; then
-    log_success "Zip integrity check passed."
-else
-    log_error "Zip file is corrupted!"
-fi
-
-rm -rf "$TEST_DIR" "$LOCAL_ZIP" "$RESTORED_ZIP"
-log_success "Test 03 (Zip Archive) Passed!"
+rm -rf "$TEST_DIR" "$LOCAL_ZIP"
+log_success "Test 03 (Zip Archive & Extraction) Passed!"

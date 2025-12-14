@@ -5,30 +5,29 @@ source "$(dirname "$0")/lib/common.sh"
 echo "=== Phase 4-2: Directory Content Upload Test ==="
 
 TARGET_CHAIN="fdsc-0"
+# ユニークなプロジェクト名を使用
+PROJECT_NAME="dir-test-project-$(date +%s)"
+VERSION="0.1.0"
 TEST_DIR="/tmp/test-site"
 mkdir -p "$TEST_DIR/css" "$TEST_DIR/img"
 
-# 1. ディレクトリ構造とファイル作成
+# 1. データ作成
 create_html_file "$TEST_DIR/index.html" "Home"
 echo "body { color: red; }" > "$TEST_DIR/css/style.css"
 echo "fake-image-binary" > "$TEST_DIR/img/logo.png"
 
 # 2. 全ファイルをループして処理
-# findコマンドでファイル一覧を取得
 find "$TEST_DIR" -type f | while read -r LOCAL_FILE; do
-    REL_PATH="${LOCAL_FILE#$TEST_DIR/}" # 相対パス
-    REMOTE_PATH="/tmp/$(basename "$LOCAL_FILE")" # GWC上ではフラットに置く（アップロードテストのため）
+    REMOTE_PATH="/tmp/$(basename "$LOCAL_FILE")"
     
-    log_step "📂 Processing: $REL_PATH"
-    
-    # GWCへ転送
+    log_step "📂 Processing: $(basename "$LOCAL_FILE")"
     push_to_gwc "$LOCAL_FILE" "$REMOTE_PATH"
     
     # アップロード
-    upload_and_wait "$REMOTE_PATH" "$TARGET_CHAIN"
+    upload_and_wait_v2 "$REMOTE_PATH" "$TARGET_CHAIN" "$PROJECT_NAME" "$VERSION" 0
     
     # 検証
-    verify_data "$TARGET_CHAIN" "$LOCAL_FILE"
+    verify_data "$TARGET_CHAIN" "$LOCAL_FILE" "$(basename "$LOCAL_FILE")" "$PROJECT_NAME"
 done
 
 rm -rf "$TEST_DIR"

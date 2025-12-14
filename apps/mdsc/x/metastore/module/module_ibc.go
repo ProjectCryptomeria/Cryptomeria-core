@@ -2,7 +2,6 @@ package metastore
 
 import (
 	"fmt"
-	"strings"
 
 	errorsmod "cosmossdk.io/errors"
 
@@ -122,63 +121,61 @@ func (im IBCModule) OnRecvPacket(
 	switch packet := modulePacketData.Packet.(type) {
 	case *types.MetastorePacketData_ManifestPacket:
 		manifestData := packet.ManifestPacket
+		projectName := manifestData.ProjectName
 
-		// 1. FragmentLocationリストの変換
-		var storedFragments []*types.FragmentLocation
-		for _, f := range manifestData.Fragments {
-			storedFragments = append(storedFragments, &types.FragmentLocation{
-				FdscId:     f.FdscId,
-				FragmentId: f.FragmentId,
-			})
-		}
+		ctx.Logger().Info("Receiving Manifest Packet (Map Structure)",
+			"project", projectName,
+			"version", manifestData.Version,
+			"files_count", len(manifestData.Files))
 
-		// 2. FileInfoの作成
-		fileInfo := types.FileInfo{
-			MimeType:  manifestData.MimeType,
-			FileSize:  manifestData.FileSize,
-			Fragments: storedFragments,
-		}
-
-		// 3. Manifestの作成と保存
-		// GWCからは "ProjectName/path/to/file" の形式で来るため、最初の "/" で分割する
-		fullPath := manifestData.Filename
-		parts := strings.SplitN(fullPath, "/", 2)
-
-		var projectName, fileKey string
-		if len(parts) == 2 {
-			projectName = parts[0]
-			fileKey = parts[1]
-		} else {
-			// 分割できない場合（ルート直下など）はそのまま使用
-			projectName = fullPath
-			fileKey = fullPath
-		}
-
-		ctx.Logger().Info("Receiving Manifest Packet", "full_path", fullPath, "project", projectName, "file_key", fileKey)
-
+		// 1. 既存または新規のManifestを取得
 		manifest, err := im.keeper.Manifest.Get(ctx, projectName)
 		if err != nil { // 新規作成
 			manifest = types.Manifest{
 				ProjectName: projectName,
-				Version:     "1.0.0",
-				Creator:     "ibc-user",
+				Version:     manifestData.Version,
+				Creator:     "ibc-user", // TODO: 送信元のCreatorをパケットに含める改修を検討
 				Files:       make(map[string]*types.FileInfo),
 			}
-			manifest.Files[fileKey] = &fileInfo
 		} else { // 更新
+			// バージョン更新
+			manifest.Version = manifestData.Version
 			if manifest.Files == nil {
 				manifest.Files = make(map[string]*types.FileInfo)
 			}
-			manifest.Files[fileKey] = &fileInfo
 		}
 
-		// 保存
+		// 2. 受信したファイル情報をストレージ形式に変換してマージ
+		for filePath, fileMeta := range manifestData.Files {
+			// FragmentLocationリストの変換
+			var storedFragments []*types.FragmentLocation
+			for _, f := range fileMeta.Fragments {
+				storedFragments = append(storedFragments, &types.FragmentLocation{
+					FdscId:     f.FdscId,
+					FragmentId: f.FragmentId,
+				})
+			}
+
+			// FileInfoの作成
+			fileInfo := types.FileInfo{
+				MimeType:  fileMeta.MimeType,
+				FileSize:  fileMeta.Size_, // packet.proto: uint64 size = 2;
+				Fragments: storedFragments,
+			}
+
+			// マップに登録（上書き）
+			manifest.Files[filePath] = &fileInfo
+		}
+
+		// 3. 保存
 		if err := im.keeper.Manifest.Set(ctx, projectName, manifest); err != nil {
-			return channeltypes.NewErrorAcknowledgement(fmt.Errorf("failed to save manifest: %w", err))
+			errMsg := fmt.Errorf("failed to save manifest for project %s: %w", projectName, err)
+			ctx.Logger().Error(errMsg.Error())
+			return channeltypes.NewErrorAcknowledgement(errMsg)
 		}
 
 		// デバッグログ
-		fmt.Printf("\n[DEBUG] Manifest Saved: Project=%s, FileKey=%s\n", projectName, fileKey)
+		fmt.Printf("\n[DEBUG] Manifest Saved: Project=%s, Files Updated=%d\n", projectName, len(manifestData.Files))
 
 		return channeltypes.NewResultAcknowledgement([]byte{byte(1)})
 

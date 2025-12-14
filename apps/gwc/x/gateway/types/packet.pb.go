@@ -267,7 +267,7 @@ func (m *PacketFragmentMapping) GetFragmentId() string {
 type FileMetadata struct {
 	MimeType string `protobuf:"bytes,1,opt,name=mime_type,json=mimeType,proto3" json:"mime_type,omitempty"`
 	Size_    uint64 `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
-	// Ordered list of fragments that make up this file
+	// このファイル構成するフラグメントの順序付きリスト
 	Fragments []*PacketFragmentMapping `protobuf:"bytes,3,rep,name=fragments,proto3" json:"fragments,omitempty"`
 }
 
@@ -326,11 +326,11 @@ func (m *FileMetadata) GetFragments() []*PacketFragmentMapping {
 }
 
 // ManifestPacket defines the structure of the website/project
-// It uses a map for O(1) access to file metadata by path
+// ルートからのパスをキーとしたマップ構造で、ファイルメタデータへのO(1)アクセスを実現します
 type ManifestPacket struct {
 	ProjectName string `protobuf:"bytes,1,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
 	Version     string `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
-	// Map key is the relative path (e.g. "index.html", "assets/logo.png")
+	// マップのキーは相対パス (例: "index.html", "assets/logo.png")
 	Files map[string]*FileMetadata `protobuf:"bytes,3,rep,name=files,proto3" json:"files,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
 }
 
