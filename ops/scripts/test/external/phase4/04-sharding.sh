@@ -4,17 +4,14 @@ source "$(dirname "$0")/lib/common.sh"
 
 echo "=== Phase 4-4: Distributed Storage (Sharding) Test ==="
 
-# 1. FDSCノードを増やす
-SCALE_SCRIPT="$(dirname "$0")/../../control/scale-fdsc.sh"
-TARGET_NODES=2
 
 log_step "📈 Scaling FDSC to $TARGET_NODES nodes..."
 "$SCALE_SCRIPT" "$TARGET_NODES"
 
 # 2. 各ノードへ分散アップロード
 NODES=("fdsc-0" "fdsc-1")
-# ユニークなプレフィックスを使用
 PROJECT_PREFIX="shard-test-$(date +%s)"
+FRAGMENT_SIZE=10240 # 10KB
 
 for NODE in "${NODES[@]}"; do
     FILENAME="data-for-$NODE.txt"
@@ -25,7 +22,7 @@ for NODE in "${NODES[@]}"; do
     echo "This data belongs to $NODE at $(date)" > "$LOCAL_PATH"
     
     push_to_gwc "$LOCAL_PATH" "$REMOTE_PATH"
-    upload_and_wait_v2 "$REMOTE_PATH" "$NODE" "$PROJECT_NAME" "1.0" 0
+    upload_and_wait_v2 "$REMOTE_PATH" "$NODE" "$PROJECT_NAME" "1.0" "$FRAGMENT_SIZE"
     
     # 検証
     verify_data "$NODE" "$LOCAL_PATH" "$FILENAME" "$PROJECT_NAME"

@@ -41,7 +41,7 @@ upload_and_get_txhash() {
     local file_path=$1
     local project_name=${2:-"default-project"}
     local version=${3:-"v1.0.0"}
-    local fragment_size=${4:-0} # 0 means default
+    local fragment_size=${4:-${FRAGMENT_SIZE:-0}}
     local tx_hash=""
 
     log_step "📤 Submitting Upload Tx for $(basename "$file_path")..."
@@ -55,7 +55,6 @@ upload_and_get_txhash() {
     
     local res=$(pod_exec "$GWC_POD" $cmd)
     
-    # 修正: JSON部分のみを抽出 (ログ混入対策)
     tx_hash=$(echo "$res" | sed -n '/^{/,$p' | jq -r '.txhash')
     
     if [ -z "$tx_hash" ] || [ "$tx_hash" == "null" ]; then
@@ -71,17 +70,26 @@ upload_and_wait_v2() {
     local target_chain=$2 
     local project_name=$3
     local version=$4
-    local fragment_size=$5
+    local fragment_size=${5:-${FRAGMENT_SIZE:-0}}
 
     local tx_hash=$(upload_and_get_txhash "$remote_path" "$project_name" "$version" "$fragment_size")
     
     sleep 6
-    wait_for_data_persistence "$target_chain" "$project_name"
+    
+    # 修正: Zip以外ならファイル名を待機キーとして渡す
+    local filename=$(basename "$remote_path")
+    local wait_key=""
+    if [[ "$filename" != *.zip ]]; then
+        wait_key="$filename"
+    fi
+
+    wait_for_data_persistence "$target_chain" "$project_name" "$wait_key"
 }
 
 wait_for_data_persistence() {
     local target_chain=$1
     local project_name=$2
+    local expected_key=${3:-""} # オプション: 期待するファイルキー
     local timeout=180
     
     local fdsc_pod=$(kubectl get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=fdsc" -o jsonpath="{.items[0].metadata.name}" 2>/dev/null)
@@ -93,6 +101,9 @@ wait_for_data_persistence() {
     if [ -n "$project_name" ]; then
         log_info "   Target Project: $project_name"
     fi
+    if [ -n "$expected_key" ]; then
+        log_info "   Target File Key: $expected_key"
+    fi
     
     local persistence_success=false
     
@@ -102,13 +113,27 @@ wait_for_data_persistence() {
         if [ -z "$fdsc_count" ]; then fdsc_count=0; fi
         
         local mdsc_out=$(pod_exec "$MDSC_POD" mdscd q metastore list-manifest -o json 2>/dev/null)
-        local mdsc_json=$(echo "$mdsc_out" | sed -n '/^{/,$p') # JSON抽出
+        local mdsc_json=$(echo "$mdsc_out" | sed -n '/^{/,$p')
         local mdsc_found=false
 
         if [ -n "$project_name" ]; then
-            local found_count=$(echo "$mdsc_json" | jq -r --arg proj "$project_name" '.manifest[] | select(.project_name == $proj) | .project_name' 2>/dev/null | wc -l | tr -d ' ')
-            if [ "$found_count" -gt 0 ]; then
-                mdsc_found=true
+            # プロジェクトの存在確認
+            local proj_filter=".manifest[] | select(.project_name == \"$project_name\")"
+            local found_proj=$(echo "$mdsc_json" | jq -r "$proj_filter | .project_name" 2>/dev/null)
+            
+            if [ -n "$found_proj" ]; then
+                if [ -n "$expected_key" ]; then
+                    # 修正: 指定されたキーが含まれているかチェック
+                    local has_key=$(echo "$mdsc_json" | jq -r "$proj_filter | .files | has(\"$expected_key\")" 2>/dev/null)
+                    if [ "$has_key" == "true" ]; then
+                        mdsc_found=true
+                    else
+                        # プロジェクトはあるがキーがない場合
+                        mdsc_found=false 
+                    fi
+                else
+                    mdsc_found=true
+                fi
             fi
         else
             local total_count=$(echo "$mdsc_json" | jq '.manifest | length' 2>/dev/null)
@@ -118,7 +143,7 @@ wait_for_data_persistence() {
         fi
         
         if [ "$fdsc_count" -gt 0 ] && [ "$mdsc_found" = true ]; then
-            log_success "Data Persistence Confirmed! (Fragments: $fdsc_count, Project Found: $mdsc_found)"
+            log_success "Data Persistence Confirmed! (Fragments: $fdsc_count, Project/File Found: true)"
             persistence_success=true
             break
         fi
@@ -166,9 +191,6 @@ verify_data() {
     log_error "verify_data requires project_name as 4th argument"
   fi
 
-  # K8sの状態をまず表示
-  # debug_dump_k8s_state
-
   log_step "🔍 Verifying data for '$manifest_key' in project '$project_name'..."
 
   local orig_size=$(wc -c < "$original_local_path")
@@ -179,7 +201,7 @@ verify_data() {
 
   # MDSC取得
   local mdsc_out=$(pod_exec "$MDSC_POD" mdscd q metastore list-manifest -o json)
-  local mdsc_json=$(echo "$mdsc_out" | sed -n '/^{/,$p') # JSON抽出
+  local mdsc_json=$(echo "$mdsc_out" | sed -n '/^{/,$p')
   
   local fragments_json=$(echo "$mdsc_json" | jq -c --arg proj "$project_name" --arg key "$manifest_key" \
     '.manifest[] | select(.project_name == $proj) | .files[$key].fragments' 2>/dev/null)
@@ -223,7 +245,7 @@ verify_data() {
     # --- リトライ付きクエリ実行 ---
     local frag_data_json=""
     local retry_count=0
-    local max_retries=20 # 3s * 20 = 60s wait
+    local max_retries=20
     local query_success=false
 
     while [ $retry_count -lt $max_retries ]; do
@@ -232,7 +254,6 @@ verify_data() {
         local exit_code=$?
         set -e
         
-        # JSON部分のみ抽出
         frag_data_json=$(echo "$raw_out" | sed -n '/^{/,$p')
 
         if [ $exit_code -eq 0 ] && [ -n "$frag_data_json" ] && ! echo "$raw_out" | grep -q "key not found"; then
@@ -250,7 +271,6 @@ verify_data() {
         debug_dump_all_storage
         exit 1
     fi
-    # ----------------------------
 
     local content_base64=$(echo "$frag_data_json" | jq -r '.fragment.data')
     if [ -z "$content_base64" ] || [ "$content_base64" == "null" ]; then

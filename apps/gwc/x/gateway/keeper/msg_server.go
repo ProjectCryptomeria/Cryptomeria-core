@@ -102,27 +102,25 @@ func (k msgServer) processZipUpload(ctx sdk.Context, msg *types.MsgUpload, mdscC
 	}
 
 	// マニフェスト用のファイルマップを初期化
-	// NOTE: Protobuf map<string, FileMetadata> -> Go map[string]*types.FileMetadata (pointer)
 	filesMap := make(map[string]*types.FileMetadata)
 
-	// 全体を通してのチャンクカウンター（ラウンドロビン用）
+	// 全体を通してのチャンクカウンター（ラウンドロビン用 兼 ID生成用）
 	var totalChunkIndex int
 
 	for _, pFile := range processedFiles {
 		// 1. フラグメントの分散アップロード
-		// pFile.Path (正規化されたパス) をロギングに使用
 		fragmentMappings, err := k.uploadFragments(ctx, pFile.Chunks, pFile.Path, fdscChannels, &totalChunkIndex)
 		if err != nil {
 			return nil, err
 		}
 
-		// 2. MIMEタイプの検出 (最初の512バイトを使用)
+		// 2. MIMEタイプの検出
 		mimeType := "application/octet-stream"
 		if len(pFile.Content) > 0 {
 			mimeType = http.DetectContentType(pFile.Content)
 		}
 
-		// 3. マップへの登録 (キーは正規化されたパス)
+		// 3. マップへの登録
 		filesMap[pFile.Path] = &types.FileMetadata{
 			MimeType:  mimeType,
 			Size_:     uint64(len(pFile.Content)),
@@ -143,7 +141,6 @@ func (k msgServer) processSingleFileUpload(ctx sdk.Context, msg *types.MsgUpload
 	// プロジェクト名が指定されていない場合はファイル名を使用
 	projectName := msg.ProjectName
 	if projectName == "" {
-		// 単一ファイルの場合、プロジェクト名がないときはファイル名をプロジェクト名として扱う
 		projectName = GetProjectNameFromZipFilename(msg.Filename)
 	}
 
@@ -165,7 +162,7 @@ func (k msgServer) processSingleFileUpload(ctx sdk.Context, msg *types.MsgUpload
 
 	// 単一エントリーのマップを作成
 	filesMap := map[string]*types.FileMetadata{
-		msg.Filename: { // 単一ファイルの場合はファイル名をキーとする
+		msg.Filename: {
 			MimeType:  mimeType,
 			Size_:     uint64(len(msg.Data)),
 			Fragments: fragmentMappings,
@@ -182,7 +179,7 @@ func (k msgServer) processSingleFileUpload(ctx sdk.Context, msg *types.MsgUpload
 }
 
 // uploadFragments はチャンクのリストを受け取り、ラウンドロビンでFDSCに送信し、マッピングを返します
-// totalChunkIndex ポインタを受け取ることで、複数のファイルにまたがってラウンドロビンを継続します
+// totalChunkIndex ポインタを受け取ることで、複数のファイルにまたがってラウンドロビンとID生成のユニーク性を継続します
 func (k msgServer) uploadFragments(
 	ctx sdk.Context,
 	chunks [][]byte,
@@ -195,8 +192,12 @@ func (k msgServer) uploadFragments(
 	var fragmentMappings []*types.PacketFragmentMapping
 
 	for i, chunkData := range chunks {
-		// ユニークID生成: BlockTime(nano) + 現在のループインデックス
-		fragmentIDNum := uint64(ctx.BlockTime().UnixNano()) + uint64(i)
+		// 現在のグローバルインデックスを取得
+		currentGlobalIndex := *totalChunkIndex
+
+		// 修正: ID生成にローカルインデックス(i)ではなく、グローバルインデックスを使用する
+		// これにより、Zip内の別ファイルであってもIDが重複しない
+		fragmentIDNum := uint64(ctx.BlockTime().UnixNano()) + uint64(currentGlobalIndex)
 		fragmentIDStr := strconv.FormatUint(fragmentIDNum, 10)
 
 		packetData := types.GatewayPacketData{
@@ -211,8 +212,10 @@ func (k msgServer) uploadFragments(
 		timeoutTimestamp := uint64(ctx.BlockTime().UnixNano()) + uint64(TimeoutSeconds*1_000_000_000)
 
 		// ラウンドロビン選択: 全体カウンターを使用
-		targetChannel := fdscChannels[*totalChunkIndex%len(fdscChannels)]
-		*totalChunkIndex++ // カウンターを進める
+		targetChannel := fdscChannels[currentGlobalIndex%len(fdscChannels)]
+
+		// カウンターを進める (ID生成とチャネル選択の両方に影響)
+		*totalChunkIndex++
 
 		_, err := k.Keeper.TransmitGatewayPacketData(
 			ctx,
@@ -234,6 +237,7 @@ func (k msgServer) uploadFragments(
 		ctx.Logger().Info("FragmentPacketを送信しました",
 			"file", logFilename,
 			"chunk_index", i,
+			"global_index", currentGlobalIndex,
 			"target_channel", targetChannel,
 			"fragment_id", fragmentIDStr)
 	}
@@ -247,7 +251,7 @@ func (k msgServer) sendManifestPacket(
 	mdscChannel string,
 	projectName string,
 	version string,
-	files map[string]*types.FileMetadata, // Pointer type
+	files map[string]*types.FileMetadata,
 ) error {
 	const TimeoutSeconds = 600
 

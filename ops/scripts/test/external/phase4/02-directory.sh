@@ -5,10 +5,11 @@ source "$(dirname "$0")/lib/common.sh"
 echo "=== Phase 4-2: Directory Content Upload Test ==="
 
 TARGET_CHAIN="fdsc-0"
-# ユニークなプロジェクト名を使用
 PROJECT_NAME="dir-test-project-$(date +%s)"
 VERSION="0.1.0"
 TEST_DIR="/tmp/test-site"
+FRAGMENT_SIZE=10240 # 10KB (小さいファイルが多いので小さめでOK)
+
 mkdir -p "$TEST_DIR/css" "$TEST_DIR/img"
 
 # 1. データ作成
@@ -24,7 +25,7 @@ find "$TEST_DIR" -type f | while read -r LOCAL_FILE; do
     push_to_gwc "$LOCAL_FILE" "$REMOTE_PATH"
     
     # アップロード
-    upload_and_wait_v2 "$REMOTE_PATH" "$TARGET_CHAIN" "$PROJECT_NAME" "$VERSION" 0
+    upload_and_wait_v2 "$REMOTE_PATH" "$TARGET_CHAIN" "$PROJECT_NAME" "$VERSION" "$FRAGMENT_SIZE"
     
     # 検証
     verify_data "$TARGET_CHAIN" "$LOCAL_FILE" "$(basename "$LOCAL_FILE")" "$PROJECT_NAME"
