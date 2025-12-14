@@ -23,7 +23,7 @@ RELAYER_KEY_FILE="${MNEMONIC_DIR}/${CHAIN_ID}.relayer.mnemonic"
 MILLIONAIRE_KEY_FILE="${MNEMONIC_DIR}/${CHAIN_ID}.millionaire.mnemonic"
 
 # =============================================================================
-# 🧩 Helper Functions
+# 🧩 Helper Functions (Function領域)
 # =============================================================================
 log_step() { echo "--> $1"; }
 
@@ -87,11 +87,12 @@ add_genesis_account() {
 }
 
 # =============================================================================
-# 🏗️ Setup Logic
+# 🏗️ Setup Logic (Function領域)
 # =============================================================================
 
 step_init_chain() {
     log_step "Initializing chain: $CHAIN_ID"
+    # 既存の設定やデータをクリーンアップし、新しいチェーンを初期化
     rm -rf "$CHAIN_HOME/config" "$CHAIN_HOME/data" "$CHAIN_HOME/keyring-test"
     mkdir -p "$CHAIN_HOME"
     $CHAIN_BINARY init "$CHAIN_ID" --chain-id "$CHAIN_ID" --home "$CHAIN_HOME" >/dev/null 2>&1
@@ -141,41 +142,21 @@ step_create_validator() {
     $CHAIN_BINARY genesis validate --home "$CHAIN_HOME"
 }
 
-step_configure_node() {
-    log_step "Configuring node (sed)..."
-    local config_toml="$CHAIN_HOME/config/config.toml"
-    local app_toml="$CHAIN_HOME/config/app.toml"
-    
-    sed -i 's/laddr = "tcp:\/\/127.0.0.1:26657"/laddr = "tcp:\/\/0.0.0.0:26657"/' "$config_toml"
-    sed -i 's/cors_allowed_origins = \[\]/cors_allowed_origins = \["\*"\]/' "$config_toml"
-    sed -i 's/^timeout_broadcast_tx_commit = .*/timeout_broadcast_tx_commit = "60s"/' "$config_toml"
-    
-    sed -i '/\[api\]/,/\[/{s/enable = false/enable = true/}' "$app_toml"
-    sed -i '/\[api\]/,/\[/{s/address = "tcp:\/\/localhost:1317"/address = "tcp:\/\/0.0.0.0:1317"/}' "$app_toml"
-    sed -i '/\[grpc\]/,/\[/{s/enable = false/enable = true/}' "$app_toml"
-    sed -i '/\[grpc-web\]/,/\[/{s/enable = false/enable = true/}' "$app_toml"
-    
-    # Large TX support
-    sed -i 's/^max_body_bytes = .*/max_body_bytes = 10737418240/' "$config_toml"
-    sed -i 's/^max_tx_bytes = .*/max_tx_bytes = 10737418240/' "$config_toml"
-    sed -i 's/^max_txs_bytes = .*/max_txs_bytes = 10737418240/' "$config_toml"
-    sed -i '/\[api\]/a max-request-body-size = 10737418240' "$app_toml"
-    sed -i 's/^max-recv-msg-size = .*/max-recv-msg-size = "10737418240"/' "$app_toml"
-    sed -i 's/^max-send-msg-size = .*/max-send-msg-size = "10737418240"/' "$app_toml"
-}
+# step_configure_node は Goコードに移行されたため削除
 
 # =============================================================================
-# 🚀 Execution
+# 🚀 Execution (Main領域)
 # =============================================================================
 
 if [ ! -f "$INIT_FLAG" ]; then
     step_init_chain
     step_setup_accounts
     step_create_validator
-    step_configure_node
+    # step_configure_node は Goコードに移行されたため削除
     touch "$INIT_FLAG"
     echo "--- ✅ Initialization complete ---"
 fi
 
 echo "--- Starting node for $CHAIN_ID ---"
-exec $CHAIN_BINARY start --home $CHAIN_HOME --minimum-gas-prices=0$DENOM --log_level error --log_format json
+# minimum-gas-pricesはGoコードに移行されたため削除
+exec $CHAIN_BINARY start --home $CHAIN_HOME --log_level error --log_format json
