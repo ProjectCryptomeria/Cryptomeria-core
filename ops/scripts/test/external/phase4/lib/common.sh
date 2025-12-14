@@ -77,7 +77,7 @@ wait_for_data_persistence() {
     for ((i=1; i<=timeout/2; i++)); do # 2秒間隔でチェック
         # A. FDSC (Data Fragment) の確認
         # Datastoreに断片が1つでもあればOKとする (チャンクの数に関係なく)
-        local fdsc_count=$(pod_exec "$fdsc_pod" fdscd q datastore list-fragment -o json 2>/dev/null | jq '.fragment | length' 2>/dev/null || echo "0")
+        local fdsc_count=$(pod_exec "$fdsc_pod" fdscd q datastore list-fragment 2>/dev/null | jq '.fragment | length' 2>/dev/null || echo "0")
         
         # B. MDSC (Metadata Manifest) の確認
         # Metastoreにマニフェストが1つでもあればOKとする
@@ -141,13 +141,50 @@ verify_data() {
     log_info "   - Fetching Fragment $fragment_index (ID: $frag_id)..."
     
     # FDSCから特定IDのフラグメントデータを取得 (fdscd q datastore fragment $frag_id -o json)
-    local frag_data_json=$(pod_exec "$fdsc_pod" "$fdsc_bin" q datastore fragment "$frag_id" -o json 2>/dev/null)
+    # ⚠️ 修正ポイント: エラー出力を抑制せず、すべて取得する
+    local frag_data_json=$(pod_exec "$fdsc_pod" "$fdsc_bin" q datastore fragment "$frag_id" -o json)
+    
+    # ----------------------------------------------------
+    # 🚨 DEBUG: 生の応答内容を出力して確認
+    # ----------------------------------------------------
+    log_info "   [DEBUG] Raw Response Content (Start of fragment $frag_id):"
+    echo "$frag_data_json" | head -c 200 # 先頭200文字を表示
+    echo ""
+    log_info "   [DEBUG] Raw Response Content (End)"
     
     # Base64エンコードされたデータ部分を抽出
     local content_base64=$(echo "$frag_data_json" | jq -r '.fragment.data')
     
+    # ----------------------------------------------------
+    # 🚨 DEBUG: 長すぎる 'data' フィールドを省略して JSON 構造を出力
+    # ----------------------------------------------------
+    local b64_len=${#content_base64}
+    
+    log_info "   [DEBUG] Fragment JSON Structure (Data omitted):"
+    
+    # jqでfragment.dataを「[Base64 Data (Length: N bytes)]」に置き換えて出力
+    echo "$frag_data_json" | \
+      jq --arg len "$b64_len" '
+        if .fragment.data? then 
+          .fragment.data = ("[Base64 Data (Length: " + $len + " bytes, Preview: " + (.fragment.data | tostring | .[0:20]) + "...)]")
+        else 
+          .fragment.data = "[Data Field Missing or Null]" 
+        end' 2>/dev/null | \
+      jq '.' # 最後に整形して表示
+    echo "----------------------------------------------------"
+    
+    # ----------------------------------------------------
+    
     if [ -z "$content_base64" ] || [ "$content_base64" == "null" ]; then
-      log_error "Failed to extract data for Fragment ID $frag_id."
+      log_error "Failed to extract data for Fragment ID $frag_id. Raw JSON may be invalid or 'fragment.data' is missing/null."
+      
+      # エラー時のデバッグをさらに強化 (生のJSONの先頭を表示)
+      log_info "   [DEBUG] Raw JSON on Error:"
+      echo "$frag_data_json" | head -n 20 
+      [ $(echo "$frag_data_json" | wc -l) -gt 20 ] && echo "   ... (truncated)"
+      log_info "----------------------------------------"
+      
+      exit 1
     fi
     
     # 全てのBase64文字列を連結
