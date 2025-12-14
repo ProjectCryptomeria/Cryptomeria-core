@@ -7,7 +7,7 @@ set shell := ["bash", "-c"]
 
 # [E2E] 最新の統合テスト (Upload -> Relay -> Verify)
 e2e:
-	@./ops/scripts/test/phase3-e2e-test.sh
+	@./ops/scripts/test/external/phase3-e2e-test.sh
 
 # [Legacy] 旧アップロードテスト（互換性のため維持）
 upload:
