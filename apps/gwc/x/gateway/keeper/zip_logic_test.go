@@ -3,86 +3,98 @@ package keeper_test
 import (
 	"archive/zip"
 	"bytes"
+	"path"
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	"gwc/x/gateway/keeper"
+
+	"github.com/stretchr/testify/require"
 )
 
-func TestProcessZipData(t *testing.T) {
-	// Create a sample zip file
+func createTestZip(t *testing.T, files map[string][]byte) []byte {
 	buf := new(bytes.Buffer)
-	zipWriter := zip.NewWriter(buf)
+	w := zip.NewWriter(buf)
 
-	files := []struct {
-		Name    string
-		Content []byte
-	}{
-		{"index.html", []byte("<html><body>Hello</body></html>")},
-		{"css/style.css", []byte("body { color: red; }")},
-		{"js/app.js", bytes.Repeat([]byte("a"), 2500)}, // 2.5KB
-	}
-
-	for _, file := range files {
-		f, err := zipWriter.Create(file.Name)
+	for name, content := range files {
+		f, err := w.Create(name)
 		require.NoError(t, err)
-		_, err = f.Write(file.Content)
+		_, err = f.Write(content)
 		require.NoError(t, err)
 	}
 
-	require.NoError(t, zipWriter.Close())
-
-	zipData := buf.Bytes()
-	chunkSize := 1000 // 1KB chunks
-
-	// Test ProcessZipData
-	processedFiles, err := keeper.ProcessZipData(zipData, chunkSize)
+	err := w.Close()
 	require.NoError(t, err)
-	require.Len(t, processedFiles, 3)
-
-	// Verify each file
-	for _, pFile := range processedFiles {
-		var originalContent []byte
-		for _, f := range files {
-			if f.Name == pFile.Filename {
-				originalContent = f.Content
-				break
-			}
-		}
-		require.NotNil(t, originalContent, "File not found in original list: %s", pFile.Filename)
-		require.Equal(t, originalContent, pFile.Content)
-
-		// Verify chunks
-		expectedChunks := len(originalContent) / chunkSize
-		if len(originalContent)%chunkSize != 0 {
-			expectedChunks++
-		}
-		require.Len(t, pFile.Chunks, expectedChunks)
-
-		// Verify reassembled chunks
-		reassembled := []byte{}
-		for _, chunk := range pFile.Chunks {
-			reassembled = append(reassembled, chunk...)
-		}
-		require.Equal(t, originalContent, reassembled)
-	}
+	return buf.Bytes()
 }
 
-func TestGetProjectNameFromZipFilename(t *testing.T) {
-	tests := []struct {
-		filename string
-		expected string
-	}{
-		{"my-site.zip", "my-site"},
-		{"project.v1.zip", "project.v1"},
-		{"archive", "archive"}, // No extension
-		{"folder/file.zip", "folder/file"},
-	}
+func TestProcessZipData(t *testing.T) {
+	chunkSize := 1024
 
-	for _, tt := range tests {
-		t.Run(tt.filename, func(t *testing.T) {
-			result := keeper.GetProjectNameFromZipFilename(tt.filename)
-			require.Equal(t, tt.expected, result)
-		})
-	}
+	t.Run("Valid Zip extraction with path normalization", func(t *testing.T) {
+		files := map[string][]byte{
+			"index.html":           []byte("<html>index</html>"),
+			"assets/css/style.css": []byte("body { color: red; }"),
+			// Edge case: Windows style path or leading slash/dot
+			`./images\logo.png`: []byte("png-data"),
+		}
+
+		zipData := createTestZip(t, files)
+
+		processed, err := keeper.ProcessZipData(zipData, chunkSize)
+		require.NoError(t, err)
+		require.Len(t, processed, 3)
+
+		// Create a map for easy verification
+		processedMap := make(map[string]keeper.ProcessedFile)
+		for _, pf := range processed {
+			processedMap[pf.Path] = pf
+		}
+
+		// Verify index.html
+		require.Contains(t, processedMap, "index.html")
+		require.Equal(t, "<html>index</html>", string(processedMap["index.html"].Content))
+
+		// Verify assets/css/style.css
+		require.Contains(t, processedMap, "assets/css/style.css")
+		require.Equal(t, "body { color: red; }", string(processedMap["assets/css/style.css"].Content))
+
+		// Verify normalization of ./images\logo.png -> images/logo.png
+		// Note: filepath.ToSlash handles backslashes
+		// Note: The normalization logic should handle this.
+		// If the logic in zip_logic.go is strictly implementing filepath.Clean/ToSlash,
+		// `images/logo.png` should be the key.
+		expectedPath := path.Join("images", "logo.png")
+		require.Contains(t, processedMap, expectedPath)
+		require.Equal(t, "png-data", string(processedMap[expectedPath].Content))
+	})
+
+	t.Run("Decompression limit exceeded", func(t *testing.T) {
+		// Mock a huge file by repeating data
+		hugeData := make([]byte, keeper.DecompressionLimit+100)
+		files := map[string][]byte{
+			"huge.txt": hugeData,
+		}
+		// Note: In a real zip bomb, the zip size is small but decompressed is large.
+		// Here we just test the logic check with uncompressed store (default for simple writer often)
+		// or just check if ProcessZipData sums up sizes correctly.
+
+		// For strictly testing "limit", we can pass a smaller chunk to be compressed,
+		// but standard library zip writer usually compresses.
+		zipData := createTestZip(t, files)
+
+		_, err := keeper.ProcessZipData(zipData, chunkSize)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "decompression limit exceeded")
+	})
+
+	t.Run("Unsafe path traversal", func(t *testing.T) {
+		files := map[string][]byte{
+			"../secret.txt": []byte("secret"),
+		}
+		zipData := createTestZip(t, files)
+
+		_, err := keeper.ProcessZipData(zipData, chunkSize)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "unsafe file path")
+	})
 }

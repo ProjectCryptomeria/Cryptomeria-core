@@ -210,7 +210,8 @@ func (im IBCModule) OnTimeoutPacket(
 		ctx.Logger().Error("Fragment Packet Timeout!", "id", packet.FragmentPacket.Id)
 		return nil
 	case *types.GatewayPacketData_ManifestPacket:
-		ctx.Logger().Error("Manifest Packet Timeout!", "filename", packet.ManifestPacket.Filename)
+		// FilenameではなくProjectNameをログに出力
+		ctx.Logger().Error("Manifest Packet Timeout!", "project_name", packet.ManifestPacket.ProjectName)
 		return nil
 	// ------------------------------------
 	default:

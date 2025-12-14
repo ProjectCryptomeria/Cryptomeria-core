@@ -3,34 +3,42 @@ package gwc.gateway.v1;
 
 option go_package = "gwc/x/gateway/types";
 
-// GatewayPacketData defines the Gateway data packet.
+// GatewayPacketData defines the packet data for the gateway module
 message GatewayPacketData {
   oneof packet {
-    NoData noData = 1;
-    FragmentPacket fragmentPacket = 2;
-    ManifestPacket manifestPacket = 3;
+    NoDataPacket   no_data_packet   = 1;
+    FragmentPacket fragment_packet  = 2;
+    ManifestPacket manifest_packet  = 3;
   }
 }
 
-// NoData defines an empty data packet.
-message NoData {}
+message NoDataPacket {}
 
-// FragmentPacket defines the data fragment to be sent to FDSC
+// FragmentPacket defines a single chunk of file data
 message FragmentPacket {
-  uint64 id = 1;
+  uint64 id   = 1;
   bytes  data = 2;
 }
 
-// ManifestPacket defines the metadata to be sent to MDSC
-message ManifestPacket {
-  string filename = 1;
-  // 修正: size -> file_size (Goでの名前衝突回避のため)
-  uint64 file_size = 2;
-  string mime_type = 3;
-  repeated PacketFragmentMapping fragments = 4;
+// PacketFragmentMapping defines the location of a fragment
+message PacketFragmentMapping {
+  string fdsc_id     = 1;
+  string fragment_id = 2;
 }
 
-message PacketFragmentMapping {
-  string fdsc_id = 1;
-  string fragment_id = 2;
+// FileMetadata defines metadata for a single file within the project
+message FileMetadata {
+  string mime_type = 1;
+  uint64 size      = 2;
+  // このファイル構成するフラグメントの順序付きリスト
+  repeated PacketFragmentMapping fragments = 3;
+}
+
+// ManifestPacket defines the structure of the website/project
+// ルートからのパスをキーとしたマップ構造で、ファイルメタデータへのO(1)アクセスを実現します
+message ManifestPacket {
+  string project_name = 1;
+  string version      = 2;
+  // マップのキーは相対パス (例: "index.html", "assets/logo.png")
+  map<string, FileMetadata> files = 3;
 }

@@ -16,7 +16,12 @@ import (
 
 var DefaultRelativePacketTimeoutTimestamp = uint64((time.Duration(10) * time.Minute).Nanoseconds())
 
-const listSeparator = ","
+const (
+	listSeparator = ","
+	flagProject   = "project-name"
+	flagVersion   = "version"
+	flagFragSize  = "fragment-size"
+)
 
 // GetTxCmd returns the transaction commands for this module.
 func GetTxCmd() *cobra.Command {
@@ -61,10 +66,27 @@ func CmdUpload() *cobra.Command {
 				return err
 			}
 
+			// フラグの取得
+			projectName, err := cmd.Flags().GetString(flagProject)
+			if err != nil {
+				return err
+			}
+			version, err := cmd.Flags().GetString(flagVersion)
+			if err != nil {
+				return err
+			}
+			fragmentSize, err := cmd.Flags().GetUint64(flagFragSize)
+			if err != nil {
+				return err
+			}
+
 			msg := types.NewMsgUpload(
 				clientCtx.GetFromAddress().String(),
 				argFilename,
 				argData,
+				projectName,
+				version,
+				fragmentSize,
 			)
 			if err := msg.ValidateBasic(); err != nil {
 				return err
@@ -72,6 +94,10 @@ func CmdUpload() *cobra.Command {
 			return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)
 		},
 	}
+
+	cmd.Flags().String(flagProject, "", "Project name (required for manifest)")
+	cmd.Flags().String(flagVersion, "", "Version string (optional)")
+	cmd.Flags().Uint64(flagFragSize, 0, "Fragment size in bytes (default 0: use server default)")
 
 	flags.AddTxFlagsToCmd(cmd)
 
