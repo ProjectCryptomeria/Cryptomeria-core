@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
-source "$(dirname "$0")/lib/common.sh"
+source "$(dirname "$0")/../lib/common.sh"
 
 # =============================================================================
-# Functions
+# 🧩 Functions
 # =============================================================================
 
 # Configファイルの初期化
@@ -17,21 +17,19 @@ init_config() {
     fi
 }
 
-# システム内のチェーンを自動検出 (Global変数 CHAINS を設定)
+# 実行中のチェーンを検出
 detect_chains() {
     log_step "Detecting running chain nodes..."
     
-    # Running状態かつ category=chain のPodから instanceラベルを取得して重複排除
     local detected_ids=$(kubectl get pods -n "$NAMESPACE" \
         -l "app.kubernetes.io/category=chain" \
         --field-selector=status.phase=Running \
         -o jsonpath='{range .items[*]}{.metadata.labels.app\.kubernetes\.io/instance}{"\n"}{end}' | sort | uniq)
 
     if [ -z "$detected_ids" ]; then
-        log_error "No running chain pods found. Please ensure chains are deployed."
+        log_error "No running chain pods found."
     fi
 
-    # 配列としてグローバル変数に格納
     mapfile -t CHAINS <<< "$detected_ids"
     log_info "Detected Chains: ${CHAINS[*]}"
 }
@@ -40,7 +38,6 @@ detect_chains() {
 _add_chain_config() {
     local chain_id=$1
     
-    # 登録済みチェック
     if rly_exec chains list 2>/dev/null | grep -q "$chain_id"; then
         log_info "Chain '$chain_id' already configured."
         return
@@ -51,7 +48,7 @@ _add_chain_config() {
     local grpc_addr="http://${pod_hostname}.${HEADLESS_SERVICE}:9090"
     local tmp_file="/tmp/${chain_id}.json"
 
-    # JSON設定ファイルの生成と転送
+    # 設定JSON生成
     cat <<EOF | kubectl exec -i -n "$NAMESPACE" "$RELAYER_POD" -- sh -c "cat > $tmp_file"
 {
   "type": "cosmos",
@@ -76,7 +73,7 @@ EOF
     log_success "Chain '$chain_id' added."
 }
 
-# 検出された全チェーンの設定を登録
+# 全チェーンの設定登録
 register_chains() {
     log_step "Registering chains to Relayer..."
     for chain in "${CHAINS[@]}"; do
@@ -91,18 +88,14 @@ import_keys() {
     log_step "Importing Relayer keys..."
     local chain_list_str="${CHAINS[*]}"
     
-    # Pod内で実行する一括処理スクリプト
     local script=$(cat <<EOF
     for chain_id in $chain_list_str; do
         if [ -z "\$chain_id" ]; then continue; fi
-        
         mnemonic_file="/etc/mnemonics/\${chain_id}.relayer.mnemonic"
-        
         if [ ! -f "\$mnemonic_file" ]; then
             echo "Warning: Mnemonic file not found for \$chain_id"
             continue
         fi
-        
         if rly keys show "\$chain_id" "relayer" >/dev/null 2>&1; then
              echo "Skipping \$chain_id (key exists)"
         else
@@ -117,7 +110,7 @@ EOF
 }
 
 # =============================================================================
-# Main Execution
+# 🚀 Main Execution
 # =============================================================================
 echo "=== Initializing Relayer Configuration ==="
 ensure_relayer_pod

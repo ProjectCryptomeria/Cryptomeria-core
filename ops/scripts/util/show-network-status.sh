@@ -1,71 +1,68 @@
 #!/bin/bash
-NAMESPACE=${NAMESPACE:-"cryptomeria"}
+# common.shを利用して設定値を統一
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMMON_LIB="${SCRIPT_DIR}/../lib/common.sh"
+if [ -f "$COMMON_LIB" ]; then source "$COMMON_LIB"; else NAMESPACE="cryptomeria"; fi
 
-# 1. 必要なPodを特定
+# =============================================================================
+# 🧩 Functions
+# =============================================================================
+
+get_gw_channel() {
+    local chain_id=$1
+    local channels_json=$2 # 全チャネル情報のJSON配列
+    
+    echo "$channels_json" | jq -r --arg id "$chain_id" \
+        '.[] | select(.port_id=="gateway" and .counterparty.chain_id==$id and .state=="STATE_OPEN") | .channel_id' | head -n 1
+}
+
+is_registered() {
+    local chain_id=$1
+    local registered_json=$2
+    
+    local entry=$(echo "$registered_json" | jq -r --arg id "$chain_id" '.storage_infos[] | select(.chain_id == $id)')
+    if [ -n "$entry" ]; then echo "true"; else echo "false"; fi
+}
+
+# =============================================================================
+# 🚀 Main Execution
+# =============================================================================
 GWC_POD=$(kubectl get pod -n $NAMESPACE -l "app.kubernetes.io/component=gwc" -o jsonpath="{.items[0].metadata.name}")
 RELAYER_POD=$(kubectl get pod -n $NAMESPACE -l "app.kubernetes.io/component=relayer" -o jsonpath="{.items[0].metadata.name}")
 
 if [ -z "$GWC_POD" ] || [ -z "$RELAYER_POD" ]; then
-    echo "Error: Required pods (gwc or relayer) not found."
+    echo "Error: Required pods not found."
     exit 1
 fi
 
-# 2. GWCの登録済みエンドポイント取得 (Storage Registration Status用)
 REGISTERED_JSON=$(kubectl exec -n $NAMESPACE $GWC_POD -- gwcd q gateway endpoints -o json 2>/dev/null || echo "{}")
-
-# 3. GWCのIBCチャネル情報全体を取得 (Channel ID取得用)
-# 【修正】jq -s '.' (slurp mode) を使用し、rly q channelsの出力を単一のJSON配列として強制的に結合
 RAW_CHANNELS=$(kubectl exec -n $NAMESPACE $RELAYER_POD -- rly q channels gwc 2>/dev/null | jq -s '.' || echo "[]")
 
-# ヘッダー出力: チャンネルIDを2つに分割し、列幅を調整
-printf "%-15s %-10s %-12s %-18s %-12s %-12s\n" "CHAIN ID" "TYPE" "POD STATUS" "GW LINK STATUS" "GW CHANNEL" "TF CHANNEL"
-echo "--------------------------------------------------------------------------------------"
+printf "%-15s %-10s %-12s %-18s %-12s\n" "CHAIN ID" "TYPE" "POD STATUS" "GW LINK STATUS" "GW CHANNEL"
+echo "-----------------------------------------------------------------------"
 
-# 4. 各Podについて情報を表示
 kubectl get pods -n $NAMESPACE -l 'app.kubernetes.io/category=chain' -o json | \
 jq -r '.items[] | "\(.metadata.labels["app.kubernetes.io/instance"]) \(.metadata.labels["app.kubernetes.io/component"]) \(.status.phase)"' | \
 while read -r CHAIN_ID TYPE STATUS; do
     
-    # GWC自体の処理
     if [ "$TYPE" == "gwc" ]; then
-        printf "%-15s %-10s %-12s %-18s %-12s %-12s\n" "$CHAIN_ID" "$TYPE" "$STATUS" "N/A (Hub)" "-" "-"
+        printf "%-15s %-10s %-12s %-18s %-12s\n" "$CHAIN_ID" "$TYPE" "$STATUS" "N/A (Hub)" "-"
         continue
     fi
 
-    # 初期値
     GW_LINK_STATUS="❌ Not Linked"
     GW_CHANNEL="-"
-    TF_CHANNEL="-"
 
-    # A. Gateway Channel IDの取得
-    # RAW_CHANNELSが単一の配列になったため、.[] の処理が正常化する
-    GW_CHANNEL_RAW=$(echo "$RAW_CHANNELS" | jq -r --arg id "$CHAIN_ID" '.[] | select(.port_id=="gateway" and .counterparty.chain_id==$id and .state=="STATE_OPEN") | .channel_id' | head -n 1)
+    GW_CHANNEL_RAW=$(get_gw_channel "$CHAIN_ID" "$RAW_CHANNELS")
     
-    # B. Transfer Channel IDの取得
-    TF_CHANNEL_RAW=$(echo "$RAW_CHANNELS" | jq -r --arg id "$CHAIN_ID" '.[] | select(.port_id=="transfer" and .counterparty.chain_id==$id and .state=="STATE_OPEN") | .channel_id' | head -n 1)
-    
-    # C. ステータスの判定
     if [ "$GW_CHANNEL_RAW" != "null" ] && [ "$GW_CHANNEL_RAW" != "" ]; then
         GW_LINK_STATUS="🔗 Linked"
         GW_CHANNEL="$GW_CHANNEL_RAW"
 
-        # Storage Registration Statusの確認
-        ENTRY=$(echo "$REGISTERED_JSON" | jq -r --arg id "$CHAIN_ID" '.storage_infos[] | select(.chain_id == $id)')
-        if [ -n "$ENTRY" ]; then
+        if [ "$(is_registered "$CHAIN_ID" "$REGISTERED_JSON")" == "true" ]; then
             GW_LINK_STATUS="✅ Registered"
         fi
     fi
 
-    if [ "$TF_CHANNEL_RAW" != "null" ] && [ "$TF_CHANNEL_RAW" != "" ]; then
-        TF_CHANNEL="$TF_CHANNEL_RAW"
-    fi
-
-
-    printf "%-15s %-10s %-12s %-18s %-12s %-12s\n" \
-        "$CHAIN_ID" \
-        "$TYPE" \
-        "$STATUS" \
-        "$GW_LINK_STATUS" \
-        "$GW_CHANNEL" \
-        "$TF_CHANNEL"
+    printf "%-15s %-10s %-12s %-18s %-12s\n" "$CHAIN_ID" "$TYPE" "$STATUS" "$GW_LINK_STATUS" "$GW_CHANNEL"
 done
