@@ -2,7 +2,8 @@
 set -e
 source "$(dirname "$0")/../lib/common.sh"
 
-LOG_FILE="/home/relayer/.relayer/relayer.log"
+# LOG_FILEは使用しなくなるため削除（またはコメントアウト）
+# LOG_FILE="/home/relayer/.relayer/relayer.log"
 
 # =============================================================================
 # 🧩 Functions
@@ -39,22 +40,26 @@ ensure_stopped() {
 start_process() {
     log_step "Executing 'rly start' in background..."
     
-    # ログファイルの作成（権限確保 & 既存ログは上書きtruncate）
-    pod_exec "$RELAYER_POD" touch "$LOG_FILE"
+    # 以前のログファイル作成処理は削除（stdoutに出すため不要）
+    # pod_exec "$RELAYER_POD" touch "$LOG_FILE"
 
     # nohupで起動 (--log-format json でクラッシュ回避)
-    pod_exec "$RELAYER_POD" sh -c "nohup rly start --log-format json > $LOG_FILE 2>&1 < /dev/null &"
+    # [修正] 出力を /proc/1/fd/1 (PID 1の標準出力) にリダイレクトする
+    # これにより、バックグラウンドプロセスの出力が kubectl logs に現れるようになります
+    pod_exec "$RELAYER_POD" sh -c "nohup rly start --log-format json > /proc/1/fd/1 2>&1 < /dev/null &"
 }
 
 verify_start() {
     sleep 3
     if pod_exec "$RELAYER_POD" sh -c "pgrep -f 'rly start' > /dev/null 2>&1"; then
         log_success "Relayer started successfully."
-        log_info "Logs: $LOG_FILE"
+        # [修正] ログファイルではなく kubectl logs を案内
+        log_info "Logs are now streaming to Pod stdout. Check with: kubectl logs $RELAYER_POD"
     else
-        log_error "Failed to start relayer. Check logs manually."
-        # 直前のログを表示してデバッグ支援
-        pod_exec "$RELAYER_POD" tail -n 10 "$LOG_FILE"
+        log_error "Failed to start relayer."
+        # [修正] エラー時も kubectl logs を案内
+        log_info "Check logs manually: kubectl logs $RELAYER_POD"
+        # pod_exec "$RELAYER_POD" tail -n 10 "$LOG_FILE"
         exit 1
     fi
 }
