@@ -4,3 +4,6 @@
 [submodule "util/Cryptomeria-TScontroller"]
 	path = util/Cryptomeria-TScontroller
 	url = https://github.com/ProjectCryptomeria/Cryptomeria-TScontroller.git
+[submodule "util/Cryptomeria-Bff"]
+	path = util/Cryptomeria-Bff
+	url = https://github.com/ProjectCryptomeria/Cryptomeria-Bff.git
