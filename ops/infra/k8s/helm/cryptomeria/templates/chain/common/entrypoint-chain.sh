@@ -42,10 +42,12 @@ if [ ! -f "$INIT_FLAG" ]; then
         MAX_RETRIES=30
         COUNT=0
         while [ $COUNT -lt $MAX_RETRIES ]; do
-            if wget -q -O "$CHAIN_HOME/config/genesis.json" "$GENESIS_URL"; then
+            # ▼▼▼ 修正: wget -> curl に変更 (-s: silent, -f: fail on error, -o: output) ▼▼▼
+            if curl -s -f -o "$CHAIN_HOME/config/genesis.json" "$GENESIS_URL"; then
                 echo "✅ Genesis downloaded."
                 break
             fi
+            # ▲▲▲ 修正ここまで ▲▲▲
             echo "⏳ Waiting for Genesis Server... ($COUNT/$MAX_RETRIES)"
             sleep 2
             COUNT=$((COUNT+1))

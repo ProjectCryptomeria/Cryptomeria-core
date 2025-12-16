@@ -14,6 +14,7 @@ _default:
 # [Build All] 全てのDockerイメージをビルド
 build-all:
 	@echo "🏗️  Building all images..."
+	@just dev::build-chain-all
 	@just dev::build-image-all
 
 # [Parallel] 各コンポーネントのビルド定義
@@ -42,6 +43,10 @@ build-image target:
 	docker build -t "{{PROJECT_NAME}}/{{target}}:latest" .
 	
 	if [ "{{target}}" == "relayer" ]; then rm gwcd; fi
+
+[parallel]
+build-chain-all: (build-chain 'fdsc') (build-chain 'mdsc') (build-chain 'gwc')
+	
 
 # [復活: Build Chain] バイナリのみコンパイル（ローカル実行用）
 build-chain target:

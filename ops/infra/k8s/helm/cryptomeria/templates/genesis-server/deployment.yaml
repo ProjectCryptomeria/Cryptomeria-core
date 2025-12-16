@@ -32,7 +32,8 @@ spec:
         # 1. GWC Genesis Generator
         - name: gen-gwc
           image: "{{ .Values.gwc.image.repository }}:{{ .Values.gwc.image.tag }}"
-          command: ["/bin/sh", "/scripts/generate.sh"]
+          imagePullPolicy: {{ .Values.gwc.image.pullPolicy }}
+          command: ["/bin/sh","-c","/scripts/generate.sh"]
           env:
             - name: FDSC_REPLICAS
               value: "0" # Skip FDSC loop
@@ -47,7 +48,8 @@ spec:
         # 2. MDSC Genesis Generator
         - name: gen-mdsc
           image: "{{ .Values.mdsc.image.repository }}:{{ .Values.mdsc.image.tag }}"
-          command: ["/bin/sh", "-c", "apk add --no-cache jq && /scripts/generate.sh"]
+          imagePullPolicy: {{ .Values.gwc.image.pullPolicy }}
+          command: ["/bin/sh", "-c", "/scripts/generate.sh"]
           env:
             - name: FDSC_REPLICAS
               value: "0"
@@ -62,7 +64,8 @@ spec:
         # 3. FDSC Genesis Generator
         - name: gen-fdsc
           image: "{{ .Values.fdsc.image.repository }}:{{ .Values.fdsc.image.tag }}"
-          command: ["/bin/sh", "-c", "apk add --no-cache jq && /scripts/generate.sh"]
+          imagePullPolicy: {{ .Values.gwc.image.pullPolicy }}
+          command: ["/bin/sh", "-c", "/scripts/generate.sh"]
           env:
             - name: FDSC_REPLICAS
               value: "{{ .Values.fdsc.replicas }}"
@@ -77,6 +80,7 @@ spec:
       containers:
         - name: nginx
           image: "{{ .Values.genesisServer.image.repository }}:{{ .Values.genesisServer.image.tag }}"
+          imagePullPolicy: {{ .Values.gwc.image.pullPolicy }}
           ports:
             - containerPort: 80
           volumeMounts:
