@@ -1,0 +1,26 @@
+{{- if and .Values.mdsc .Values.mdsc.service.externalService.enabled }}
+{{- $chain := merge (dict "name" "mdsc") .Values.mdsc }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cryptomeria.fullname" . }}-mdsc
+  labels:
+    {{- include "cryptomeria.labels" . | nindent 4 }}
+    app.kubernetes.io/instance: {{ $chain.name }}
+spec:
+  type: NodePort
+  ports:
+    - name: rpc
+      port: {{ $chain.service.rpcPort }}
+      nodePort: {{ add .Values.ports.mdscBase 7 }}
+    - name: api
+      port: {{ $chain.service.apiPort }}
+      nodePort: {{ add .Values.ports.mdscBase 3 }}
+    - name: grpc
+      port: {{ $chain.service.grpcPort }}
+      nodePort: {{ .Values.ports.mdscBase }}
+  selector:
+    app.kubernetes.io/name: cryptomeria
+    app.kubernetes.io/category: chain
+    app.kubernetes.io/instance: {{ $chain.name }}
+{{- end }}

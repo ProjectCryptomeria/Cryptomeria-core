@@ -1,0 +1,30 @@
+{{- if and .Values.fdsc .Values.fdsc.service.externalService.enabled }}
+{{- $count := int .Values.fdsc.replicas }}
+{{- $chain := merge (dict "name" "mdsc") .Values.mdsc }}
+{{- range $i := until $count }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cryptomeria.fullname" $ }}-fdsc-{{ $i }}
+  labels:
+    {{- include "cryptomeria.labels" $ | nindent 4 }}
+    app.kubernetes.io/instance: fdsc-{{ $i }}
+spec:
+  type: NodePort
+  ports:
+    - name: rpc
+      port: {{ $chain.service.rpcPort }}
+      nodePort: {{ add $.Values.ports.fdscBase (mul $i 10) 7 }}
+    - name: api
+      port: {{ $chain.service.apiPort }}
+      nodePort: {{ add $.Values.ports.fdscBase (mul $i 10) 3 }}
+    - name: grpc
+      port: {{ $chain.service.grpcPort }}
+      nodePort: {{ add $.Values.ports.fdscBase (mul $i 10) }}
+  selector:
+    app.kubernetes.io/name: cryptomeria
+    app.kubernetes.io/category: chain
+    app.kubernetes.io/instance: fdsc-{{ $i }}
+{{- end }}
+{{- end }}

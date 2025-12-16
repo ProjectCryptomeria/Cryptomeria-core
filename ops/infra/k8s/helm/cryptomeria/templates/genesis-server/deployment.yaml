@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cryptomeria.fullname" . }}-genesis-server
+  labels:
+    {{- include "cryptomeria.labels" . | nindent 4 }}
+    app.kubernetes.io/component: genesis-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "cryptomeria.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: genesis-server
+  template:
+    metadata:
+      labels:
+        {{- include "cryptomeria.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: genesis-server
+    spec:
+      volumes:
+        - name: shared-data
+          emptyDir: {}
+        - name: scripts
+          configMap:
+            name: {{ include "cryptomeria.fullname" . }}-genesis-script
+            defaultMode: 0755
+        - name: mnemonics
+          secret:
+            secretName: {{ include "cryptomeria.fullname" . }}-mnemonics
+      
+      initContainers:
+        # 1. GWC Genesis Generator
+        - name: gen-gwc
+          image: "{{ .Values.gwc.image.repository }}:{{ .Values.gwc.image.tag }}"
+          command: ["/bin/sh", "/scripts/generate.sh"]
+          env:
+            - name: FDSC_REPLICAS
+              value: "0" # Skip FDSC loop
+          volumeMounts:
+            - name: shared-data
+              mountPath: /shared
+            - name: scripts
+              mountPath: /scripts
+            - name: mnemonics
+              mountPath: /etc/mnemonics
+
+        # 2. MDSC Genesis Generator
+        - name: gen-mdsc
+          image: "{{ .Values.mdsc.image.repository }}:{{ .Values.mdsc.image.tag }}"
+          command: ["/bin/sh", "-c", "apk add --no-cache jq && /scripts/generate.sh"]
+          env:
+            - name: FDSC_REPLICAS
+              value: "0"
+          volumeMounts:
+            - name: shared-data
+              mountPath: /shared
+            - name: scripts
+              mountPath: /scripts
+            - name: mnemonics
+              mountPath: /etc/mnemonics
+
+        # 3. FDSC Genesis Generator
+        - name: gen-fdsc
+          image: "{{ .Values.fdsc.image.repository }}:{{ .Values.fdsc.image.tag }}"
+          command: ["/bin/sh", "-c", "apk add --no-cache jq && /scripts/generate.sh"]
+          env:
+            - name: FDSC_REPLICAS
+              value: "{{ .Values.fdsc.replicas }}"
+          volumeMounts:
+            - name: shared-data
+              mountPath: /shared
+            - name: scripts
+              mountPath: /scripts
+            - name: mnemonics
+              mountPath: /etc/mnemonics
+
+      containers:
+        - name: nginx
+          image: "{{ .Values.genesisServer.image.repository }}:{{ .Values.genesisServer.image.tag }}"
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: shared-data
+              mountPath: /usr/share/nginx/html

@@ -28,7 +28,6 @@ spec:
     matchLabels:
       {{- include "cryptomeria.selectorLabels" $context | nindent 6 }}
       app.kubernetes.io/component: {{ $chain.name }}
-      # ▼▼▼ 修正: セレクタにもユニークなインスタンス名を追加して競合を回避 ▼▼▼
       app.kubernetes.io/instance: {{ $component }}
   template:
     metadata:
@@ -36,15 +35,13 @@ spec:
         {{- include "cryptomeria.selectorLabels" $context | nindent 8 }}
         app.kubernetes.io/component: {{ $chain.name }}
         app.kubernetes.io/category: chain
-        # Pod側のラベル定義（これは前回既に追加済み）
         app.kubernetes.io/instance: {{ $component }}
     spec:
       containers:
         - name: chain
           image: "{{ $chain.image.repository }}:{{ $chain.image.tag }}"
           imagePullPolicy: {{ $chain.image.pullPolicy }}
-          command: ["/bin/sh", "-c", "/scripts/entrypoint-chain.sh"]
-    
+          command: ["/bin/sh", "/scripts/entrypoint-chain.sh"]
           env:
             - name: CHAIN_APP_NAME
               value: "{{ $chain.name }}"

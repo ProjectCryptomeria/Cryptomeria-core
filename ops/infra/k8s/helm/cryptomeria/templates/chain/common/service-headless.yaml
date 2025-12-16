@@ -5,10 +5,7 @@ metadata:
   labels:
       app.kubernetes.io/name: cryptomeria
       app.kubernetes.io/category: chain
-      app.kubernetes.io/instance: {{ .name }}
-      app.kubernetes.io/component: {{ .type }}  
 spec:
-  # Headless Serviceにするための設定
   clusterIP: None
   ports:
     - name: rpc
@@ -17,7 +14,6 @@ spec:
       port: 9090
     - name: api
       port: 1317
-  # このラベルを持つPodをサービスの対象とする
   selector:
     app.kubernetes.io/name: cryptomeria
     app.kubernetes.io/category: chain

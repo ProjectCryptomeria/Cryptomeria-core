@@ -1,9 +1,31 @@
-# projectcryptomeria/cryptomeria-core/Cryptomeria-core-654ea9df249ef814b51bcb0eb4f3006cdb2b8497/ops/infra/k8s/helm/cryptomeria/values.yaml (全文)
 # =============================================================================
 # Global Configurations
 # =============================================================================
 global:
   namespace: cryptomeria
+
+# =============================================================================
+# New: Genesis Server Configuration (The Creator)
+# =============================================================================
+genesisServer:
+  enabled: true
+  image:
+    repository: nginx
+    tag: alpine
+  service:
+    port: 80
+
+# =============================================================================
+# New: Static Port Configuration (Real World Simulation)
+# =============================================================================
+# NodePortの割り当てルール:
+# RPC: Base + 7 (例: 30007, 30017...)
+# API: Base + 3 (例: 30003, 30013...)
+# GRPC: Base + 0 (例: 30000, 30010...)
+ports:
+  gwcBase: 30000
+  mdscBase: 30010
+  fdscBase: 30020  # FDSCはここから +10 ずつインクリメント (fdsc-0=30020, fdsc-1=30030)
 
 # =============================================================================
 # Component Configurations
@@ -22,13 +44,9 @@ gwc:
     rpcPort: 26657
     apiPort: 1317
     grpcPort: 9090
-    # --- [新規追加: 外部公開用サービスの設定] ---
     externalService:
-      enabled: true          # 外部公開用 Service (NodePort) を作成するかどうか
-      type: NodePort         # Service のタイプ (NodePort, LoadBalancer, ClusterIP)
-      # rpcNodePort, apiNodePort, grpcNodePort を指定すると、
-      # NodePort が固定されます (未指定の場合は Kubernetes が自動で割り当て)
-    # ------------------------------------------
+      enabled: true
+      type: NodePort
   persistence:
     enabled: true
     size: 10Gi
@@ -47,6 +65,10 @@ mdsc:
     rpcPort: 26657
     apiPort: 1317
     grpcPort: 9090
+    # MDSCにも外部公開設定を追加
+    externalService:
+      enabled: true
+      type: NodePort
   persistence:
     enabled: true
     size: 10Gi
@@ -56,8 +78,7 @@ mdsc:
 # 3. File Data Store Chain (FDSC) - Scalable
 # -----------------------------------------------------------------------------
 fdsc:
-  # Number of FDSC nodes (Shards)
-  replicas: 1
+  replicas: 2 # テスト用に2に設定推奨
   image:
     repository: cryptomeria/fdsc
     tag: "latest"
@@ -66,6 +87,10 @@ fdsc:
     rpcPort: 26657
     apiPort: 1317
     grpcPort: 9090
+    # FDSCはテンプレート側で動的に生成するためここでの個別設定は不要だがフラグだけ残す
+    externalService:
+      enabled: true
+      type: NodePort
   persistence:
     enabled: true
     size: 10Gi

@@ -8,29 +8,21 @@ metadata:
     {{- include "cryptomeria.labels" . | nindent 4 }}
     app.kubernetes.io/instance: {{ $chain.name }}
 spec:
-  # values.yaml で設定されたタイプ (NodePort/LoadBalancer) を使用
   type: {{ $chain.service.externalService.type | default "NodePort" }}
   ports:
     - name: rpc
       port: {{ $chain.service.rpcPort }}
       targetPort: {{ $chain.service.rpcPort }}
-      {{- if $chain.service.externalService.rpcNodePort }}
-      nodePort: {{ $chain.service.externalService.rpcNodePort }}
-      {{- end }}
-    - name: grpc
-      port: {{ $chain.service.grpcPort }}
-      targetPort: {{ $chain.service.grpcPort }}
-      {{- if $chain.service.externalService.grpcNodePort }}
-      nodePort: {{ $chain.service.externalService.grpcNodePort }}
-      {{- end }}
+      nodePort: {{ add .Values.ports.gwcBase 7 }}
     - name: api
       port: {{ $chain.service.apiPort }}
       targetPort: {{ $chain.service.apiPort }}
-      {{- if $chain.service.externalService.apiNodePort }}
-      nodePort: {{ $chain.service.externalService.apiNodePort }}
-      {{- end }}
+      nodePort: {{ add .Values.ports.gwcBase 3 }}
+    - name: grpc
+      port: {{ $chain.service.grpcPort }}
+      targetPort: {{ $chain.service.grpcPort }}
+      nodePort: {{ .Values.ports.gwcBase }}
   selector:
-    # GWCのPodをターゲットとするセレクタ
     app.kubernetes.io/name: cryptomeria
     app.kubernetes.io/category: chain
     app.kubernetes.io/instance: {{ $chain.name }}
