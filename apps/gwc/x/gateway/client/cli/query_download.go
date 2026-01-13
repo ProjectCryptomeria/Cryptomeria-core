@@ -19,8 +19,10 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/flags"
 )
 
-// 変更: Cosmos SDKの標準フラグ "output" との競合を避けるため "save-dir" に変更
-const FlagOutput = "save-dir"
+const (
+	FlagOutput  = "save-dir"
+	FlagProject = "project" // 追加
+)
 
 type ManifestResponse struct {
 	Manifest struct {
@@ -49,61 +51,57 @@ func CmdDownload() *cobra.Command {
 			filename := args[0]
 			outputDir, _ := cmd.Flags().GetString(FlagOutput)
 
+			// ▼▼▼ 追加: プロジェクト名の取得 ▼▼▼
+			projectName, _ := cmd.Flags().GetString(FlagProject)
+			if projectName == "" {
+				// 指定がない場合はファイル名をプロジェクト名として扱う（フォールバック）
+				projectName = filename
+			}
+			// ▲▲▲ 追加ここまで ▲▲▲
+
 			clientCtx, err := client.GetClientQueryContext(cmd)
 			if err != nil {
 				return err
 			}
 
-			// --- 1. エンドポイント情報の取得 (Service Discovery) ---
+			// --- 1. エンドポイント情報の取得 ---
 			fmt.Println("🔍 Resolving storage nodes from GWC...")
 			queryClient := types.NewQueryClient(clientCtx)
 
-			// 全エンドポイントを取得
 			res, err := queryClient.StorageEndpoints(context.Background(), &types.QueryStorageEndpointsRequest{})
 			if err != nil {
 				return fmt.Errorf("failed to query storage endpoints: %w", err)
 			}
 
-			// マップ化 (ChainID -> URL)
-			// 注意: KeyはChainIDとする (MDSC/FDSCの識別のためにChainIDを使う運用が前提)
 			endpointMap := make(map[string]string)
 			for _, info := range res.StorageInfos {
-				// ChainIDが空の場合はChannelIDを使うなどのフォールバックがあっても良いが、
-				// ここではChainIDが登録されていることを期待する
 				if info.ChainId != "" {
 					endpointMap[info.ChainId] = info.ApiEndpoint
 				}
-				// 念のためChannelIDでも引けるようにしておく(デバッグ用など)
 				endpointMap[info.ChannelId] = info.ApiEndpoint
 			}
 
-			// MDSCのURL特定 (ChainID "mdsc" を想定)
-			// ※ 登録時に mdsc という ChainID で登録されている必要がある
-			// もし自動判別したい場合は ConnectionType == "mdsc" を探すロジックが必要
 			var mdscURL string
-
-			// ロジック変更: ConnectionType で検索
 			for _, info := range res.StorageInfos {
 				if info.ConnectionType == "mdsc" {
 					mdscURL = info.ApiEndpoint
 					break
 				}
 			}
-
-			// 見つからなければChainIDでフォールバック
 			if mdscURL == "" {
 				if url, ok := endpointMap["mdsc"]; ok {
 					mdscURL = url
 				}
 			}
-
 			if mdscURL == "" {
-				return fmt.Errorf("MDSC endpoint not found. Please register it via 'tx register-storage' with type 'mdsc' or chain-id 'mdsc'")
+				return fmt.Errorf("MDSC endpoint not found")
 			}
 			fmt.Printf("   -> Found MDSC at %s\n", mdscURL)
 
 			// --- 2. マニフェスト取得 ---
-			manifestUrl := fmt.Sprintf("%s/mdsc/metastore/v1/manifest/%s", mdscURL, filename)
+			// ▼▼▼ 修正: URLに projectName を使用 ▼▼▼
+			manifestUrl := fmt.Sprintf("%s/mdsc/metastore/v1/manifest/%s", mdscURL, projectName)
+			// ▲▲▲ 修正ここまで ▲▲▲
 			fmt.Printf("🔍 Fetching manifest from %s...\n", manifestUrl)
 
 			resp, err := http.Get(manifestUrl)
@@ -122,10 +120,12 @@ func CmdDownload() *cobra.Command {
 				return fmt.Errorf("failed to decode manifest: %w", err)
 			}
 
+			// ▼▼▼ 修正: ファイル検索には filename を使用 ▼▼▼
 			fileInfo, ok := mResp.Manifest.Files[filename]
 			if !ok {
-				return fmt.Errorf("file info not found in manifest")
+				return fmt.Errorf("file '%s' not found in manifest '%s'", filename, projectName)
 			}
+			// ▲▲▲ 修正ここまで ▲▲▲
 
 			totalFragments := len(fileInfo.Fragments)
 			fmt.Printf("📦 Found %d fragments. Downloading...\n", totalFragments)
@@ -140,9 +140,6 @@ func CmdDownload() *cobra.Command {
 				go func(idx int, fragID, fdscID string) {
 					defer wg.Done()
 
-					// FDSCのURL解決
-					// Manifest内の `FdscId` は Upload時に使用した ChannelID が入っていることが多い
-					// そのため、endpointMapで ChannelID -> URL の解決を試みる
 					fdscURL, ok := endpointMap[fdscID]
 					if !ok {
 						errChan <- fmt.Errorf("endpoint for %s not found in registry", fdscID)
@@ -157,16 +154,6 @@ func CmdDownload() *cobra.Command {
 						return
 					}
 					defer fResp.Body.Close()
-
-					// --- Debugging Response ---
-					// fmt.Printf("\n[DEBUG] Fragment: %s\n", fragID)
-					// fmt.Printf("Status: %s\n", fResp.Status)
-
-					// ボディを読み出して表示し、元に戻す (デバッグ用: 必要なら有効化)
-					// bodyBytes, _ := io.ReadAll(fResp.Body)
-					// fmt.Printf("Body: %s\n", string(bodyBytes))
-					// fResp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-					// --------------------------
 
 					var fr FragmentResponse
 					if err := json.NewDecoder(fResp.Body).Decode(&fr); err != nil {
@@ -215,8 +202,10 @@ func CmdDownload() *cobra.Command {
 		},
 	}
 
-	// 変更: フラグ名を "save-dir" に設定
 	cmd.Flags().String(FlagOutput, ".", "Directory to save the downloaded file")
+	// ▼▼▼ 追加: フラグ定義 ▼▼▼
+	cmd.Flags().String(FlagProject, "", "Project name containing the file")
+	// ▲▲▲ 追加ここまで ▲▲▲
 	flags.AddQueryFlagsToCmd(cmd)
 
 	return cmd

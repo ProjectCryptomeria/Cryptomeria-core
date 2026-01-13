@@ -48,7 +48,7 @@ build-image target:
 build-chain-all: (build-chain 'fdsc') (build-chain 'mdsc') (build-chain 'gwc')
 	
 
-# [復活: Build Chain] バイナリのみコンパイル（ローカル実行用）
+# [Build Chain] バイナリのみコンパイル（ローカル実行用）
 build-chain target:
 	#!/usr/bin/env bash
 	set -e
@@ -61,10 +61,10 @@ build-chain target:
 	echo "✅ Binary compiled: dist/{{target}}d"
 
 # =============================================================================
-# 🔧 Code Generation & Scaffold (Restored)
+# 🔧 Code Generation & Scaffold 
 # =============================================================================
 
-# [復活: Generate] ProtoファイルからGoコードを生成
+# [Generate] ProtoファイルからGoコードを生成
 [parallel]
 generate-all: (generate 'fdsc') (generate 'mdsc') (generate 'gwc')
 
@@ -72,7 +72,7 @@ generate target:
 	@echo "🔧 Generating code for {{target}}..."
 	@cd apps/{{target}} && ignite generate proto-go
 
-# [復活: Scaffold] 新しいチェーンの雛形作成
+# [Scaffold] 新しいチェーンの雛形作成
 scaffold target:
 	#!/usr/bin/env bash
 	set -e
@@ -93,10 +93,10 @@ scaffold target:
 	esac
 
 # =============================================================================
-# 🔥 Hot Reload (Restored)
+# 🔥 Hot Reload 
 # =============================================================================
 
-# [復活: Hot Reload] ローカルでビルドしたバイナリを稼働中のPodに注入して再起動
+# [Hot Reload] ローカルでビルドしたバイナリを稼働中のPodに注入して再起動
 hot-reload target:
 	#!/usr/bin/env bash
 	set -e
@@ -122,7 +122,7 @@ hot-reload target:
 	echo "✅ {{target}} reloaded!"
 
 # =============================================================================
-# 🔌 Controller Utils (Restored)
+# 🔌 Controller Utils 
 # =============================================================================
 
 ctl-install:

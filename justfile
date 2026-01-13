@@ -89,12 +89,16 @@ clean: undeploy
 # 🛠️ Operations & Utilities
 # =============================================================================
 
-# [Status] ネットワーク接続状況を表示
+# [Status] システムステータスを表示
 status:
+	@./ops/scripts/util/show-status.sh
+
+# [Network] ネットワーク接続状況を表示
+network:
 	@./ops/scripts/util/show-network-status.sh
 
-# [Monitor] システムの健康状態を診断
-monitor:
+# [Health] システムの健康状態を診断
+health:
 	@./ops/scripts/util/monitor-health.sh
 
 # [Accounts] 全チェーンのアカウントと残高一覧を表示

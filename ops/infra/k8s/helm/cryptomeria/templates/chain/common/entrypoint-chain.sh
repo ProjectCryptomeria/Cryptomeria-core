@@ -73,6 +73,20 @@ if [ ! -f "$INIT_FLAG" ]; then
     fi
 fi
 
+# local-admin 鍵の自動インポート (Dev用) 
+# ニーモニックファイルが存在する場合のみインポートを実行
+# ファイル名の命名規則: gwc.local-admin.mnemonic, fdsc-0.local-admin.mnemonic
+MNEMONIC_FILE="/etc/mnemonics/${CHAIN_ID}.local-admin.mnemonic"
+
+if [ -f "$MNEMONIC_FILE" ]; then
+    log_step "Importing local-admin key from $MNEMONIC_FILE..."
+    # 既に存在する場合のエラーを回避するため、一度削除するか、|| true で無視する
+    # ここでは既存チェックを省き、エラー無視で追記を試みる
+    $CHAIN_BINARY keys add local-admin --recover --keyring-backend test --home $CHAIN_HOME < $MNEMONIC_FILE >/dev/null 2>&1 || true
+else
+    log_step "No mnemonic found at $MNEMONIC_FILE. Skipping import."
+fi
+
 echo "--- Starting node for $CHAIN_ID (Port: 26657/1317/9090) ---"
 exec $CHAIN_BINARY start --home $CHAIN_HOME --log_level info --log_format json
 {{- end -}}
