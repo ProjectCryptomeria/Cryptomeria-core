@@ -1,5 +1,5 @@
 {
-  "name": "Raidchain Dev Container",
+  "name": "Cryptomeria Dev Container",
   "build": {
     "dockerfile": "Dockerfile"
   },
@@ -11,8 +11,16 @@
   // 1. Dockerソケットの手動マウントを削除しました (docker-outside-of-docker featureが自動処理するため)。
   // 2. .kubeフォルダは ${localEnv:HOME} を使用してOSごとのパス差異を吸収しています。
   "mounts": [
-    "source=${localEnv:HOME}/.kube,target=/home/ubuntu/.kube,type=bind,consistency=cached"
+    "source=${localEnv:HOME}/.kube,target=/home/ubuntu/.kube,type=bind,consistency=cached",
+
+    // 各node_modulesを個別volume化
+    "source=${localWorkspaceFolderBasename}-bff-node_modules,target=/workspace/util/Cryptomeria-Bff/node_modules,type=volume",
+    "source=${localWorkspaceFolderBasename}-webui-node_modules,target=/workspace/util/Cryptomeria-WebUI/node_modules,type=volume",
+
+    // ついでに npm cache も（任意）
+    "source=${localWorkspaceFolderBasename}-npm-cache,target=/home/ubuntu/.npm,type=volume"
   ],
+
 
   // 📝 KUBECONFIG環境変数を明示的に設定
   "remoteEnv": {
@@ -39,7 +47,8 @@
     },
     // 4. Node.js (LTS)
     "ghcr.io/devcontainers/features/node:1": {
-      "version": "lts"
+      "version": "lts",
+      "installYarnUsingApt": "false"
     },
     // 5. Helm & Kubectl (セットで入ります)
     "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
