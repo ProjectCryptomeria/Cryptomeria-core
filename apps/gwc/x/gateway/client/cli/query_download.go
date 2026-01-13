@@ -21,9 +21,10 @@ import (
 
 const (
 	FlagOutput  = "save-dir"
-	FlagProject = "project" // 追加
+	FlagProject = "project"
 )
 
+// ManifestResponse はMDSCから返却されるマニフェストデータの構造体です
 type ManifestResponse struct {
 	Manifest struct {
 		Files map[string]struct {
@@ -36,12 +37,14 @@ type ManifestResponse struct {
 	} `json:"manifest"`
 }
 
+// FragmentResponse はFDSCから返却されるフラグメントデータの構造体です
 type FragmentResponse struct {
 	Fragment struct {
-		Data string `json:"data"` // Base64
+		Data string `json:"data"` // Base64 encoded data
 	} `json:"fragment"`
 }
 
+// CmdDownload はGWCを経由してファイルをダウンロード・復元するCLIコマンドを定義します
 func CmdDownload() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "download [filename]",
@@ -51,13 +54,14 @@ func CmdDownload() *cobra.Command {
 			filename := args[0]
 			outputDir, _ := cmd.Flags().GetString(FlagOutput)
 
-			// ▼▼▼ 追加: プロジェクト名の取得 ▼▼▼
+			// ▼▼▼ 修正: プロジェクト名の取得と必須化 ▼▼▼
+			// Webホスティングの仕様上、ファイルは必ず特定のプロジェクトに属するため、
+			// プロジェクト名の指定を必須とします。
 			projectName, _ := cmd.Flags().GetString(FlagProject)
 			if projectName == "" {
-				// 指定がない場合はファイル名をプロジェクト名として扱う（フォールバック）
-				projectName = filename
+				return fmt.Errorf("project name is required. please use --project flag")
 			}
-			// ▲▲▲ 追加ここまで ▲▲▲
+			// ▲▲▲ 修正ここまで ▲▲▲
 
 			clientCtx, err := client.GetClientQueryContext(cmd)
 			if err != nil {
@@ -68,11 +72,13 @@ func CmdDownload() *cobra.Command {
 			fmt.Println("🔍 Resolving storage nodes from GWC...")
 			queryClient := types.NewQueryClient(clientCtx)
 
+			// GWCからストレージエンドポイント（MDSC/FDSCのURL）一覧を取得
 			res, err := queryClient.StorageEndpoints(context.Background(), &types.QueryStorageEndpointsRequest{})
 			if err != nil {
 				return fmt.Errorf("failed to query storage endpoints: %w", err)
 			}
 
+			// エンドポイントをマップ化（ChainIDとChannelIDの両方で引けるようにする）
 			endpointMap := make(map[string]string)
 			for _, info := range res.StorageInfos {
 				if info.ChainId != "" {
@@ -81,6 +87,7 @@ func CmdDownload() *cobra.Command {
 				endpointMap[info.ChannelId] = info.ApiEndpoint
 			}
 
+			// MDSCのエンドポイントを特定
 			var mdscURL string
 			for _, info := range res.StorageInfos {
 				if info.ConnectionType == "mdsc" {
@@ -89,6 +96,7 @@ func CmdDownload() *cobra.Command {
 				}
 			}
 			if mdscURL == "" {
+				// connection_typeで見つからない場合のフォールバック
 				if url, ok := endpointMap["mdsc"]; ok {
 					mdscURL = url
 				}
@@ -99,7 +107,9 @@ func CmdDownload() *cobra.Command {
 			fmt.Printf("   -> Found MDSC at %s\n", mdscURL)
 
 			// --- 2. マニフェスト取得 ---
-			// ▼▼▼ 修正: URLに projectName を使用 ▼▼▼
+			// ▼▼▼ 修正: URL生成ロジックの変更 ▼▼▼
+			// REST APIのパスパラメータには「プロジェクト名」のみを使用します。
+			// スラッシュを含むファイルパスはURLパスに含めるとルーティングエラーになるためです。
 			manifestUrl := fmt.Sprintf("%s/mdsc/metastore/v1/manifest/%s", mdscURL, projectName)
 			// ▲▲▲ 修正ここまで ▲▲▲
 			fmt.Printf("🔍 Fetching manifest from %s...\n", manifestUrl)
@@ -120,10 +130,11 @@ func CmdDownload() *cobra.Command {
 				return fmt.Errorf("failed to decode manifest: %w", err)
 			}
 
-			// ▼▼▼ 修正: ファイル検索には filename を使用 ▼▼▼
+			// ▼▼▼ 修正: クライアントサイドでのファイル検索 ▼▼▼
+			// 取得したプロジェクト全体のManifestから、指定されたファイル名に該当するエントリを探します。
 			fileInfo, ok := mResp.Manifest.Files[filename]
 			if !ok {
-				return fmt.Errorf("file '%s' not found in manifest '%s'", filename, projectName)
+				return fmt.Errorf("file '%s' not found in project '%s'", filename, projectName)
 			}
 			// ▲▲▲ 修正ここまで ▲▲▲
 
@@ -140,6 +151,7 @@ func CmdDownload() *cobra.Command {
 				go func(idx int, fragID, fdscID string) {
 					defer wg.Done()
 
+					// FDSCのエンドポイント解決
 					fdscURL, ok := endpointMap[fdscID]
 					if !ok {
 						errChan <- fmt.Errorf("endpoint for %s not found in registry", fdscID)
@@ -148,6 +160,7 @@ func CmdDownload() *cobra.Command {
 
 					fragUrl := fmt.Sprintf("%s/fdsc/datastore/v1/fragment/%s", fdscURL, fragID)
 
+					// Fragmentデータの取得
 					fResp, err := http.Get(fragUrl)
 					if err != nil {
 						errChan <- fmt.Errorf("failed to fetch fragment %s: %w", fragID, err)
@@ -161,6 +174,7 @@ func CmdDownload() *cobra.Command {
 						return
 					}
 
+					// Base64デコード
 					data, err := base64.StdEncoding.DecodeString(fr.Fragment.Data)
 					if err != nil {
 						errChan <- fmt.Errorf("failed to base64 decode fragment %s: %w", fragID, err)
@@ -179,8 +193,18 @@ func CmdDownload() *cobra.Command {
 				return <-errChan
 			}
 
-			// 4. 結合と保存
+			// --- 4. 結合と保存 ---
 			outputPath := filename
+			// ディレクトリ構造がある場合（例: images/logo.png）、ローカルのディレクトリを作成する
+			if dir := filepath.Dir(outputPath); dir != "." {
+				if outputDir != "" {
+					dir = filepath.Join(outputDir, dir)
+				}
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					return fmt.Errorf("failed to create directory %s: %w", dir, err)
+				}
+			}
+
 			if outputDir != "" {
 				outputPath = filepath.Join(outputDir, filename)
 			}
@@ -203,9 +227,7 @@ func CmdDownload() *cobra.Command {
 	}
 
 	cmd.Flags().String(FlagOutput, ".", "Directory to save the downloaded file")
-	// ▼▼▼ 追加: フラグ定義 ▼▼▼
-	cmd.Flags().String(FlagProject, "", "Project name containing the file")
-	// ▲▲▲ 追加ここまで ▲▲▲
+	cmd.Flags().String(FlagProject, "", "Project name containing the file (required)")
 	flags.AddQueryFlagsToCmd(cmd)
 
 	return cmd

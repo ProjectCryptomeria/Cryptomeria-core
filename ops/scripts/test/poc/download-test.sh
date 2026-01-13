@@ -6,6 +6,10 @@ set -euo pipefail
 # =============================================================================
 NAMESPACE="cryptomeria"
 
+# ▼▼▼ 追加: プロジェクト名の定義（アップロードテストと合わせる） ▼▼▼
+PROJECT_NAME="poc-test-project"
+# ▲▲▲ 追加ここまで ▲▲▲
+
 TEST_FILENAME="test-image.png"
 # アップロードテストで使用したデータと同じ文字列
 EXPECTED_DATA="Hello_Cryptomeria_This_is_a_test_data_fragment_for_IBC_transfer_verification."
@@ -17,6 +21,7 @@ OUTPUT_FILE="${OUTPUT_DIR}/${TEST_FILENAME}"
 TIMEOUT_SEC=120
 POLL_INTERVAL_SEC=2
 EXPECTED_OPEN_CHANNELS=2   # FDSC + MDSC 想定
+
 
 # =============================================================================
 # 📝 Logging Functions
@@ -145,7 +150,6 @@ diagnose_pending_packets() {
   echo ""
   log "🩺 Diagnostics: Checking Pending Packets on GWC..."
 
-  local channels
   channels="$(gwc_channel_ids "$gwc_pod" || true)"
 
   if [[ -z "$channels" ]]; then
@@ -205,15 +209,18 @@ ktry  "$GWC_POD" rm -f "$OUTPUT_FILE"
 
 # 4) Download 実行
 log "🔌 Triggering Download via GWC CLI..."
+log "    Project    : $PROJECT_NAME"
 log "    Target File: $TEST_FILENAME"
 log "    Save Dir   : $OUTPUT_DIR"
 
+# ▼▼▼ 修正: --project フラグを追加 ▼▼▼
 # 注意: gwcd q gateway download はクエリなのでガス代はかからない
-if ! kexec "$GWC_POD" gwcd q gateway download "$TEST_FILENAME" --save-dir "$OUTPUT_DIR"; then
+if ! kexec "$GWC_POD" gwcd q gateway download "$TEST_FILENAME" --project "$PROJECT_NAME" --save-dir "$OUTPUT_DIR"; then
   error "Download command failed."
   diagnose_pending_packets "$GWC_POD" || true
   exit 1
 fi
+# ▲▲▲ 修正ここまで ▲▲▲
 
 # 5) ファイル到着待機
 wait_for_file_exists_in_pod "$GWC_POD" "$OUTPUT_FILE" || {
