@@ -11,14 +11,7 @@
   // 1. Dockerソケットの手動マウントを削除しました (docker-outside-of-docker featureが自動処理するため)。
   // 2. .kubeフォルダは ${localEnv:HOME} を使用してOSごとのパス差異を吸収しています。
   "mounts": [
-    "source=${localEnv:HOME}/.kube,target=/home/ubuntu/.kube,type=bind,consistency=cached",
-
-    // 各node_modulesを個別volume化
-    "source=${localWorkspaceFolderBasename}-bff-node_modules,target=/workspace/util/Cryptomeria-Bff/node_modules,type=volume",
-    "source=${localWorkspaceFolderBasename}-webui-node_modules,target=/workspace/util/Cryptomeria-WebUI/node_modules,type=volume",
-
-    // ついでに npm cache も（任意）
-    "source=${localWorkspaceFolderBasename}-npm-cache,target=/home/ubuntu/.npm,type=volume"
+    "source=${localEnv:HOME}/.kube,target=/home/ubuntu/.kube,type=bind,consistency=cached"
   ],
 
 
