@@ -2,6 +2,8 @@
 set -e
 source "$(dirname "$0")/../lib/common.sh"
 
+GAS_PRICE=0.001;
+
 # =============================================================================
 # 🧩 Functions
 # =============================================================================
@@ -60,7 +62,7 @@ _add_chain_config() {
     "account-prefix": "cosmos",
     "keyring-backend": "test",
     "gas-adjustment": 1.5,
-    "gas-prices": "0.001$DENOM",
+    "gas-prices": "$GAS_PRICE$DENOM",
     "debug": true,
     "timeout": "20s",
     "output-format": "json",

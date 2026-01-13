@@ -42,12 +42,23 @@ if [ ! -f "$INIT_FLAG" ]; then
         MAX_RETRIES=30
         COUNT=0
         while [ $COUNT -lt $MAX_RETRIES ]; do
-            # ▼▼▼ 修正: wget -> curl に変更 (-s: silent, -f: fail on error, -o: output) ▼▼▼
+            # genesis.json のダウンロード
             if curl -s -f -o "$CHAIN_HOME/config/genesis.json" "$GENESIS_URL"; then
                 echo "✅ Genesis downloaded."
+                
+                # ▼▼▼ 追加: バリデータ鍵のダウンロードと配置 ▼▼▼
+                KEY_URL="http://cryptomeria-genesis-server/${CHAIN_ID}-priv_validator_key.json"
+                echo "--> Downloading Validator Key from $KEY_URL..."
+                if curl -s -f -o "$CHAIN_HOME/config/priv_validator_key.json" "$KEY_URL"; then
+                    echo "✅ Validator Key downloaded/restored."
+                else
+                    echo "❌ Failed to download validator key."
+                    exit 1
+                fi
+                # ▲▲▲ 追加ここまで ▲▲▲
+                
                 break
             fi
-            # ▲▲▲ 修正ここまで ▲▲▲
             echo "⏳ Waiting for Genesis Server... ($COUNT/$MAX_RETRIES)"
             sleep 2
             COUNT=$((COUNT+1))

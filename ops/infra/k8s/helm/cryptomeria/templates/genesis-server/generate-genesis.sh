@@ -31,12 +31,29 @@ generate_genesis() {
     # 1. Init
     $BINARY init $CHAIN_ID --chain-id $CHAIN_ID --home $HOME_DIR >/dev/null 2>&1
 
-    # 2. Add Key
+    # 2. Add Key (Local Admin)
     $BINARY keys add local-admin --recover --keyring-backend=test --home $HOME_DIR < $KEY_FILE >/dev/null 2>&1
     local ADDR=$($BINARY keys show local-admin -a --keyring-backend=test --home $HOME_DIR)
 
-    # 3. Add Genesis Account
+    # 3. Add Genesis Account (Local Admin)
     $BINARY genesis add-genesis-account $ADDR 1000000000000uatom --home $HOME_DIR
+
+    # ▼▼▼ 修正: Relayerアカウントの追加 (sedを使用してパスを生成) ▼▼▼
+    # Bash固有の置換 ${KEY_FILE/local-admin/relayer} は sh では使えないため sed を使用
+    local RELAYER_KEY_FILE=$(echo "$KEY_FILE" | sed 's/local-admin/relayer/')
+    
+    if [ -f "$RELAYER_KEY_FILE" ]; then
+        echo "   -> Adding Relayer account from $RELAYER_KEY_FILE"
+        # Relayerキーのインポート
+        $BINARY keys add relayer --recover --keyring-backend=test --home $HOME_DIR < $RELAYER_KEY_FILE >/dev/null 2>&1
+        local RELAYER_ADDR=$($BINARY keys show relayer -a --keyring-backend=test --home $HOME_DIR)
+        
+        # 資金追加 (10億 uatom)
+        $BINARY genesis add-genesis-account $RELAYER_ADDR 1000000000uatom --home $HOME_DIR
+    else
+        echo "⚠️ Relayer key file not found: $RELAYER_KEY_FILE"
+    fi
+    # ▲▲▲ 修正ここまで ▲▲▲
 
     # 4. Gentx
     $BINARY genesis gentx local-admin 10000000uatom --keyring-backend=test --chain-id $CHAIN_ID --home $HOME_DIR >/dev/null 2>&1
@@ -47,9 +64,14 @@ generate_genesis() {
     # 6. Export
     cp $HOME_DIR/config/genesis.json $OUTPUT_DIR/$CHAIN_ID.json
     
-    # ▼▼▼ 追加: Nginxが読めるようにパーミッションを変更 (Read for All) ▼▼▼
+    # バリデータ鍵もエクスポートする
+    cp $HOME_DIR/config/priv_validator_key.json $OUTPUT_DIR/$CHAIN_ID-priv_validator_key.json
+    
+    # Nginxが読めるようにパーミッションを変更 (Read for All)
     chmod 644 $OUTPUT_DIR/$CHAIN_ID.json
-    # ▲▲▲ 追加ここまで ▲▲▲
+    
+    # 鍵ファイルの権限変更
+    chmod 644 $OUTPUT_DIR/$CHAIN_ID-priv_validator_key.json
     
     echo "✅ Created $OUTPUT_DIR/$CHAIN_ID.json"
 }

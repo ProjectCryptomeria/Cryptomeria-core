@@ -61,6 +61,7 @@ all-in-one chains=DEFAULT_CHAINS:
 	@just clean
 	@just dev::build-all
 	@just deploy {{chains}}
+	@sleep 10
 	@just start-system
 	@echo "✅ All-in-one process complete! System is running."
 
