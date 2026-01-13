@@ -99,7 +99,7 @@ scaffold target:
 # [Hot Reload] ローカルでビルドしたバイナリを稼働中のPodに注入して再起動
 hot-reload target:
 	#!/usr/bin/env bash
-	set -e
+	set -ex
 	echo "🔥 Hot reloading {{target}}..."
 	just dev::build-chain {{target}}
 	

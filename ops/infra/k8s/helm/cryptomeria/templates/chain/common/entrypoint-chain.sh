@@ -87,6 +87,23 @@ else
     log_step "No mnemonic found at $MNEMONIC_FILE. Skipping import."
 fi
 
-echo "--- Starting node for $CHAIN_ID (Port: 26657/1317/9090) ---"
-exec $CHAIN_BINARY start --home $CHAIN_HOME --log_level info --log_format json
+# --- 修正後: Hot Reload対応ループ ---
+echo "--- Starting node loop for $CHAIN_ID (Port: 26657/1317/9090) ---"
+
+# シグナルハンドリング（コンテナ停止時は正しく終了させる）
+trap 'kill -TERM $PID; wait $PID' TERM INT
+
+while true; do
+    echo "🚀 Launching $CHAIN_BINARY..."
+    # バックグラウンドで起動してPIDを取得
+    $CHAIN_BINARY start --home $CHAIN_HOME --log_level info --log_format json &
+    PID=$!
+    
+    # プロセス終了を待機
+    wait $PID
+    EXIT_CODE=$?
+    
+    echo "⚠️ Node stopped with exit code $EXIT_CODE. Restarting in 1s..."
+    sleep 1
+done
 {{- end -}}
