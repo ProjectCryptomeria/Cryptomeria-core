@@ -96,7 +96,7 @@ trap 'kill -TERM $PID; wait $PID' TERM INT
 while true; do
     echo "🚀 Launching $CHAIN_BINARY..."
     # バックグラウンドで起動してPIDを取得
-    $CHAIN_BINARY start --home $CHAIN_HOME --log_level info --log_format json &
+    $CHAIN_BINARY start --home $CHAIN_HOME --log_level error --log_format json &
     PID=$!
     
     # プロセス終了を待機

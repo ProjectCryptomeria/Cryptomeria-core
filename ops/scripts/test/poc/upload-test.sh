@@ -187,24 +187,54 @@ diagnose_pending_packets() {
   done
 }
 
-# --- [追加] 特定のプロジェクト名を持つマニフェストの到着を待機 ---
+# --- [修正版] 特定のプロジェクト名を持つマニフェストの到着を待機 (Debug付き) ---
 wait_for_specific_manifest() {
   local mdsc_pod="$1"
   local target_project_name="$2"
 
   log "⏳ Waiting for Manifest with project_name='${target_project_name}' on ${mdsc_pod}..."
 
-  # jqのロジック:
-  # .manifest配列から、project_name (またはprojectName) が一致するものを抽出(select)し、その配列長(length)を数える
-  # ※ CosmosSDKのJSON出力はキャメルケース(projectName)になる場合とスネークケース(project_name)の場合があるため両方考慮すると安全ですが、
-  #    通常は proto名 project_name -> JSON名 projectName になります。
-  
-  local jq_filter=".manifest // [] | map(select(.projectName == \"${target_project_name}\" or .project_name == \"${target_project_name}\")) | length"
+  # 判定ロジック
+  # 1. 取得したJSON全体を再帰的に検索し、project_name または projectName が一致するオブジェクトを探す
+  # 2. その個数(length)を判定する
+  local jq_filter="[.. | objects | select((.project_name == \"${target_project_name}\") or (.projectName == \"${target_project_name}\"))] | length"
 
-  wait_for_condition "Manifest arrival for '${target_project_name}'" \
-    "JSON=\$(mdsc_manifests_json \"$mdsc_pod\" 2>/dev/null || true); \
-     COUNT=\$(echo \"\$JSON\" | jq \"$jq_filter\" 2>/dev/null || echo 0); \
-     [[ \"\$COUNT\" -gt 0 ]]"
+  local elapsed=0
+  while (( elapsed < TIMEOUT_SEC )); do
+    # JSONを取得 (失敗時は空文字)
+    local json_output
+    json_output="$(mdsc_manifests_json "$mdsc_pod" 2>/dev/null || true)"
+
+    # JSONが空でなければチェック
+    if [[ -n "$json_output" ]]; then
+      local count
+      count="$(echo "$json_output" | jq "$jq_filter" 2>/dev/null || echo 0)"
+
+      if [[ "$count" -gt 0 ]]; then
+        echo ""
+        success "Manifest for '${target_project_name}' found! (Count: $count)"
+        # 成功時は中身を少し表示して終了
+        echo "$json_output" | jq ".manifest[] | select(.project_name == \"${target_project_name}\")" | head -n 10
+        return 0
+      fi
+    fi
+
+    # 待機中のログ出力 (デバッグ用: 現在のJSONの状態を表示)
+    echo -ne "    ... checking (${elapsed}s) - Count: ${count:-0} \r"
+    
+    # 【デバッグ】もしJSONが取れているのにCountが0なら、JSONの中身を確認するために以下をコメントアウト解除してください
+    # echo "DEBUG JSON: $json_output" >> debug_log.txt
+
+    sleep "$POLL_INTERVAL_SEC"
+    elapsed=$((elapsed + POLL_INTERVAL_SEC))
+  done
+
+  echo ""
+  # タイムアウト時、最後に取得したJSONを表示して終了（原因特定のため）
+  error "Timed out waiting for project_name='${target_project_name}'."
+  log "🔍 LAST JSON RECEIVED:"
+  echo "${json_output:-<EMPTY>}" | jq . || echo "$json_output"
+  return 1
 }
 
 # =========================
