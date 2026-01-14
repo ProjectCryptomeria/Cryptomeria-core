@@ -149,7 +149,7 @@ func TestMsgServer_Upload_ManifestStructure_And_RoundRobin(t *testing.T) {
 	*/
 }
 
-func TestSplitDataIntoFragments(t *testing.T) {
-	// フェーズ1のテストは keeper/data_logic_test.go でカバーされています
-	t.Skip("Test is covered by data_logic_test.go")
-}
+// func TestSplitDataIntoFragments(t *testing.T) {
+// 	// フェーズ1のテストは keeper/data_logic_test.go でカバーされています
+// 	t.Skip("Test is covered by data_logic_test.go")
+// }
