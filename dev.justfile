@@ -139,4 +139,4 @@ ctl-exec args:
 #===================================
 
 archive:
-	@git archive HEAD --prefix=archive/ -o "output-$(date +%Y%m%d%H%M%S).zip"
+	@git archive HEAD --prefix={{PROJECT_NAME}}/ -o "archive/{{PROJECT_NAME}}-$(date +%Y%m%d%H%M%S).zip"
