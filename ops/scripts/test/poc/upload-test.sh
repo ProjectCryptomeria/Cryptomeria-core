@@ -6,12 +6,12 @@ NAMESPACE="cryptomeria"
 USER_NAME="local-admin"
 CHAIN_ID_GWC="gwc"
 
-TEST_FILENAME="test-image.png"
+TEST_FILENAME="image/test-image.png"
 TEST_DATA="Hello_Cryptomeria_This_is_a_test_data_fragment_for_IBC_transfer_verification."
 
 TIMEOUT_SEC=120
 POLL_INTERVAL_SEC=2
-PROJECT_NAME="poc-test-project"
+PROJECT_NAME="poc-test-project_2"
 VERSION="v1.0.0"
 EXPECTED_OPEN_CHANNELS=2   # FDSC + MDSC
 
@@ -187,6 +187,26 @@ diagnose_pending_packets() {
   done
 }
 
+# --- [追加] 特定のプロジェクト名を持つマニフェストの到着を待機 ---
+wait_for_specific_manifest() {
+  local mdsc_pod="$1"
+  local target_project_name="$2"
+
+  log "⏳ Waiting for Manifest with project_name='${target_project_name}' on ${mdsc_pod}..."
+
+  # jqのロジック:
+  # .manifest配列から、project_name (またはprojectName) が一致するものを抽出(select)し、その配列長(length)を数える
+  # ※ CosmosSDKのJSON出力はキャメルケース(projectName)になる場合とスネークケース(project_name)の場合があるため両方考慮すると安全ですが、
+  #    通常は proto名 project_name -> JSON名 projectName になります。
+  
+  local jq_filter=".manifest // [] | map(select(.projectName == \"${target_project_name}\" or .project_name == \"${target_project_name}\")) | length"
+
+  wait_for_condition "Manifest arrival for '${target_project_name}'" \
+    "JSON=\$(mdsc_manifests_json \"$mdsc_pod\" 2>/dev/null || true); \
+     COUNT=\$(echo \"\$JSON\" | jq \"$jq_filter\" 2>/dev/null || echo 0); \
+     [[ \"\$COUNT\" -gt 0 ]]"
+}
+
 # =========================
 # Main Flow（手続き的に読みやすく）
 # =========================
@@ -217,6 +237,8 @@ if [[ -z "$USER_ADDR" ]]; then
   exit 1
 fi
 echo "    Address: $USER_ADDR"
+
+log "Param \n$TEST_FILENAME \n$TEST_DATA \n$USER_NAME \n$CHAIN_ID_GWC \n$PROJECT_NAME \n$VERSION"
 
 # 4) Upload TX 送信
 log "📤 Sending Upload Transaction..."
@@ -249,8 +271,16 @@ fi
 FDSC_OK=1
 MDSC_OK=1
 
+# FDSC: こちらはProjectNameを持たないので、とりあえず「個数が増えたこと」を確認するか、
+#       厳密にやるなら「今の個数 > 開始前の個数」で判定する必要があります。
+#       今回はManifestの到着を主軸に置くため、簡易的に「1以上」のままとするか、
+#       もし可能なら「開始前の個数+1」を判定条件に加えるのがベストです。
+#       (簡易版として、少なくともManifestが正しければ成功とみなす方針にします)
 wait_for_json_count "$FDSC_POD" "Fragment"  fdsc_fragments_json '.fragment | length' 1 || FDSC_OK=0
-wait_for_json_count "$MDSC_POD" "Manifest"  mdsc_manifests_json  '.manifest | length' 1 || MDSC_OK=0
+
+# MDSC: ★ここを修正★
+# 単なる個数チェックではなく、指定したプロジェクト名のマニフェストが生成されたかを確認
+wait_for_specific_manifest "$MDSC_POD" "$PROJECT_NAME" || MDSC_OK=0
 
 # 7) 失敗時の診断
 if [[ "$FDSC_OK" -ne 1 || "$MDSC_OK" -ne 1 ]]; then

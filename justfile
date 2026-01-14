@@ -86,6 +86,27 @@ clean: undeploy
 	@kubectl delete namespace {{PROJECT_NAME}} --ignore-not-found
 
 # =============================================================================
+# ⏸️ Suspend & Resume (Data Preserved)
+# =============================================================================
+
+# [Stop] データを保持したまま、全コンテナを一時停止する (replicas=0)
+stop:
+	@echo "--> ⏸️ Pausing system (scaling down to 0)..."
+	@-kubectl -n {{PROJECT_NAME}} scale statefulset --all --replicas=0
+	@-kubectl -n {{PROJECT_NAME}} scale deployment --all --replicas=0
+	@echo "✅ System paused. Data is preserved in PVCs."
+
+# [Resume] 一時停止したシステムを再開する (replicas=1)
+resume:
+	@echo "--> ▶️ Resuming system (scaling up to 1)..."
+	@-kubectl -n {{PROJECT_NAME}} scale statefulset --all --replicas=1
+	@-kubectl -n {{PROJECT_NAME}} scale deployment --all --replicas=1
+	@echo "⏳ Waiting for pods to be ready..."
+	@kubectl -n {{PROJECT_NAME}} wait --for=condition=ready pod --all --timeout=120s
+	@echo "✅ System resumed! Checking network status..."
+	@just network
+
+# =============================================================================
 # 🛠️ Operations & Utilities
 # =============================================================================
 
