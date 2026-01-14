@@ -3,3 +3,5 @@ dist
 # chain/*
 node_modules
 .helm-temp-values.yaml
+
+archive/*.zip

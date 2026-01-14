@@ -133,3 +133,10 @@ ctl-dev:
 
 ctl-exec args:
 	@cd util/Cryptomeria-TScontroller && yarn {{args}}
+
+#===================================
+# Utiles
+#===================================
+
+archive:
+	@git archive HEAD --prefix=archive/ -o "output-$(date +%Y%m%d%H%M%S).zip"
