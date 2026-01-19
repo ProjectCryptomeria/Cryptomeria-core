@@ -38,4 +38,19 @@ var (
 
 	// 追加: ストレージエンドポイント保存用 (Key: ChainID, Value: API URL)
 	StorageEndpointKey = collections.NewPrefix("storage_endpoint")
+
+	// --- Upload session management (experiment-focused) ---
+	// UploadSessionPendingKey stores the remaining number of fragment acknowledgements
+	// required before the manifest is published.
+	UploadSessionPendingKey = collections.NewPrefix("upload_session_pending")
+
+	// UploadSessionManifestKey stores a base64-encoded GatewayPacketData bytes of the manifest
+	// to be sent to MDSC after all fragments are acknowledged.
+	UploadSessionManifestKey = collections.NewPrefix("upload_session_manifest")
+
+	// UploadSessionMDSCChannelKey stores the MDSC channel ID used for the upload session.
+	UploadSessionMDSCChannelKey = collections.NewPrefix("upload_session_mdsc_channel")
+
+	// FragmentToSessionKey maps fragment_id (string) -> upload_session_id (string).
+	FragmentToSessionKey = collections.NewPrefix("fragment_to_session")
 )

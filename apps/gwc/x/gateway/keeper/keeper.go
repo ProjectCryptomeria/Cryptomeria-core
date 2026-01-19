@@ -30,6 +30,23 @@ type Keeper struct {
 	// 変更: Key=ChannelID, Value=StorageInfo
 	StorageInfos collections.Map[string, types.StorageInfo]
 
+	// --- Upload session management (experiment-focused) ---
+	// Key: upload_session_id (string)
+	// Value: remaining fragment ACK count (decimal string)
+	UploadSessionPending collections.Map[string, string]
+
+	// Key: upload_session_id (string)
+	// Value: base64(GatewayPacketData.Marshal()) for ManifestPacket
+	UploadSessionManifest collections.Map[string, string]
+
+	// Key: upload_session_id (string)
+	// Value: mdsc channel_id (string)
+	UploadSessionMDSCChannel collections.Map[string, string]
+
+	// Key: fragment_id (string)
+	// Value: upload_session_id (string)
+	FragmentToSession collections.Map[string, string]
+
 	ibcKeeperFn func() *ibckeeper.Keeper
 	bankKeeper  types.BankKeeper
 
@@ -67,6 +84,12 @@ func NewKeeper(
 
 		// 変更: StorageInfosの初期化
 		StorageInfos: collections.NewMap(sb, types.StorageEndpointKey, "storage_infos", collections.StringKey, codec.CollValue[types.StorageInfo](cdc)),
+
+		// Upload session management
+		UploadSessionPending:     collections.NewMap(sb, types.UploadSessionPendingKey, "upload_session_pending", collections.StringKey, collections.StringValue),
+		UploadSessionManifest:    collections.NewMap(sb, types.UploadSessionManifestKey, "upload_session_manifest", collections.StringKey, collections.StringValue),
+		UploadSessionMDSCChannel: collections.NewMap(sb, types.UploadSessionMDSCChannelKey, "upload_session_mdsc_channel", collections.StringKey, collections.StringValue),
+		FragmentToSession:        collections.NewMap(sb, types.FragmentToSessionKey, "fragment_to_session", collections.StringKey, collections.StringValue),
 	}
 
 	schema, err := sb.Build()

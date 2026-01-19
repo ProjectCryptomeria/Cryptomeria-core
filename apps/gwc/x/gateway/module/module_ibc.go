@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"fmt"
+	"strconv"
 
 	errorsmod "cosmossdk.io/errors"
 
@@ -179,7 +180,35 @@ func (im IBCModule) OnAcknowledgementPacket(
 	switch packet := modulePacketData.Packet.(type) {
 	// --- 追加: Ack受信時のハンドリング (エラー回避のため必須) ---
 	case *types.GatewayPacketData_FragmentPacket:
-		// 断片データのAck受信。正常終了。
+		fragIDStr := strconv.FormatUint(packet.FragmentPacket.Id, 10)
+		// ACKが来たfragmentからupload_session_idを引く
+		uploadID, err := im.keeper.FragmentToSession.Get(ctx, fragIDStr)
+		if err != nil {
+			// mappingが無い場合は無視（古い/異常系）
+			return nil
+		}
+		// mappingは不要になるので先に削除（ストア肥大化防止）
+		_ = im.keeper.FragmentToSession.Remove(ctx, fragIDStr)
+
+		switch ack.Response.(type) {
+		case *channeltypes.Acknowledgement_Result:
+			remaining, _, err := im.keeper.ConsumeFragmentAck(ctx, uploadID)
+			if err != nil {
+				ctx.Logger().Error("Failed to consume fragment ACK", "upload_id", uploadID, "error", err)
+				return nil
+			}
+			if remaining == 0 {
+				// 全断片が揃ったのでManifestを公開する
+				if err := im.keeper.PublishManifestIfReady(ctx, uploadID); err != nil {
+					ctx.Logger().Error("Failed to publish manifest after ACKs", "upload_id", uploadID, "error", err)
+					return nil
+				}
+				ctx.Logger().Info("All fragment ACKs received; manifest published", "upload_id", uploadID)
+			}
+		case *channeltypes.Acknowledgement_Error:
+			ctx.Logger().Error("Fragment ACK error; marking upload failed", "upload_id", uploadID)
+			im.keeper.FailUploadSession(ctx, uploadID)
+		}
 		return nil
 	case *types.GatewayPacketData_ManifestPacket:
 		// マニフェストのAck受信。正常終了。
@@ -207,7 +236,15 @@ func (im IBCModule) OnTimeoutPacket(
 	switch packet := modulePacketData.Packet.(type) {
 	// --- 追加: Timeout時のハンドリング ---
 	case *types.GatewayPacketData_FragmentPacket:
-		ctx.Logger().Error("Fragment Packet Timeout!", "id", packet.FragmentPacket.Id)
+		fragIDStr := strconv.FormatUint(packet.FragmentPacket.Id, 10)
+		uploadID, err := im.keeper.FragmentToSession.Get(ctx, fragIDStr)
+		if err == nil {
+			_ = im.keeper.FragmentToSession.Remove(ctx, fragIDStr)
+			ctx.Logger().Error("Fragment Packet Timeout; marking upload failed", "upload_id", uploadID, "fragment_id", fragIDStr)
+			im.keeper.FailUploadSession(ctx, uploadID)
+		} else {
+			ctx.Logger().Error("Fragment Packet Timeout!", "id", packet.FragmentPacket.Id)
+		}
 		return nil
 	case *types.GatewayPacketData_ManifestPacket:
 		// FilenameではなくProjectNameをログに出力

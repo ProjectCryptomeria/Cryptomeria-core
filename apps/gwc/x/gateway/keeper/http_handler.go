@@ -1,12 +1,14 @@
 package keeper
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	"gwc/x/gateway/types"
 
@@ -82,7 +84,9 @@ func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req
 
 	// Fetch Manifest
 	manifestURL := fmt.Sprintf("%s/mdsc/metastore/v1/manifest/%s", mdscEndpoint, projectName)
-	resp, err := http.Get(manifestURL)
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+
+	resp, err := httpClient.Get(manifestURL)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to connect to MDSC: %v", err), http.StatusBadGateway)
 		return
@@ -129,7 +133,12 @@ func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req
 		}
 	}
 
+	// Concurrency & retry controls for stability during experiments
+	const maxParallel = 16
+	const maxRetries = 2
+
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxParallel)
 	fragmentData := make([][]byte, len(fileInfo.Fragments))
 	errors := make([]error, len(fileInfo.Fragments))
 
@@ -137,6 +146,9 @@ func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req
 		wg.Add(1)
 		go func(i int, fdscID, fragID string) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
 			endpoint, ok := fdscEndpoints[fdscID]
 			if !ok {
 				errors[i] = fmt.Errorf("endpoint not found for fdsc_id: %s", fdscID)
@@ -144,34 +156,13 @@ func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req
 			}
 
 			fragURL := fmt.Sprintf("%s/fdsc/datastore/v1/fragment/%s", endpoint, fragID)
-			resp, err := http.Get(fragURL)
+
+			data, err := fetchFragmentWithRetry(req.Context(), httpClient, fragURL, maxRetries)
 			if err != nil {
 				errors[i] = err
 				return
 			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				errors[i] = fmt.Errorf("status %d", resp.StatusCode)
-				return
-			}
-
-			var fragResp struct {
-				Fragment struct {
-					Value string `json:"value"` // Base64 encoded
-				} `json:"fragment"`
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&fragResp); err != nil {
-				errors[i] = err
-				return
-			}
-
-			decoded, err := base64.StdEncoding.DecodeString(fragResp.Fragment.Value)
-			if err != nil {
-				errors[i] = err
-				return
-			}
-			fragmentData[i] = decoded
+			fragmentData[i] = data
 		}(i, frag.FdscId, frag.FragmentId)
 	}
 
@@ -189,4 +180,58 @@ func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req
 	for _, data := range fragmentData {
 		w.Write(data)
 	}
+}
+
+// fetchFragmentWithRetry fetches a single fragment JSON from FDSC and returns the decoded bytes.
+// It uses limited retries to reduce transient failure impact during experiments.
+func fetchFragmentWithRetry(ctx context.Context, client *http.Client, url string, maxRetries int) ([]byte, error) {
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		data, err := fetchFragmentOnce(ctx, client, url)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		// simple backoff
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(200*(attempt+1)) * time.Millisecond):
+		}
+	}
+	return nil, lastErr
+}
+
+func fetchFragmentOnce(ctx context.Context, client *http.Client, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("fdsc returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// FDSC QueryGetFragmentResponse JSON is: {"fragment": {"fragment_id":"...", "data":"<base64>", ...}}
+	var fragResp struct {
+		Fragment struct {
+			Data string `json:"data"`
+		} `json:"fragment"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&fragResp); err != nil {
+		return nil, err
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(fragResp.Fragment.Data)
+	if err != nil {
+		return nil, err
+	}
+	return decoded, nil
 }

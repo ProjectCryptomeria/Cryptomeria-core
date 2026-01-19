@@ -1,6 +1,7 @@
 package datastore
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 
@@ -128,6 +129,16 @@ func (im IBCModule) OnRecvPacket(
 
 		// 修正: string型への変換
 		fragmentIdStr := strconv.FormatUint(fragment.Id, 10)
+
+		// v3-3要素（軽量版）: 冪等性を確保するため、同一IDで内容が異なる場合は拒否する
+		if existing, err := im.keeper.Fragment.Get(ctx, fragmentIdStr); err == nil {
+			// Exists: accept if identical, reject if different
+			if !bytes.Equal(existing.Data, fragment.Data) {
+				return channeltypes.NewErrorAcknowledgement(fmt.Errorf("fragment conflict: fragment_id=%s already exists with different data", fragmentIdStr))
+			}
+			ctx.Logger().Info("Packet Received (Duplicate) - Data Matched", "module", types.ModuleName, "fragment_id", fragmentIdStr)
+			return channeltypes.NewResultAcknowledgement([]byte{byte(1)})
+		}
 
 		val := types.Fragment{
 			FragmentId: fragmentIdStr,
