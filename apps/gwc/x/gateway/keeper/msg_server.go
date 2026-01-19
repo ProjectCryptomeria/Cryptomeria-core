@@ -30,7 +30,11 @@ var _ types.MsgServer = msgServer{}
 func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.MsgUploadResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
+	// UploadIDを生成 (ProjectName + Timestamp + Nano)
+	uploadID := fmt.Sprintf("%s-%d", msg.ProjectName, ctx.BlockTime().UnixNano())
+
 	ctx.Logger().Info("MsgUpload を受信しました",
+		"upload_id", uploadID,
 		"creator", msg.Creator,
 		"filename", msg.Filename,
 		"data_size", len(msg.Data),
@@ -82,13 +86,20 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 	}
 
 	if isZip {
-		return k.processZipUpload(ctx, msg, mdscChannel, fdscChannels, chunkSize)
+		return k.processZipUpload(ctx, msg, mdscChannel, fdscChannels, chunkSize, uploadID)
 	}
-	return k.processSingleFileUpload(ctx, msg, mdscChannel, fdscChannels, chunkSize)
+	return k.processSingleFileUpload(ctx, msg, mdscChannel, fdscChannels, chunkSize, uploadID)
 }
 
-func (k msgServer) processZipUpload(ctx sdk.Context, msg *types.MsgUpload, mdscChannel string, fdscChannels []string, chunkSize int) (*types.MsgUploadResponse, error) {
-	ctx.Logger().Info("Zipアップロードを処理中")
+func (k msgServer) processZipUpload(
+	ctx sdk.Context,
+	msg *types.MsgUpload,
+	mdscChannel string,
+	fdscChannels []string,
+	chunkSize int,
+	uploadID string,
+) (*types.MsgUploadResponse, error) {
+	ctx.Logger().Info("Zipアップロードを処理中", "upload_id", uploadID)
 
 	processedFiles, err := ProcessZipData(msg.Data, chunkSize)
 	if err != nil {
@@ -106,21 +117,24 @@ func (k msgServer) processZipUpload(ctx sdk.Context, msg *types.MsgUpload, mdscC
 
 	// 全体を通してのチャンクカウンター（ラウンドロビン用）
 	var roundRobinIndex int
+	var totalFragments uint64 = 0
 
+	// 1. 各ファイルのフラグメント送信
 	for _, pFile := range processedFiles {
-		// 1. フラグメントの分散アップロード
-		fragmentMappings, err := k.uploadFragments(ctx, pFile.Chunks, projectName, pFile.Path, fdscChannels, &roundRobinIndex)
+		// フラグメントの分散アップロード
+		fragmentMappings, err := k.uploadFragments(ctx, pFile.Chunks, projectName, pFile.Path, fdscChannels, &roundRobinIndex, uploadID)
 		if err != nil {
 			return nil, err
 		}
+		totalFragments += uint64(len(fragmentMappings))
 
-		// 2. MIMEタイプの検出
+		// MIMEタイプの検出
 		mimeType := "application/octet-stream"
 		if len(pFile.Content) > 0 {
 			mimeType = http.DetectContentType(pFile.Content)
 		}
 
-		// 3. マップへの登録
+		// マップへの登録
 		filesMap[pFile.Path] = &types.FileMetadata{
 			MimeType:  mimeType,
 			Size_:     uint64(len(pFile.Content)),
@@ -128,16 +142,32 @@ func (k msgServer) processZipUpload(ctx sdk.Context, msg *types.MsgUpload, mdscC
 		}
 	}
 
-	// 4. 単一のManifestPacketをMDSCへ送信
-	err = k.sendManifestPacket(ctx, mdscChannel, projectName, msg.Version, filesMap)
+	// 2. マニフェストパケットの作成 (送信はせずバイト列を取得)
+	manifestBytes, err := k.buildManifestPacketBytes(projectName, msg.Version, filesMap)
 	if err != nil {
-		return nil, fmt.Errorf("マニフェストパケットの送信に失敗しました: %w", err)
+		return nil, fmt.Errorf("failed to build manifest packet: %w", err)
 	}
+
+	// 3. アップロードセッションの開始 (Ack待機状態へ)
+	if err := k.Keeper.InitUploadSession(ctx, uploadID, mdscChannel, totalFragments, manifestBytes); err != nil {
+		return nil, fmt.Errorf("failed to init upload session: %w", err)
+	}
+
+	ctx.Logger().Info("アップロードセッションを開始しました",
+		"upload_id", uploadID,
+		"total_fragments", totalFragments)
 
 	return &types.MsgUploadResponse{}, nil
 }
 
-func (k msgServer) processSingleFileUpload(ctx sdk.Context, msg *types.MsgUpload, mdscChannel string, fdscChannels []string, chunkSize int) (*types.MsgUploadResponse, error) {
+func (k msgServer) processSingleFileUpload(
+	ctx sdk.Context,
+	msg *types.MsgUpload,
+	mdscChannel string,
+	fdscChannels []string,
+	chunkSize int,
+	uploadID string,
+) (*types.MsgUploadResponse, error) {
 	// プロジェクト名が指定されていない場合はファイル名を使用
 	projectName := msg.ProjectName
 	if projectName == "" {
@@ -152,10 +182,11 @@ func (k msgServer) processSingleFileUpload(ctx sdk.Context, msg *types.MsgUpload
 
 	// フラグメントのアップロード
 	var roundRobinIndex int
-	fragmentMappings, err := k.uploadFragments(ctx, chunks, projectName, msg.Filename, fdscChannels, &roundRobinIndex)
+	fragmentMappings, err := k.uploadFragments(ctx, chunks, projectName, msg.Filename, fdscChannels, &roundRobinIndex, uploadID)
 	if err != nil {
 		return nil, err
 	}
+	totalFragments := uint64(len(fragmentMappings))
 
 	// MIMEタイプの検出
 	mimeType := http.DetectContentType(msg.Data)
@@ -169,18 +200,25 @@ func (k msgServer) processSingleFileUpload(ctx sdk.Context, msg *types.MsgUpload
 		},
 	}
 
-	// マニフェスト送信
-	err = k.sendManifestPacket(ctx, mdscChannel, projectName, msg.Version, filesMap)
+	// マニフェストパケットの作成
+	manifestBytes, err := k.buildManifestPacketBytes(projectName, msg.Version, filesMap)
 	if err != nil {
 		return nil, err
 	}
+
+	// アップロードセッションの開始
+	if err := k.Keeper.InitUploadSession(ctx, uploadID, mdscChannel, totalFragments, manifestBytes); err != nil {
+		return nil, err
+	}
+
+	ctx.Logger().Info("アップロードセッションを開始しました",
+		"upload_id", uploadID,
+		"total_fragments", totalFragments)
 
 	return &types.MsgUploadResponse{}, nil
 }
 
 func computeFragmentID(projectName, filename string, index int) uint64 {
-	// NOTE: fragment_id は「project + filename + index」で決定する。
-	// 更新時に上書きを許可したい場合は、別途 version をキーに含めるなどの設計が必要。
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(projectName))
 	_, _ = h.Write([]byte{0})
@@ -191,6 +229,7 @@ func computeFragmentID(projectName, filename string, index int) uint64 {
 }
 
 // uploadFragments はチャンクのリストを受け取り、ラウンドロビンでFDSCに送信し、マッピングを返します。
+// また、Ack照合用に FragmentID -> UploadID のマッピングを保存します。
 func (k msgServer) uploadFragments(
 	ctx sdk.Context,
 	chunks [][]byte,
@@ -198,6 +237,7 @@ func (k msgServer) uploadFragments(
 	filename string,
 	fdscChannels []string,
 	roundRobinIndex *int,
+	uploadID string,
 ) ([]*types.PacketFragmentMapping, error) {
 
 	const TimeoutSeconds = 600
@@ -224,6 +264,7 @@ func (k msgServer) uploadFragments(
 		targetChannel := fdscChannels[rr%len(fdscChannels)]
 		*roundRobinIndex = rr + 1
 
+		// Packet送信
 		_, err := k.Keeper.TransmitGatewayPacketData(
 			ctx,
 			packetData,
@@ -236,6 +277,11 @@ func (k msgServer) uploadFragments(
 			return nil, fmt.Errorf("フラグメントパケットの送信に失敗しました (%s, chunk %d): %w", filename, i, err)
 		}
 
+		// マッピング保存 (Ack受信時に使用)
+		if err := k.Keeper.FragmentToSession.Set(ctx, fragmentIDStr, uploadID); err != nil {
+			return nil, fmt.Errorf("failed to map fragment to session: %w", err)
+		}
+
 		fragmentMappings = append(fragmentMappings, &types.PacketFragmentMapping{
 			FdscId:     targetChannel,
 			FragmentId: fragmentIDStr,
@@ -245,25 +291,20 @@ func (k msgServer) uploadFragments(
 			"project", projectName,
 			"file", filename,
 			"chunk_index", i,
-			"rr_index", rr,
 			"target_channel", targetChannel,
-			"fragment_id", fragmentIDStr)
+			"fragment_id", fragmentIDStr,
+			"upload_id", uploadID)
 	}
 
 	return fragmentMappings, nil
 }
 
-// sendManifestPacket はマップ形式のManifestPacketを構築し、MDSCへ送信します。
-func (k msgServer) sendManifestPacket(
-	ctx sdk.Context,
-	mdscChannel string,
+// buildManifestPacketBytes はマップ形式のManifestPacketを構築し、マーシャルしたバイト列を返します。
+func (k msgServer) buildManifestPacketBytes(
 	projectName string,
 	version string,
 	files map[string]*types.FileMetadata,
-) error {
-	const TimeoutSeconds = 600
-
-	// ManifestPacketを構築します
+) ([]byte, error) {
 	manifestPacket := types.GatewayPacketData{
 		Packet: &types.GatewayPacketData_ManifestPacket{
 			ManifestPacket: &types.ManifestPacket{
@@ -273,18 +314,7 @@ func (k msgServer) sendManifestPacket(
 			},
 		},
 	}
-
-	timeoutTimestamp := uint64(ctx.BlockTime().UnixNano()) + uint64(TimeoutSeconds*1_000_000_000)
-
-	_, err := k.Keeper.TransmitGatewayPacketData(
-		ctx,
-		manifestPacket,
-		"gateway",
-		mdscChannel,
-		clienttypes.ZeroHeight(),
-		timeoutTimestamp,
-	)
-	return err
+	return manifestPacket.Marshal()
 }
 
 // TransmitGatewayPacketData sends the packet over IBC

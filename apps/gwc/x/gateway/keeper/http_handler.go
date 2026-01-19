@@ -42,45 +42,51 @@ func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req
 		filePath = "index.html" // Default to index.html
 	}
 
-	// --- 0. Dynamic Configuration Loading (Fix) ---
+	// --- 0. Dynamic Configuration Loading (Strict) ---
 	// ストアに保存されたエンドポイント情報を動的に取得してConfigを上書きする
+	// ※QueryClientを経由して最新のStateから取得
 	queryClient := types.NewQueryClient(clientCtx)
 	res, err := queryClient.StorageEndpoints(req.Context(), &types.QueryStorageEndpointsRequest{})
 
-	// ローカルの上書き用マップを作成 (元のマップを汚染しないため)
-	dynamicFDSC := make(map[string]string)
-	// 初期値としてConfigの値をコピー
-	for k, v := range config.FDSCEndpoints {
-		dynamicFDSC[k] = v
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to query storage topology: %v", err), http.StatusServiceUnavailable)
+		return
 	}
 
-	if err == nil {
-		// 修正: Endpoints -> StorageInfos
-		for _, info := range res.StorageInfos {
-			if info.ConnectionType == "mdsc" || info.ChainId == "mdsc" {
-				config.MDSCEndpoint = info.ApiEndpoint
-			} else {
-				// FDSCの場合、ChannelID (Upload時の識別子) をキーとして登録
-				if info.ChannelId != "" {
-					dynamicFDSC[info.ChannelId] = info.ApiEndpoint
-				}
-				// 念のためChainIDでも登録
-				if info.ChainId != "" {
-					dynamicFDSC[info.ChainId] = info.ApiEndpoint
-				}
+	// Configをローカル変数で再構築
+	dynamicFDSC := make(map[string]string)
+	config.MDSCEndpoint = "" // リセット
+
+	for _, info := range res.StorageInfos {
+		if info.ApiEndpoint == "" {
+			continue
+		}
+		if info.ConnectionType == "mdsc" || info.ChainId == "mdsc" {
+			config.MDSCEndpoint = info.ApiEndpoint
+		} else {
+			// FDSCの場合、ChannelID, ChainID 両方で引けるようにしておく
+			if info.ChannelId != "" {
+				dynamicFDSC[info.ChannelId] = info.ApiEndpoint
+			}
+			if info.ChainId != "" {
+				dynamicFDSC[info.ChainId] = info.ApiEndpoint
 			}
 		}
-	} else {
-		fmt.Printf("Warning: Failed to query dynamic storage endpoints: %v\n", err)
 	}
-	// Configの参照先を新しいマップに切り替え
 	config.FDSCEndpoints = dynamicFDSC
+
+	// エンドポイント存在チェック (Fallbackなし)
+	if config.MDSCEndpoint == "" {
+		http.Error(w, "MDSC endpoint is not registered in chain state. Please register storage info via transaction.", http.StatusServiceUnavailable)
+		return
+	}
+	if len(config.FDSCEndpoints) == 0 {
+		http.Error(w, "No FDSC endpoints registered in chain state.", http.StatusServiceUnavailable)
+		return
+	}
 
 	// 2. Resolve Manifest from MDSC
 	mdscEndpoint := config.MDSCEndpoint
-	if mdscEndpoint == "" {
-		mdscEndpoint = "http://localhost:1318" // Default fallback
-	}
 
 	// Fetch Manifest
 	manifestURL := fmt.Sprintf("%s/mdsc/metastore/v1/manifest/%s", mdscEndpoint, projectName)
@@ -124,16 +130,8 @@ func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req
 
 	// 3. Fetch Fragments from FDSCs
 	fdscEndpoints := config.FDSCEndpoints
-	if len(fdscEndpoints) == 0 {
-		// Default fallback
-		fdscEndpoints = map[string]string{
-			"fdsc":   "http://localhost:1319",
-			"fdsc-0": "http://localhost:1319",
-			"fdsc-1": "http://localhost:1320",
-		}
-	}
 
-	// Concurrency & retry controls for stability during experiments
+	// Concurrency & retry controls
 	const maxParallel = 16
 	const maxRetries = 2
 
@@ -182,8 +180,7 @@ func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req
 	}
 }
 
-// fetchFragmentWithRetry fetches a single fragment JSON from FDSC and returns the decoded bytes.
-// It uses limited retries to reduce transient failure impact during experiments.
+// fetchFragmentWithRetry, fetchFragmentOnce は変更なし (省略)
 func fetchFragmentWithRetry(ctx context.Context, client *http.Client, url string, maxRetries int) ([]byte, error) {
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -192,7 +189,6 @@ func fetchFragmentWithRetry(ctx context.Context, client *http.Client, url string
 			return data, nil
 		}
 		lastErr = err
-		// simple backoff
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -207,19 +203,15 @@ func fetchFragmentOnce(ctx context.Context, client *http.Client, url string) ([]
 	if err != nil {
 		return nil, err
 	}
-
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("fdsc returned status %d: %s", resp.StatusCode, string(body))
 	}
-
-	// FDSC QueryGetFragmentResponse JSON is: {"fragment": {"fragment_id":"...", "data":"<base64>", ...}}
 	var fragResp struct {
 		Fragment struct {
 			Data string `json:"data"`
@@ -228,7 +220,6 @@ func fetchFragmentOnce(ctx context.Context, client *http.Client, url string) ([]
 	if err := json.NewDecoder(resp.Body).Decode(&fragResp); err != nil {
 		return nil, err
 	}
-
 	decoded, err := base64.StdEncoding.DecodeString(fragResp.Fragment.Data)
 	if err != nil {
 		return nil, err
