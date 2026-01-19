@@ -138,5 +138,51 @@ ctl-exec args:
 # Utiles
 #===================================
 
-archive:
-	@git archive HEAD --prefix={{PROJECT_NAME}}/ -o "archive/{{PROJECT_NAME}}-$(date +%Y%m%d%H%M%S).zip"
+# デフォルトのターゲットは現在のディレクトリ（ルート）
+# 引数 target にパスを渡すことでサブモジュールを指定可能
+archive target=".":
+    #!/usr/bin/env bash
+    set -e # エラーが発生したら即座に終了
+
+    # 現在の日時を取得
+    TIMESTAMP=$(date +%Y%m%d%H%M%S)
+    
+    # 出力先のディレクトリ（親のルートにある archive/）を絶対パスで取得
+    # サブモジュールにcdした際も正しい位置に出力するため
+    mkdir -p archive
+    ABS_OUT_DIR=$(realpath archive)
+
+    # ターゲットの判定とアーカイブ実行
+    if [ "{{target}}" = "." ]; then
+        # --- メイン（Core）のアーカイブ ---
+        echo "📦 Archiving Cryptomeria-core (Root)..."
+        
+        git archive HEAD \
+            --prefix="{{PROJECT_NAME}}/" \
+            -o "$ABS_OUT_DIR/{{PROJECT_NAME}}-$TIMESTAMP.zip"
+            
+        echo "✅ Created: archive/{{PROJECT_NAME}}-$TIMESTAMP.zip"
+
+    else
+        # --- サブモジュールのアーカイブ ---
+        if [ -d "{{target}}" ]; then
+            # パスからディレクトリ名（例: Cryptomeria-WebUI）を取得
+            MODULE_NAME=$(basename "{{target}}")
+            
+            echo "📦 Archiving Submodule: $MODULE_NAME..."
+            
+            # サブモジュールのディレクトリに移動して git archive を実行
+            cd "{{target}}"
+            
+            # prefixは "cryptomeria/モジュール名/" となるように設定
+            # 出力ファイル名にもモジュール名を含める
+            git archive HEAD \
+                --prefix="{{PROJECT_NAME}}/$MODULE_NAME/" \
+                -o "$ABS_OUT_DIR/{{PROJECT_NAME}}-$MODULE_NAME-$TIMESTAMP.zip"
+                
+            echo "✅ Created: archive/{{PROJECT_NAME}}-$MODULE_NAME-$TIMESTAMP.zip"
+        else
+            echo "❌ Error: Directory '{{target}}' does not exist."
+            exit 1
+        fi
+    fi
