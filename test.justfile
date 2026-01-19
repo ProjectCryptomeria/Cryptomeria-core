@@ -49,9 +49,9 @@ process name:
 #        just test performance only="test_01*" (フィルタ実行)
 performance arg="":
     @if [ "{{arg}}" == "i" ] || [ "{{arg}}" == "interactive" ]; then \
-        ./ops/scripts/test/performance_test/run_performance_suite.sh --interactive; \
+        ./ops/scripts/test/performance_test/run.sh --interactive; \
     elif [ -n "{{arg}}" ]; then \
-        ./ops/scripts/test/performance_test/run_performance_suite.sh --only "{{arg}}"; \
+        ./ops/scripts/test/performance_test/run.sh --only "{{arg}}"; \
     else \
-        ./ops/scripts/test/performance_test/run_performance_suite.sh; \
+        ./ops/scripts/test/performance_test/run.sh; \
     fi

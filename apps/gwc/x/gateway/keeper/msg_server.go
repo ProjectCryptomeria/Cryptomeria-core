@@ -2,8 +2,6 @@ package keeper
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"hash/fnv"
 	"net/http"
@@ -79,8 +77,7 @@ func (k msgServer) Upload(goCtx context.Context, msg *types.MsgUpload) (*types.M
 	if chunkSize <= 0 {
 		chunkSize = k.ChunkSize // Keeperのデフォルト値
 		if chunkSize <= 0 {
-			// 実験で断片数が爆発しないようにデフォルトは1MBに寄せる
-			chunkSize = 1 * 1024 * 1024 // 最終フォールバック 1MB
+			chunkSize = 10 * 1024 // 最終フォールバック 10KB
 		}
 	}
 
@@ -104,19 +101,15 @@ func (k msgServer) processZipUpload(ctx sdk.Context, msg *types.MsgUpload, mdscC
 		projectName = GetProjectNameFromZipFilename(msg.Filename)
 	}
 
-	// アップロード単位の決定的IDを計算（冪等性・再実行耐性の基盤）
-	uploadID := computeUploadID(msg.Creator, projectName, msg.Version, msg.Filename, msg.Data)
-	ctx.Logger().Info("Upload session id computed", "upload_id", uploadID)
-
 	// マニフェスト用のファイルマップを初期化
 	filesMap := make(map[string]*types.FileMetadata)
 
-	// 全体を通してのチャンクカウンター（ラウンドロビン用 兼 ID生成用）
-	var totalChunkIndex int
+	// 全体を通してのチャンクカウンター（ラウンドロビン用）
+	var roundRobinIndex int
 
 	for _, pFile := range processedFiles {
 		// 1. フラグメントの分散アップロード
-		fragmentMappings, err := k.uploadFragments(ctx, uploadID, pFile.Chunks, pFile.Path, fdscChannels, &totalChunkIndex)
+		fragmentMappings, err := k.uploadFragments(ctx, pFile.Chunks, projectName, pFile.Path, fdscChannels, &roundRobinIndex)
 		if err != nil {
 			return nil, err
 		}
@@ -135,15 +128,11 @@ func (k msgServer) processZipUpload(ctx sdk.Context, msg *types.MsgUpload, mdscC
 		}
 	}
 
-	// 4. ManifestPacketは全Fragment ACK後に送信する（整合性向上）
-	manifestPacketBytes, err := k.buildManifestPacketBytes(projectName, msg.Version, filesMap)
+	// 4. 単一のManifestPacketをMDSCへ送信
+	err = k.sendManifestPacket(ctx, mdscChannel, projectName, msg.Version, filesMap)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build manifest packet bytes: %w", err)
+		return nil, fmt.Errorf("マニフェストパケットの送信に失敗しました: %w", err)
 	}
-	if err := k.Keeper.InitUploadSession(ctx, uploadID, mdscChannel, uint64(totalChunkIndex), manifestPacketBytes); err != nil {
-		return nil, fmt.Errorf("failed to init upload session: %w", err)
-	}
-	ctx.Logger().Info("Upload staged; manifest will be published after all fragment ACKs", "upload_id", uploadID, "pending_fragments", totalChunkIndex)
 
 	return &types.MsgUploadResponse{}, nil
 }
@@ -155,10 +144,6 @@ func (k msgServer) processSingleFileUpload(ctx sdk.Context, msg *types.MsgUpload
 		projectName = GetProjectNameFromZipFilename(msg.Filename)
 	}
 
-	// アップロード単位の決定的IDを計算（冪等性・再実行耐性の基盤）
-	uploadID := computeUploadID(msg.Creator, projectName, msg.Version, msg.Filename, msg.Data)
-	ctx.Logger().Info("Upload session id computed", "upload_id", uploadID)
-
 	// 単一ファイルの分割
 	chunks, err := SplitDataIntoFragments(msg.Data, chunkSize)
 	if err != nil {
@@ -166,8 +151,8 @@ func (k msgServer) processSingleFileUpload(ctx sdk.Context, msg *types.MsgUpload
 	}
 
 	// フラグメントのアップロード
-	var totalChunkIndex int = 0
-	fragmentMappings, err := k.uploadFragments(ctx, uploadID, chunks, msg.Filename, fdscChannels, &totalChunkIndex)
+	var roundRobinIndex int
+	fragmentMappings, err := k.uploadFragments(ctx, chunks, projectName, msg.Filename, fdscChannels, &roundRobinIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -184,39 +169,44 @@ func (k msgServer) processSingleFileUpload(ctx sdk.Context, msg *types.MsgUpload
 		},
 	}
 
-	// マニフェスト送信はACK後に行う（整合性向上）
-	manifestPacketBytes, err := k.buildManifestPacketBytes(projectName, msg.Version, filesMap)
+	// マニフェスト送信
+	err = k.sendManifestPacket(ctx, mdscChannel, projectName, msg.Version, filesMap)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build manifest packet bytes: %w", err)
+		return nil, err
 	}
-	if err := k.Keeper.InitUploadSession(ctx, uploadID, mdscChannel, uint64(totalChunkIndex), manifestPacketBytes); err != nil {
-		return nil, fmt.Errorf("failed to init upload session: %w", err)
-	}
-	ctx.Logger().Info("Upload staged; manifest will be published after all fragment ACKs", "upload_id", uploadID, "pending_fragments", totalChunkIndex)
 
 	return &types.MsgUploadResponse{}, nil
 }
 
-// uploadFragments はチャンクのリストを受け取り、ラウンドロビンでFDSCに送信し、マッピングを返します
-// totalChunkIndex ポインタを受け取ることで、複数のファイルにまたがってラウンドロビンとID生成のユニーク性を継続します
+func computeFragmentID(projectName, filename string, index int) uint64 {
+	// NOTE: fragment_id は「project + filename + index」で決定する。
+	// 更新時に上書きを許可したい場合は、別途 version をキーに含めるなどの設計が必要。
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(projectName))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(filename))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(strconv.Itoa(index)))
+	return h.Sum64()
+}
+
+// uploadFragments はチャンクのリストを受け取り、ラウンドロビンでFDSCに送信し、マッピングを返します。
 func (k msgServer) uploadFragments(
 	ctx sdk.Context,
-	uploadID string,
 	chunks [][]byte,
-	logFilename string,
+	projectName string,
+	filename string,
 	fdscChannels []string,
-	totalChunkIndex *int,
+	roundRobinIndex *int,
 ) ([]*types.PacketFragmentMapping, error) {
 
 	const TimeoutSeconds = 600
 	var fragmentMappings []*types.PacketFragmentMapping
 
 	for i, chunkData := range chunks {
-		// 現在のグローバルインデックスを取得
-		currentGlobalIndex := *totalChunkIndex
+		rr := *roundRobinIndex
 
-		// v3-3要素（軽量版）: フラグメントIDを決定的に生成し、再送・再実行に強くする
-		fragmentIDNum := deterministicFragmentID(uploadID, logFilename, i)
+		fragmentIDNum := computeFragmentID(projectName, filename, i)
 		fragmentIDStr := strconv.FormatUint(fragmentIDNum, 10)
 
 		packetData := types.GatewayPacketData{
@@ -231,15 +221,8 @@ func (k msgServer) uploadFragments(
 		timeoutTimestamp := uint64(ctx.BlockTime().UnixNano()) + uint64(TimeoutSeconds*1_000_000_000)
 
 		// ラウンドロビン選択: 全体カウンターを使用
-		targetChannel := fdscChannels[currentGlobalIndex%len(fdscChannels)]
-
-		// カウンターを進める (ID生成とチャネル選択の両方に影響)
-		(*totalChunkIndex)++
-
-		// fragment_id -> upload_id を保存（ACKハンドラでセッションを引けるようにする）
-		if err := k.Keeper.FragmentToSession.Set(ctx, fragmentIDStr, uploadID); err != nil {
-			return nil, fmt.Errorf("failed to record fragment-to-session mapping: %w", err)
-		}
+		targetChannel := fdscChannels[rr%len(fdscChannels)]
+		*roundRobinIndex = rr + 1
 
 		_, err := k.Keeper.TransmitGatewayPacketData(
 			ctx,
@@ -250,7 +233,7 @@ func (k msgServer) uploadFragments(
 			timeoutTimestamp,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("フラグメントパケットの送信に失敗しました (%s, chunk %d): %w", logFilename, i, err)
+			return nil, fmt.Errorf("フラグメントパケットの送信に失敗しました (%s, chunk %d): %w", filename, i, err)
 		}
 
 		fragmentMappings = append(fragmentMappings, &types.PacketFragmentMapping{
@@ -259,49 +242,15 @@ func (k msgServer) uploadFragments(
 		})
 
 		ctx.Logger().Info("FragmentPacketを送信しました",
-			"file", logFilename,
+			"project", projectName,
+			"file", filename,
 			"chunk_index", i,
-			"global_index", currentGlobalIndex,
+			"rr_index", rr,
 			"target_channel", targetChannel,
 			"fragment_id", fragmentIDStr)
 	}
 
 	return fragmentMappings, nil
-}
-
-// buildManifestPacketBytes builds a GatewayPacketData containing ManifestPacket and marshals it.
-func (k msgServer) buildManifestPacketBytes(projectName, version string, files map[string]*types.FileMetadata) ([]byte, error) {
-	manifestPacket := types.GatewayPacketData{
-		Packet: &types.GatewayPacketData_ManifestPacket{
-			ManifestPacket: &types.ManifestPacket{
-				ProjectName: projectName,
-				Version:     version,
-				Files:       files,
-			},
-		},
-	}
-	return manifestPacket.Marshal()
-}
-
-// computeUploadID creates a deterministic identifier for the entire upload.
-// It intentionally includes the content hash so re-uploading identical content yields the same ID.
-func computeUploadID(creator, projectName, version, filename string, data []byte) string {
-	contentHash := sha256.Sum256(data)
-	seed := fmt.Sprintf("%s|%s|%s|%s|%x", creator, projectName, version, filename, contentHash)
-	id := sha256.Sum256([]byte(seed))
-	return hex.EncodeToString(id[:])
-}
-
-// deterministicFragmentID generates a deterministic uint64 ID from uploadID, path and chunkIndex.
-// It uses FNV-1a 64-bit for speed and stable output.
-func deterministicFragmentID(uploadID, path string, chunkIndex int) uint64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(uploadID))
-	_, _ = h.Write([]byte("|"))
-	_, _ = h.Write([]byte(path))
-	_, _ = h.Write([]byte("|"))
-	_, _ = h.Write([]byte(strconv.Itoa(chunkIndex)))
-	return h.Sum64()
 }
 
 // sendManifestPacket はマップ形式のManifestPacketを構築し、MDSCへ送信します。
