@@ -43,10 +43,15 @@ process name:
 # 🚀 Performance Tests
 # =============================================================================
 
-# [Performance] Run performance test scripts and print formatted results
-performance only="":
-    @if [ -n "{{only}}" ]; then \
-        ./ops/scripts/test/performance_test/run_performance_suite.sh --only "{{only}}"; \
+# [Performance] パフォーマンステストを実行します
+# usage: just test performance (全実行)
+#        just test performance i (対話モード)
+#        just test performance only="test_01*" (フィルタ実行)
+performance arg="":
+    @if [ "{{arg}}" == "i" ] || [ "{{arg}}" == "interactive" ]; then \
+        ./ops/scripts/test/performance_test/run_performance_suite.sh --interactive; \
+    elif [ -n "{{arg}}" ]; then \
+        ./ops/scripts/test/performance_test/run_performance_suite.sh --only "{{arg}}"; \
     else \
         ./ops/scripts/test/performance_test/run_performance_suite.sh; \
     fi
