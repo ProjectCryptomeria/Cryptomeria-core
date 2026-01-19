@@ -2,91 +2,113 @@
 set -e
 source "$(dirname "$0")/../../lib/common.sh"
 
-echo "=== 🕵️‍♀️ Storage Data Verification & Reconstruction ==="
+echo "=== Storage Data Verification & Reconstruction ==="
 
-# 1. ターゲットの特定
+# =============================================================================
+# 0. Target Pods
+# =============================================================================
+GWC_POD=$(get_chain_pod_name "gwc")
 MDSC_POD=$(get_chain_pod_name "mdsc")
-# FDSCは複数ある可能性があるが、ここでは fdsc-0 を代表として確認
-FDSC_CHAIN="fdsc-0"
-FDSC_POD=$(get_chain_pod_name "$FDSC_CHAIN")
 
-if [ -z "$MDSC_POD" ] || [ -z "$FDSC_POD" ]; then
-    log_error "Target pods not found. Is the system running?"
+if [ -z "$GWC_POD" ] || [ -z "$MDSC_POD" ]; then
+  log_error "Target pods not found. Is the system running?"
 fi
+
 
 # =============================================================================
 # 1. MDSC: Metadata (Manifest) Inspection
 # =============================================================================
-log_step "1️⃣  Querying MDSC for Metadata (Manifests)..."
+log_step "1) Querying MDSC for metadata (manifests)..."
 
-# JSONを取得
 MANIFESTS_JSON=$(pod_exec "$MDSC_POD" mdscd q metastore list-manifest -o json)
 
-# 生のJSON構造を表示
 echo "--- [MDSC Stored Data Structure] ---"
 echo "$MANIFESTS_JSON" | jq '.'
 echo "------------------------------------"
 
-# 件数チェック
 COUNT=$(echo "$MANIFESTS_JSON" | jq '.manifest | length')
 if [ "$COUNT" -eq 0 ]; then
-    log_warn "No manifests found in MDSC."
-else
-    log_success "Found $COUNT manifest(s) in MDSC."
+  log_warn "No manifests found in MDSC. (Nothing to verify yet.)"
+  exit 0
+fi
+log_success "Found $COUNT manifest(s) in MDSC."
+
+# Pick the last manifest's project_name (best-effort)
+LATEST_PROJECT=$(echo "$MANIFESTS_JSON" | jq -r '.manifest[-1].project_name')
+if [ -z "$LATEST_PROJECT" ] || [ "$LATEST_PROJECT" = "null" ]; then
+  log_error "Failed to pick a project_name from list-manifest output."
 fi
 
+log_step "2) Showing manifest for project: $LATEST_PROJECT"
+MANIFEST_JSON=$(pod_exec "$MDSC_POD" mdscd q metastore get-manifest "$LATEST_PROJECT" -o json)
+
+echo "--- [Selected Manifest] ---"
+echo "$MANIFEST_JSON" | jq '.'
+echo "---------------------------"
+
 # =============================================================================
-# 2. FDSC: File Data (Fragment) Inspection
+# 2. Resolve fragment location using GWC endpoints (channel_id -> chain_id)
 # =============================================================================
-log_step "2️⃣  Querying FDSC ($FDSC_CHAIN) for File Data (Fragments)..."
+log_step "3) Resolving fragment location via manifest + gwc endpoints..."
 
-# JSONを取得
-FRAGMENTS_JSON=$(pod_exec "$FDSC_POD" fdscd q datastore list-fragment -o json)
-
-# 生のJSON構造を表示
-echo "--- [FDSC Stored Data Structure] ---"
-echo "$FRAGMENTS_JSON" | jq '.'
-echo "------------------------------------"
-
-# 件数チェック
-F_COUNT=$(echo "$FRAGMENTS_JSON" | jq '.fragment | length')
-if [ "$F_COUNT" -eq 0 ]; then
-    log_error "No fragments found in FDSC. Cannot reconstruct data."
-else
-    log_success "Found $F_COUNT fragment(s) in FDSC."
+FILE_KEY=$(echo "$MANIFEST_JSON" | jq -r '.files | keys[0]')
+if [ -z "$FILE_KEY" ] || [ "$FILE_KEY" = "null" ]; then
+  log_error "No files found in selected manifest."
 fi
 
-# =============================================================================
-# 3. Data Reconstruction (Rebuild)
-# =============================================================================
-log_step "3️⃣  Reconstructing Data from Fragments..."
+FDSC_CHANNEL=$(echo "$MANIFEST_JSON" | jq -r --arg K "$FILE_KEY" '.files[$K].fragments[0].fdsc_id')
+FRAGMENT_ID=$(echo "$MANIFEST_JSON" | jq -r --arg K "$FILE_KEY" '.files[$K].fragments[0].fragment_id')
 
-# 最新のフラグメントを取得 (IDが最大のものを想定)
-# 【修正】フィールド名を .content から .data に変更
-RAW_CONTENT_BASE64=$(echo "$FRAGMENTS_JSON" | jq -r '.fragment[-1].data')
-
-if [ -z "$RAW_CONTENT_BASE64" ] || [ "$RAW_CONTENT_BASE64" == "null" ]; then
-    log_error "Failed to extract content from fragment."
+if [ -z "$FDSC_CHANNEL" ] || [ "$FDSC_CHANNEL" = "null" ] || [ -z "$FRAGMENT_ID" ] || [ "$FRAGMENT_ID" = "null" ]; then
+  log_error "Failed to extract fragment mapping from manifest."
 fi
 
-echo "   🧩 Extracted Content (Base64): ${RAW_CONTENT_BASE64:0:50}..."
+ENDPOINTS_JSON=$(pod_exec "$GWC_POD" gwcd q gateway endpoints -o json)
+FDSC_CHAIN=$(echo "$ENDPOINTS_JSON" | jq -r --arg CH "$FDSC_CHANNEL" '.storage_infos[] | select(.channel_id==$CH) | .chain_id' | head -n 1)
+if [ -z "$FDSC_CHAIN" ] || [ "$FDSC_CHAIN" = "null" ]; then
+  log_error "Could not resolve fdsc chain id for channel '$FDSC_CHANNEL'."
+fi
 
-# 一時ファイルにデコード
+FDSC_POD=$(get_chain_pod_name "$FDSC_CHAIN")
+if [ -z "$FDSC_POD" ]; then
+  log_error "FDSC pod not found for chain '$FDSC_CHAIN'."
+fi
+
+log_success "Resolved fragment: project=$LATEST_PROJECT file=$FILE_KEY channel=$FDSC_CHANNEL chain=$FDSC_CHAIN fragment_id=$FRAGMENT_ID"
+
+# =============================================================================
+# 3. FDSC: Fragment Inspection
+# =============================================================================
+log_step "4) Querying FDSC ($FDSC_CHAIN) for fragment..."
+FRAG_JSON=$(pod_exec "$FDSC_POD" fdscd q datastore get-fragment "$FRAGMENT_ID" -o json)
+
+echo "--- [Fragment JSON] ---"
+echo "$FRAG_JSON" | jq .
+echo "------------------------"
+
+# =============================================================================
+# 4. Data Reconstruction (single fragment preview)
+# =============================================================================
+log_step "5) Reconstructing data from fragment (preview)..."
+
+RAW_CONTENT_BASE64=$(echo "$FRAG_JSON" | jq -r '.fragment.data')
+if [ -z "$RAW_CONTENT_BASE64" ] || [ "$RAW_CONTENT_BASE64" = "null" ]; then
+  log_error "Failed to extract data from fragment."
+fi
+
+echo "   Extracted base64 prefix: ${RAW_CONTENT_BASE64:0:50}..."
+
 RECONSTRUCTED_FILE="/tmp/reconstructed_data.bin"
-
-# Base64デコード
 echo "$RAW_CONTENT_BASE64" | base64 -d > "$RECONSTRUCTED_FILE"
 
-echo ""
-echo "--- [Reconstructed Data Preview (Hexdump)] ---"
+echo "--- [Reconstructed Data Preview] ---"
 if command -v xxd >/dev/null; then
-    xxd "$RECONSTRUCTED_FILE" | head -n 10
+  xxd "$RECONSTRUCTED_FILE" | head -n 10
 elif command -v hexdump >/dev/null; then
-    hexdump -C "$RECONSTRUCTED_FILE" | head -n 10
+  hexdump -C "$RECONSTRUCTED_FILE" | head -n 10
 else
-    echo "⚠️  'xxd' or 'hexdump' not found. Displaying as text:"
-    cat "$RECONSTRUCTED_FILE"
+  cat "$RECONSTRUCTED_FILE"
 fi
-echo "----------------------------------------------"
+echo "----------------------------------"
 
-log_success "Data reconstruction complete! Verification finished."
+log_success "Verification finished."

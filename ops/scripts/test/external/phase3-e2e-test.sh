@@ -2,14 +2,11 @@
 set -e
 
 NAMESPACE="cryptomeria"
-TARGET_CHAIN="fdsc-0" # アップロード先
 
 # 各Podの特定
 GWC_POD=$(kubectl get pod -n $NAMESPACE -l "app.kubernetes.io/component=gwc" -o jsonpath="{.items[0].metadata.name}")
 RELAYER_POD=$(kubectl get pod -n $NAMESPACE -l "app.kubernetes.io/component=relayer" -o jsonpath="{.items[0].metadata.name}")
 MDSC_POD=$(kubectl get pod -n $NAMESPACE -l "app.kubernetes.io/component=mdsc" -o jsonpath="{.items[0].metadata.name}")
-# FDSCはターゲットチェーンIDからPod名を推測 (fdsc-0 -> cryptomeria-fdsc-0-0)
-FDSC_POD=$(kubectl get pod -n $NAMESPACE -l "app.kubernetes.io/instance=$TARGET_CHAIN" -o jsonpath="{.items[0].metadata.name}")
 
 MILLIONAIRE_KEY="local-admin"
 # LOG_FILEは使用しないため削除
@@ -18,8 +15,8 @@ MILLIONAIRE_KEY="local-admin"
 echo "=== Phase 3: E2E Integration Test (Upload & Verify) ==="
 
 # 0. Pod検出確認
-if [ -z "$FDSC_POD" ] || [ -z "$MDSC_POD" ]; then
-  echo "❌ Error: Target pods (FDSC/MDSC) not found."
+if [ -z "$MDSC_POD" ]; then
+  echo "❌ Error: Target pod (MDSC) not found."
   exit 1
 fi
 
@@ -30,22 +27,15 @@ if ! kubectl exec -n $NAMESPACE $RELAYER_POD -- sh -c "pgrep -f 'rly start'" > /
   exit 1
 fi
 
-# 2. ログファイルの存在確認 (削除)
-# echo "--> 🛠️ Checking Relayer log file..."
-# if ! kubectl exec -n $NAMESPACE $RELAYER_POD -- sh -c "[ -f $LOG_FILE ]"; then
-#   echo "❌ Error: Log file ($LOG_FILE) not found."
-#   exit 1
-# fi
-
 # 3. 準備: テスト用ファイルの作成
 TEST_FILE="/tmp/test-data-$(date +%s).bin"
 echo "--> 📄 Creating dummy file (Random data)..."
 # GWCコンテナ内でファイルを作成
 kubectl exec -n $NAMESPACE $GWC_POD -- sh -c "dd if=/dev/urandom of=$TEST_FILE bs=1024 count=1 2>/dev/null"
 
-# ログの現在位置（行数）を記録 (削除)
-# START_LINE=$(kubectl exec -n $NAMESPACE $RELAYER_POD -- sh -c "wc -l < $LOG_FILE" || echo "0")
-# START_LINE=$((START_LINE + 1))
+# 今回のテスト用プロジェクト名（必ず安全な文字で生成）
+PROJECT_NAME="e2e-$(date +%s)"
+UPLOAD_NAME="dummy.bin"
 
 # 4. Upload実行とRelayerログによる通信確認 (統合)
 echo "--> 📤 Submitting Upload Transaction & Waiting for IBC Packet Delivery..."
@@ -101,7 +91,9 @@ LOG_PID=$!
 MONITOR_PID=$!
 
 # 4-B. Upload実行
-UPLOAD_CMD="gwcd tx gateway upload $TEST_FILE $TARGET_CHAIN --from $MILLIONAIRE_KEY --chain-id gwc -y --output json --keyring-backend test --home /home/gwc/.gwc"
+# IMPORTANT: CmdUpload の第2引数は「送信するデータ」です。
+# '@<path>' 形式でファイルを読み込ませる。
+UPLOAD_CMD="gwcd tx gateway upload $UPLOAD_NAME @$TEST_FILE --project-name $PROJECT_NAME --version v1 --from $MILLIONAIRE_KEY --chain-id gwc -y --output json --keyring-backend test --home /home/gwc/.gwc"
 
 TX_RES=$(kubectl exec -n $NAMESPACE $GWC_POD -- $UPLOAD_CMD)
 TX_HASH=$(echo "$TX_RES" | jq -r '.txhash')
@@ -144,36 +136,72 @@ fi
 # trap のリセット
 trap - EXIT
 
+
 # 6. データ永続化の確認 (Verification)
 echo "--> 💾 Verifying Data Persistence on Storage Nodes..."
 
-# A. FDSC (Data Fragment) の確認
-echo "  🔍 Checking FDSC ($TARGET_CHAIN)..."
-FDSC_OK=false
-for i in {1..5}; do
-  # list-fragment クエリを実行し、結果の配列長を確認
-  COUNT=$(kubectl exec -n $NAMESPACE $FDSC_POD -- fdscd q datastore list-fragment -o json | jq '.fragment | length' 2>/dev/null || echo "0")
-  if [ "$COUNT" -gt 0 ]; then
-    echo "  ✅ FDSC: Data Fragment found! (Total Fragments: $COUNT)"
-    FDSC_OK=true
-    break
-  fi
-  sleep 2
-done
-
-# B. MDSC (Metadata Manifest) の確認
-echo "  🔍 Checking MDSC (Metadata)..."
+# A. MDSC: このテストで作成したプロジェクトの manifest が存在するか
+echo "  🔍 Checking MDSC for project manifest..."
 MDSC_OK=false
-for i in {1..5}; do
-  # list-manifest クエリを実行
-  COUNT=$(kubectl exec -n $NAMESPACE $MDSC_POD -- mdscd q metastore list-manifest -o json | jq '.manifest | length' 2>/dev/null || echo "0")
-  if [ "$COUNT" -gt 0 ]; then
-    echo "  ✅ MDSC: Metadata Manifest found! (Total Manifests: $COUNT)"
+MANIFEST_JSON=""
+for i in {1..15}; do
+  if MANIFEST_JSON=$(kubectl exec -n $NAMESPACE $MDSC_POD -- mdscd q metastore show-manifest "$PROJECT_NAME" -o json 2>/dev/null); then
     MDSC_OK=true
     break
   fi
   sleep 2
 done
+
+if [ "$MDSC_OK" = true ]; then
+  echo "  ✅ MDSC: Manifest found for project '$PROJECT_NAME'"
+else
+  echo "❌ Fail: Manifest not found for project '$PROJECT_NAME'"
+  echo "Debug: Recent MDSC Pod Logs (Last 50 lines):"
+  kubectl logs -n $NAMESPACE $MDSC_POD --tail=50
+  exit 1
+fi
+
+# B. FDSC: manifest に含まれる fragment を、正しいチェーンで取得できるか
+echo "  🔍 Checking FDSC for at least one fragment referenced by manifest..."
+FDSC_OK=false
+
+# manifest から fragment と fdsc_id(channel_id) を抽出
+FDSC_CHANNEL=$(echo "$MANIFEST_JSON" | jq -r --arg FN "$UPLOAD_NAME" '.manifest.files[$FN].fragments[0].fdsc_id')
+FRAGMENT_ID=$(echo "$MANIFEST_JSON" | jq -r --arg FN "$UPLOAD_NAME" '.manifest.files[$FN].fragments[0].fragment_id')
+
+if [ -z "$FDSC_CHANNEL" ] || [ "$FDSC_CHANNEL" = "null" ] || [ -z "$FRAGMENT_ID" ] || [ "$FRAGMENT_ID" = "null" ]; then
+  echo "❌ Fail: Could not extract fragment mapping from manifest."
+  echo "$MANIFEST_JSON" | jq '.'
+  exit 1
+fi
+
+# GWC の endpoints から channel_id -> chain_id を解決
+ENDPOINTS_JSON=$(kubectl exec -n $NAMESPACE $GWC_POD -- gwcd q gateway endpoints -o json 2>/dev/null || echo "")
+FDSC_CHAIN_ID=$(echo "$ENDPOINTS_JSON" | jq -r --arg CH "$FDSC_CHANNEL" '.storage_infos[] | select(.channel_id==$CH) | .chain_id' | head -n 1)
+
+if [ -z "$FDSC_CHAIN_ID" ] || [ "$FDSC_CHAIN_ID" = "null" ]; then
+  echo "❌ Fail: Could not resolve fdsc chain id for channel '$FDSC_CHANNEL' from gwc endpoints."
+  echo "$ENDPOINTS_JSON" | jq '.'
+  exit 1
+fi
+
+FDSC_POD=$(kubectl get pod -n $NAMESPACE -l "app.kubernetes.io/instance=$FDSC_CHAIN_ID" -o jsonpath="{.items[0].metadata.name}")
+if [ -z "$FDSC_POD" ]; then
+  echo "❌ Fail: FDSC pod not found for chain '$FDSC_CHAIN_ID'"
+  exit 1
+fi
+
+FRAG_JSON=$(kubectl exec -n $NAMESPACE $FDSC_POD -- fdscd q datastore get-fragment "$FRAGMENT_ID" -o json 2>/dev/null || echo "")
+DATA_B64=$(echo "$FRAG_JSON" | jq -r '.fragment.data' 2>/dev/null || echo "null")
+
+if [ -n "$DATA_B64" ] && [ "$DATA_B64" != "null" ]; then
+  echo "  ✅ FDSC: Fragment retrievable (chain=$FDSC_CHAIN_ID pod=$FDSC_POD fragment_id=$FRAGMENT_ID)"
+  FDSC_OK=true
+else
+  echo "❌ Fail: Fragment not retrievable from resolved FDSC."
+  echo "Resolved: channel=$FDSC_CHANNEL chain=$FDSC_CHAIN_ID pod=$FDSC_POD fragment_id=$FRAGMENT_ID"
+  echo "$FRAG_JSON" | jq '.' || true
+fi
 
 # 最終判定
 if [ "$FDSC_OK" = true ] && [ "$MDSC_OK" = true ]; then

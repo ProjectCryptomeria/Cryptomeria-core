@@ -39,3 +39,14 @@ process name:
         echo "❌ Test script for {{name}} not found."; \
         exit 1; \
     fi
+# =============================================================================
+# 🚀 Performance Tests
+# =============================================================================
+
+# [Performance] Run performance test scripts and print formatted results
+performance only="":
+    @if [ -n "{{only}}" ]; then \
+        ./ops/scripts/test/performance_test/run_performance_suite.sh --only "{{only}}"; \
+    else \
+        ./ops/scripts/test/performance_test/run_performance_suite.sh; \
+    fi
