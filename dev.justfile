@@ -130,6 +130,9 @@ bff-install:
 bff-dev:
 	@cd util/Cryptomeria-Bff && yarn dev
 
+bff-test:
+	@cd util/Cryptomeria-Bff && yarn test
+
 # =============================================================================
 # 🔌 Controller Utils 
 # =============================================================================
