@@ -121,6 +121,15 @@ hot-reload target:
 	"
 	echo "✅ {{target}} reloaded!"
 
+#===================================
+# BFF Utils
+#===================================
+bff-install:
+	@cd util/Cryptomeria-Bff && yarn run init && yarn install
+
+bff-dev:
+	@cd util/Cryptomeria-Bff && yarn dev
+
 # =============================================================================
 # 🔌 Controller Utils 
 # =============================================================================
@@ -133,6 +142,8 @@ ctl-dev:
 
 ctl-exec args:
 	@cd util/Cryptomeria-TScontroller && yarn {{args}}
+
+
 
 #===================================
 # Utiles
@@ -186,3 +197,4 @@ archive target=".":
             exit 1
         fi
     fi
+
