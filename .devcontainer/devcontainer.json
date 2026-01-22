@@ -30,7 +30,8 @@
       "version": "1.25"
     },
     "ghcr.io/devcontainers/features/node:1": {
-      "version": "lts"
+      "version": "lts",
+      "installYarnUsingApt": "false"
     },
     "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
       "version": "latest",
@@ -42,7 +43,7 @@
   // 🛠️ 【修正】
   // インラインコマンドをやめ、外部スクリプトを実行するように変更しました。
   // 実行権限を付与してから実行します。
-  "postCreateCommand": "chmod +x .devcontainer/setup-kube.sh && .devcontainer/setup-kube.sh",
+  "postStartCommand": "chmod +x .devcontainer/setup-kube.sh && .devcontainer/setup-kube.sh",
 
   "customizations": {
     "vscode": {
