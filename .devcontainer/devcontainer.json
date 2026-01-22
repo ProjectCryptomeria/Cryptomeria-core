@@ -6,16 +6,14 @@
   "remoteUser": "ubuntu",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "workspaceFolder": "/workspace",
-
   "mounts": [
-    // ホストのkubeconfigを読み取り専用ソースとしてマウント
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.kube/config,target=/home/ubuntu/.kube/config.source,type=bind,consistency=cached"
+    // 変更点: 直接 .kube 内にマウントせず、一時的な場所にマウントします。
+    // これにより、Dockerが .kube ディレクトリを root 権限で自動作成するのを防ぎます。
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.kube/config,target=/tmp/kube-config-source,type=bind,consistency=cached"
   ],
-
   "remoteEnv": {
     "KUBECONFIG": "/home/ubuntu/.kube/config"
   },
-
   "features": {
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
       "version": "latest",
@@ -39,12 +37,8 @@
       "minikube": "none"
     }
   },
-
-  // 🛠️ 【修正】
-  // インラインコマンドをやめ、外部スクリプトを実行するように変更しました。
-  // 実行権限を付与してから実行します。
+  // 外部スクリプトを実行。権限付与してから実行します。
   "postStartCommand": "chmod +x .devcontainer/setup-kube.sh && .devcontainer/setup-kube.sh",
-
   "customizations": {
     "vscode": {
       "extensions": [
