@@ -1,5 +1,5 @@
 {
-  "name": "Raidchain Dev Container",
+  "name": "Cryptomeria Dev Container",
   "build": {
     "dockerfile": "Dockerfile"
   },
