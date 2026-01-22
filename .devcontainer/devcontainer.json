@@ -22,7 +22,7 @@
     "--security-opt",
     "seccomp=unconfined",
     // Linux/WSL環境でも 'host.docker.internal' を使えるようにする設定
-    "--add-host=host.docker.internal:host-gateway"
+    "--network=host"
   ],
 
   "features": {
