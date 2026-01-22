@@ -1,0 +1,54 @@
+# RBAC（namespace=cryptomeria）: /system/start（pods/exec） + /system/status + /system/ports を想定した最小セット
+# - start: relayer pod の探索 + exec
+# - status: pods/services/endpoints の一覧 + (任意で) relayer logs
+# - ports: services/endpoints の一覧（NodePort/ClusterIP確認）
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cryptomeria-bff
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cryptomeria-bff-system
+  namespace: {{ .Release.Namespace }}
+rules:
+  # Podを探す・状態を見る（status/startで利用）
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+
+  # exec（/system/start の中核）
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+
+  # ログ（statusやjob logs収集に使う場合）
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+
+  # NodePort/ClusterIP確認（ports/statusで利用）
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  # /system/k8s/configmaps
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get","list","watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cryptomeria-bff-system
+  namespace: {{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: cryptomeria-bff
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: cryptomeria-bff-system
+  apiGroup: rbac.authorization.k8s.io
