@@ -1,5 +1,5 @@
 {
-  "name": "Cryptomeria Dev Container",
+  "name": "Raidchain Dev Container",
   "build": {
     "dockerfile": "Dockerfile"
   },
@@ -7,23 +7,14 @@
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "workspaceFolder": "/workspace",
 
-  // 🛠️ WindowsとLinux(WSL)の両対応パス指定
   "mounts": [
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.kube,target=/tmp/kube-config-sync,type=bind,consistency=cached,readonly"
+    // ホストのkubeconfigを読み取り専用ソースとしてマウント
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.kube/config,target=/home/ubuntu/.kube/config.source,type=bind,consistency=cached"
   ],
 
   "remoteEnv": {
     "KUBECONFIG": "/home/ubuntu/.kube/config"
   },
-
-  "runArgs": [
-    "--init",
-    "--cap-add=SYS_PTRACE",
-    "--security-opt",
-    "seccomp=unconfined",
-    // Linux/WSL環境でも 'host.docker.internal' を使えるようにする設定
-    "--network=host"
-  ],
 
   "features": {
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
@@ -48,9 +39,9 @@
     }
   },
 
-  // ⚡️ 【変更】シェルスクリプトを実行する形式に変更
-  // chmod +x で実行権限を付与してから実行します。
-  // パスはワークスペースルート(/workspace)からの相対パスになります。
+  // 🛠️ 【修正】
+  // インラインコマンドをやめ、外部スクリプトを実行するように変更しました。
+  // 実行権限を付与してから実行します。
   "postCreateCommand": "chmod +x .devcontainer/setup-kube.sh && .devcontainer/setup-kube.sh",
 
   "customizations": {
