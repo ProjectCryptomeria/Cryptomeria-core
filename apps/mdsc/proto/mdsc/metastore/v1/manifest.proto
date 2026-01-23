@@ -3,6 +3,7 @@ package mdsc.metastore.v1;
 
 option go_package = "mdsc/x/metastore/types";
 import "gogoproto/gogo.proto";
+
 // 1. 最下層
 message FragmentLocation {
   string fdsc_id = 1;
@@ -14,11 +15,19 @@ message FileInfo {
     string mime_type = 1;
     uint64 file_size = 2;
     repeated FragmentLocation fragments = 3;
+    string file_root = 4; // 追加: 各ファイルのMerkle Root
 }
+
 // 3. 最上位
 message Manifest {
   string project_name = 1;
   string version = 2;
   string creator = 3;
+  
+  // 追加: 改ざん検知・検証用データ
+  string site_root = 5;       // 展開後コンテンツのMerkle Root
+  bytes client_signature = 6; // クライアントによるSiteRootへの署名
+  uint64 fragment_size = 7;   // 分割サイズ（検証に必要）
+
   map<string, FileInfo> files = 4; 
 }

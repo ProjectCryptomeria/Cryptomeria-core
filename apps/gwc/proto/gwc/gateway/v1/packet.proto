@@ -18,6 +18,8 @@ message NoDataPacket {}
 message FragmentPacket {
   uint64 id   = 1;
   bytes  data = 2;
+  // 追加: 検証用SiteRoot
+  string site_root = 3;
 }
 
 // PacketFragmentMapping defines the location of a fragment
@@ -30,15 +32,20 @@ message PacketFragmentMapping {
 message FileMetadata {
   string mime_type = 1;
   uint64 size      = 2;
-  // このファイル構成するフラグメントの順序付きリスト
   repeated PacketFragmentMapping fragments = 3;
+  // 追加: 各ファイルのMerkle Root
+  string file_root = 4;
 }
 
 // ManifestPacket defines the structure of the website/project
-// ルートからのパスをキーとしたマップ構造で、ファイルメタデータへのO(1)アクセスを実現します
 message ManifestPacket {
   string project_name = 1;
   string version      = 2;
-  // マップのキーは相対パス (例: "index.html", "assets/logo.png")
   map<string, FileMetadata> files = 3;
+  
+  // 追加: 検証用フィールド
+  string site_root = 4;
+  uint64 fragment_size = 5;
+  bytes  client_signature = 6;
+  string creator = 7;
 }

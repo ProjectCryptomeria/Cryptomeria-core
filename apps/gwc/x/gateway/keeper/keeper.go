@@ -23,29 +23,29 @@ type Keeper struct {
 	Params collections.Item[types.Params]
 	Port   collections.Item[string]
 
-	// チャネル管理用ストア (検索用インデックスとして維持)
+	// チャネル管理用
 	MetastoreChannel  collections.Item[string]
 	DatastoreChannels collections.KeySet[string]
+	StorageInfos      collections.Map[string, types.StorageInfo]
 
-	// 変更: Key=ChannelID, Value=StorageInfo
-	StorageInfos collections.Map[string, types.StorageInfo]
+	// --- Upload session management (Phase 1: Interactive) ---
+	// Key: upload_id
+	// Value: State (e.g. "UPLOADING", "PENDING_SIGN")
+	UploadSessionState collections.Map[string, string]
 
-	// --- Upload session management (experiment-focused) ---
-	// Key: upload_session_id (string)
-	// Value: remaining fragment ACK count (decimal string)
-	UploadSessionPending collections.Map[string, string]
+	// Key: upload_id
+	// Value: Appended Binary Data (Zip)
+	UploadSessionBuffer collections.Map[string, []byte]
 
-	// Key: upload_session_id (string)
-	// Value: base64(GatewayPacketData.Marshal()) for ManifestPacket
-	UploadSessionManifest collections.Map[string, string]
+	// Key: upload_id
+	// Value: Result string ("ID|ROOT|B64Manifest")
+	UploadSessionResult collections.Map[string, string]
 
-	// Key: upload_session_id (string)
-	// Value: mdsc channel_id (string)
+	// --- Upload session management (Phase 2: IBC Waiter / Legacy) ---
+	UploadSessionPending     collections.Map[string, string]
+	UploadSessionManifest    collections.Map[string, string]
 	UploadSessionMDSCChannel collections.Map[string, string]
-
-	// Key: fragment_id (string)
-	// Value: upload_session_id (string)
-	FragmentToSession collections.Map[string, string]
+	FragmentToSession        collections.Map[string, string]
 
 	ibcKeeperFn func() *ibckeeper.Keeper
 	bankKeeper  types.BankKeeper
@@ -81,11 +81,14 @@ func NewKeeper(
 
 		MetastoreChannel:  collections.NewItem(sb, types.MetastoreChannelKey, "metastore_channel", collections.StringValue),
 		DatastoreChannels: collections.NewKeySet(sb, types.DatastoreChannelKey, "datastore_channels", collections.StringKey),
+		StorageInfos:      collections.NewMap(sb, types.StorageEndpointKey, "storage_infos", collections.StringKey, codec.CollValue[types.StorageInfo](cdc)),
 
-		// 変更: StorageInfosの初期化
-		StorageInfos: collections.NewMap(sb, types.StorageEndpointKey, "storage_infos", collections.StringKey, codec.CollValue[types.StorageInfo](cdc)),
+		// Initialize New Session Collections
+		UploadSessionState:  collections.NewMap(sb, types.UploadSessionStateKey, "upload_session_state", collections.StringKey, collections.StringValue),
+		UploadSessionBuffer: collections.NewMap(sb, types.UploadSessionBufferKey, "upload_session_buffer", collections.StringKey, collections.BytesValue),
+		UploadSessionResult: collections.NewMap(sb, types.UploadSessionResultKey, "upload_session_result", collections.StringKey, collections.StringValue),
 
-		// Upload session management
+		// Initialize Legacy/Waiter Collections
 		UploadSessionPending:     collections.NewMap(sb, types.UploadSessionPendingKey, "upload_session_pending", collections.StringKey, collections.StringValue),
 		UploadSessionManifest:    collections.NewMap(sb, types.UploadSessionManifestKey, "upload_session_manifest", collections.StringKey, collections.StringValue),
 		UploadSessionMDSCChannel: collections.NewMap(sb, types.UploadSessionMDSCChannelKey, "upload_session_mdsc_channel", collections.StringKey, collections.StringValue),
@@ -101,60 +104,40 @@ func NewKeeper(
 	return k
 }
 
-// GetAuthority returns the module's authority.
 func (k Keeper) GetAuthority() []byte {
 	return k.authority
 }
 
-// RegisterChannel はハンドシェイク完了時に呼ばれ、相手のポート名を見て種別を自動判別・保存します
 func (k Keeper) RegisterChannel(ctx sdk.Context, portID, channelID string) error {
-	// IBC Keeperからチャネル情報を取得
 	channel, found := k.ibcKeeperFn().ChannelKeeper.GetChannel(ctx, portID, channelID)
 	if !found {
 		return fmt.Errorf("channel not found: %s", channelID)
 	}
-
-	// 相手側のポートID (Counterparty PortID) を確認
 	counterpartyPort := channel.Counterparty.PortId
-
-	ctx.Logger().Info("🔗 Detecting IBC Channel Connection",
-		"channel_id", channelID,
-		"counterparty_port", counterpartyPort)
+	ctx.Logger().Info("🔗 Detecting IBC Channel Connection", "channel_id", channelID, "counterparty_port", counterpartyPort)
 
 	var connectionType string
-
-	// ポート名で分岐して保存
 	switch counterpartyPort {
 	case "metastore":
 		connectionType = "mdsc"
-		// MDSCとして登録
 		if err := k.MetastoreChannel.Set(ctx, channelID); err != nil {
 			return err
 		}
-		ctx.Logger().Info("✅ Registered MDSC Channel Index", "channel_id", channelID)
-
 	case "datastore":
 		connectionType = "fdsc"
-		// FDSCとして登録 (Setに追加)
 		if err := k.DatastoreChannels.Set(ctx, channelID); err != nil {
 			return err
 		}
-		ctx.Logger().Info("✅ Registered FDSC Channel Index", "channel_id", channelID)
-
 	default:
-		ctx.Logger().Info("⚠️ Unknown counterparty port, skipping registration", "port", counterpartyPort)
 		return nil
 	}
 
-	// StorageInfoの初期化 (ChannelIDとTypeだけ保存、Endpoint等は後でTxで更新)
 	info := types.StorageInfo{
 		ChannelId:      channelID,
 		ConnectionType: connectionType,
-		// ChainId, ApiEndpoint はまだ不明なので空文字
 	}
 	if err := k.StorageInfos.Set(ctx, channelID, info); err != nil {
 		return fmt.Errorf("failed to initialize storage info: %w", err)
 	}
-
 	return nil
 }

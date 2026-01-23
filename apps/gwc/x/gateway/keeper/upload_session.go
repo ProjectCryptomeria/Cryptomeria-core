@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strconv"
+	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	clienttypes "github.com/cosmos/ibc-go/v10/modules/core/02-client/types"
@@ -13,8 +14,8 @@ import (
 
 const (
 	uploadSessionTimeoutSeconds = 600
-	StateUploading = "UPLOADING"
-	StatePendingSign = "PENDING_SIGN"
+	StateUploading              = "UPLOADING"
+	StatePendingSign            = "PENDING_SIGN"
 )
 
 // --- Phase 1: Interactive Upload Session Management ---
@@ -29,11 +30,9 @@ func (k Keeper) AppendUploadChunk(ctx sdk.Context, uploadID string, data []byte)
 		return fmt.Errorf("session not in uploading state or does not exist")
 	}
 
-	// Note: For PoC, simple append. Ideally, store by index to handle out-of-order.
-	// Current assumption: Client sends chunks in order.
-	currentData, _ := k.UploadSessionBuffer.Get(ctx, uploadID) // Ignore error if empty
+	currentData, _ := k.UploadSessionBuffer.Get(ctx, uploadID)
 	newData := append(currentData, data...)
-	
+
 	return k.UploadSessionBuffer.Set(ctx, uploadID, newData)
 }
 
@@ -45,8 +44,8 @@ func (k Keeper) SetSessionPendingSign(ctx sdk.Context, uploadID string, manifest
 	if err := k.UploadSessionState.Set(ctx, uploadID, StatePendingSign); err != nil {
 		return err
 	}
-	
-	// Store result for verification later
+
+	// Store result: ID|ROOT|B64Manifest
 	res := uploadID + "|" + siteRoot + "|" + base64.StdEncoding.EncodeToString(manifestBytes)
 	return k.UploadSessionResult.Set(ctx, uploadID, res)
 }
@@ -62,41 +61,17 @@ func (k Keeper) GetSessionPendingResult(ctx sdk.Context, uploadID string) (strin
 		return "", nil, err
 	}
 
-	// Simple parse "ID|ROOT|B64Manifest"
-	parts := splitOnce(val, "|") // Simplified logic, use proper struct in prod
-	// Implement simple split logic assuming format is correct
-	// Go split:
-	var siteRoot, b64Manifest string
-	// Manual split for safety
-	firstPipe := 0
-	for i, c := range val {
-		if c == '|' {
-			firstPipe = i
-			break
-		}
+	// Parse "ID|ROOT|B64Manifest"
+	parts := strings.Split(val, "|")
+	if len(parts) != 3 {
+		return "", nil, fmt.Errorf("corrupted session data format")
 	}
-	if firstPipe == 0 { return "", nil, fmt.Errorf("corrupted session data") }
-	
-	remaining := val[firstPipe+1:]
-	secondPipe := 0
-	for i, c := range remaining {
-		if c == '|' {
-			secondPipe = i
-			break
-		}
-	}
-	if secondPipe == 0 { return "", nil, fmt.Errorf("corrupted session data") }
-	
-	siteRoot = remaining[:secondPipe]
-	b64Manifest = remaining[secondPipe+1:]
+
+	siteRoot := parts[1]
+	b64Manifest := parts[2]
 
 	manifestBytes, err := base64.StdEncoding.DecodeString(b64Manifest)
 	return siteRoot, manifestBytes, err
-}
-
-func splitOnce(s, sep string) []string {
-	// Dummy helper, logic implemented inline above for specific format
-	return nil
 }
 
 // Clean up session data
@@ -104,12 +79,10 @@ func (k Keeper) CleanupUploadSession(ctx sdk.Context, uploadID string) {
 	_ = k.UploadSessionState.Remove(ctx, uploadID)
 	_ = k.UploadSessionBuffer.Remove(ctx, uploadID)
 	_ = k.UploadSessionResult.Remove(ctx, uploadID)
-	// Config, etc.
 }
 
 // --- Phase 2: IBC Waiter Logic (Legacy compatible) ---
 
-// InitUploadSession stores the manifest (as base64(packet_bytes)) and the remaining ACK count.
 func (k Keeper) InitIBCWaitSession(ctx sdk.Context, uploadID string, mdscChannel string, pending uint64, manifestPacketBytes []byte) error {
 	pendingStr := strconv.FormatUint(pending, 10)
 	manifestB64 := base64.StdEncoding.EncodeToString(manifestPacketBytes)
@@ -126,7 +99,6 @@ func (k Keeper) InitIBCWaitSession(ctx sdk.Context, uploadID string, mdscChannel
 	return nil
 }
 
-// ConsumeFragmentAck decrements the remaining ACK count for the upload session.
 func (k Keeper) ConsumeFragmentAck(ctx sdk.Context, uploadID string) (remaining uint64, exists bool, err error) {
 	pendingStr, err := k.UploadSessionPending.Get(ctx, uploadID)
 	if err != nil {
@@ -147,14 +119,12 @@ func (k Keeper) ConsumeFragmentAck(ctx sdk.Context, uploadID string) (remaining 
 	return pending, true, nil
 }
 
-// FailUploadSession removes session data so the manifest will not be published.
 func (k Keeper) FailUploadSession(ctx sdk.Context, uploadID string) {
 	_ = k.UploadSessionPending.Remove(ctx, uploadID)
 	_ = k.UploadSessionManifest.Remove(ctx, uploadID)
 	_ = k.UploadSessionMDSCChannel.Remove(ctx, uploadID)
 }
 
-// PublishManifestIfReady publishes the stored manifest packet if the remaining count is 0.
 func (k Keeper) PublishManifestIfReady(ctx sdk.Context, uploadID string) error {
 	pendingStr, err := k.UploadSessionPending.Get(ctx, uploadID)
 	if err != nil {

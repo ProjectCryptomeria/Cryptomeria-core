@@ -6,7 +6,6 @@ import "cosmos/msg/v1/msg.proto";
 import "cosmos_proto/cosmos.proto";
 import "gogoproto/gogo.proto";
 import "gwc/gateway/v1/params.proto";
-// Import the new types definition
 import "gwc/gateway/v1/types.proto";
 
 option go_package = "gwc/x/gateway/types";
@@ -15,55 +14,78 @@ option go_package = "gwc/x/gateway/types";
 service Msg {
   option (cosmos.msg.v1.service) = true;
 
-  // UpdateParams defines a (governance) operation for updating the module
-  // parameters.
-  // The authority defaults to the x/gov module account.
   rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
-  // Upload defines the method for uploading a file to the gateway
-  rpc Upload(MsgUpload) returns (MsgUploadResponse);
-  // RegisterStorage defines the method for registering storage node endpoints
+
+  // ステップ1: アップロードセッションの開始
+  rpc InitUpload(MsgInitUpload) returns (MsgInitUploadResponse);
+
+  // ステップ2: Zipデータのチャンク送信 (分割送信)
+  rpc PostChunk(MsgPostChunk) returns (MsgPostChunkResponse);
+
+  // ステップ3: 送信完了通知 & サーバー側での展開・計算要求
+  // 戻り値として計算された SiteRoot が返る
+  rpc CompleteUpload(MsgCompleteUpload) returns (MsgCompleteUploadResponse);
+
+  // ステップ4: SiteRootへの署名送信 & IBC配信開始 (確定)
+  rpc SignUpload(MsgSignUpload) returns (MsgSignUploadResponse);
+
+  // Storage登録 (既存維持)
   rpc RegisterStorage(MsgRegisterStorage) returns (MsgRegisterStorageResponse);
 }
 
-// MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
   option (cosmos.msg.v1.signer) = "authority";
   option (amino.name) = "gwc/x/gateway/MsgUpdateParams";
-  // authority is the address that controls the module (defaults to x/gov unless overwritten).
   string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
-
-  // params defines the module parameters to update.
-  //
-  // NOTE: All parameters must be supplied.
-  Params params = 2 [
-    (gogoproto.nullable) = false,
-    (amino.dont_omitempty) = true
-  ];
+  Params params = 2 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
 }
-
-// MsgUpdateParamsResponse defines the response structure for executing a
-// MsgUpdateParams message.
 message MsgUpdateParamsResponse {}
 
-// MsgUpload defines the request type for uploading a file
-message MsgUpload {
-  option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
-  string filename = 2;
-  bytes  data = 3;
-  string project_name = 4;
-  string version = 5;
-  uint64 fragment_size = 6;
-}
-
-message MsgUploadResponse {}
-
-// MsgRegisterStorage defines the request type for registering storage endpoints
 message MsgRegisterStorage {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
-  // Use StorageInfo directly to update connection details
   repeated StorageInfo storage_infos = 2;
 }
-
 message MsgRegisterStorageResponse {}
+
+// --- Upload Flow Messages ---
+
+message MsgInitUpload {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  string project_name = 2;
+  uint64 expected_size = 3; // バッファ確保の目安
+}
+message MsgInitUploadResponse {
+  string upload_id = 1;
+}
+
+message MsgPostChunk {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  string upload_id = 2;
+  uint64 chunk_index = 3;
+  bytes data = 4;
+}
+message MsgPostChunkResponse {}
+
+message MsgCompleteUpload {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  string upload_id = 2;
+  string filename = 3;        // 元のファイル名(拡張子判別用)
+  string version = 4;         // バージョン指定
+  uint64 fragment_size = 5;   // 分割設定
+}
+message MsgCompleteUploadResponse {
+  string site_root = 1; // GWCが計算したRoot
+}
+
+message MsgSignUpload {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  string upload_id = 2;
+  string site_root = 3; // クライアントが署名したRoot (照合用)
+  bytes signature = 4;  // SiteRootに対する署名
+}
+message MsgSignUploadResponse {}

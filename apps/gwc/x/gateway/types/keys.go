@@ -10,8 +10,6 @@ const (
 	StoreKey = ModuleName
 
 	// GovModuleName duplicates the gov module's name to avoid a dependency with x/gov.
-	// It should be synced with the gov module's name if it is ever changed.
-	// See: https://github.com/cosmos/cosmos-sdk/blob/v0.52.0-beta.2/x/gov/types/keys.go#L9
 	GovModuleName = "gov"
 
 	// Version defines the current version the IBC module supports
@@ -36,21 +34,26 @@ var (
 	// DatastoreChannelKey: FDSCへのチャネルIDリストを保存 (複数可)
 	DatastoreChannelKey = collections.NewPrefix("channel_fdsc")
 
-	// 追加: ストレージエンドポイント保存用 (Key: ChainID, Value: API URL)
+	// ストレージエンドポイント保存用 (Key: ChainID, Value: API URL)
 	StorageEndpointKey = collections.NewPrefix("storage_endpoint")
 
-	// --- Upload session management (experiment-focused) ---
-	// UploadSessionPendingKey stores the remaining number of fragment acknowledgements
-	// required before the manifest is published.
+	// --- Upload session management ---
+	
+	// UploadSessionStateKey: セッションの状態 (Uploading, PendingSign)
+	UploadSessionStateKey = collections.NewPrefix("session_state")
+
+	// UploadSessionBufferKey: 受信中のZipデータ (バイナリ)
+	UploadSessionBufferKey = collections.NewPrefix("session_buffer")
+
+	// UploadSessionConfigKey: ファイル名、バージョン、フラグメントサイズ等の設定
+	UploadSessionConfigKey = collections.NewPrefix("session_config")
+
+	// UploadSessionResultKey: 計算済みのSiteRootとManifest(一時保存)
+	UploadSessionResultKey = collections.NewPrefix("session_result")
+
+	// Legacy/IBC Waiter keys
 	UploadSessionPendingKey = collections.NewPrefix("upload_session_pending")
-
-	// UploadSessionManifestKey stores a base64-encoded GatewayPacketData bytes of the manifest
-	// to be sent to MDSC after all fragments are acknowledged.
 	UploadSessionManifestKey = collections.NewPrefix("upload_session_manifest")
-
-	// UploadSessionMDSCChannelKey stores the MDSC channel ID used for the upload session.
 	UploadSessionMDSCChannelKey = collections.NewPrefix("upload_session_mdsc_channel")
-
-	// FragmentToSessionKey maps fragment_id (string) -> upload_session_id (string).
 	FragmentToSessionKey = collections.NewPrefix("fragment_to_session")
 )

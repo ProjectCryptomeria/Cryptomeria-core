@@ -23,13 +23,7 @@ func NewMsgServerImpl(keeper Keeper) types.MsgServer {
 
 var _ types.MsgServer = msgServer{}
 
-// UpdateParams
-func (k msgServer) UpdateParams(goCtx context.Context, msg *types.MsgUpdateParams) (*types.MsgUpdateParamsResponse, error) {
-	if err := k.Params.Set(sdk.UnwrapSDKContext(goCtx), msg.Params); err != nil {
-		return nil, err
-	}
-	return &types.MsgUpdateParamsResponse{}, nil
-}
+// NOTE: UpdateParams is defined in msg_update_params.go, so we do not define it here.
 
 // ----------------------------------------------------------------
 // New Upload Flow: Init -> PostChunk -> Complete -> Sign
@@ -38,14 +32,14 @@ func (k msgServer) UpdateParams(goCtx context.Context, msg *types.MsgUpdateParam
 // 1. InitUpload: セッションの開始
 func (k msgServer) InitUpload(goCtx context.Context, msg *types.MsgInitUpload) (*types.MsgInitUploadResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
-	
+
 	// Create unique ID
 	uploadID := fmt.Sprintf("%s-%d", msg.Creator, ctx.BlockTime().UnixNano())
-	
+
 	if err := k.Keeper.CreateUploadSession(ctx, uploadID); err != nil {
 		return nil, err
 	}
-	
+
 	ctx.Logger().Info("Upload session initialized", "id", uploadID)
 	return &types.MsgInitUploadResponse{UploadId: uploadID}, nil
 }
@@ -53,18 +47,18 @@ func (k msgServer) InitUpload(goCtx context.Context, msg *types.MsgInitUpload) (
 // 2. PostChunk: データの蓄積
 func (k msgServer) PostChunk(goCtx context.Context, msg *types.MsgPostChunk) (*types.MsgPostChunkResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
-	
+
 	if err := k.Keeper.AppendUploadChunk(ctx, msg.UploadId, msg.Data); err != nil {
 		return nil, err
 	}
-	
+
 	return &types.MsgPostChunkResponse{}, nil
 }
 
 // 3. CompleteUpload: 展開、計算、SiteRoot生成 (確定待機)
 func (k msgServer) CompleteUpload(goCtx context.Context, msg *types.MsgCompleteUpload) (*types.MsgCompleteUploadResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
-	
+
 	// Retrieve all buffered data
 	zipData, err := k.Keeper.GetUploadSessionBuffer(ctx, msg.UploadId)
 	if err != nil || len(zipData) == 0 {
@@ -72,7 +66,9 @@ func (k msgServer) CompleteUpload(goCtx context.Context, msg *types.MsgCompleteU
 	}
 
 	chunkSize := int(msg.FragmentSize)
-	if chunkSize <= 0 { chunkSize = 10 * 1024 }
+	if chunkSize <= 0 {
+		chunkSize = 10 * 1024
+	}
 
 	// Unzip, Normalize, Calc Merkle
 	_, siteRoot, fileRoots, err := ProcessZipAndCalcMerkle(zipData, chunkSize)
@@ -82,42 +78,37 @@ func (k msgServer) CompleteUpload(goCtx context.Context, msg *types.MsgCompleteU
 
 	// Build Manifest (Temporary) to save state
 	projectName := msg.Filename
-	// Warning: Using Filename as ProjectName for now, similar to old logic
-	// In production, msg should have explicit ProjectName
-	
-	// We need to construct the FileMetadata map for the manifest
-	// Note: We need to re-process files to get content-type and sizes. 
-	// ProcessZipAndCalcMerkle returned processedFiles but we discarded them to save memory in return sig?
-	// Let's call it again or refactor. The helper returns processedFiles.
-	processedFiles, _, _, _ := ProcessZipAndCalcMerkle(zipData, chunkSize) // Re-using result
-	
+
+	// We need to re-process files to get content-type and sizes.
+	processedFiles, _, _, _ := ProcessZipAndCalcMerkle(zipData, chunkSize)
+
 	filesMap := make(map[string]*types.FileMetadata)
 	for _, pFile := range processedFiles {
 		mimeType := http.DetectContentType(pFile.Content)
 		filesMap[pFile.Path] = &types.FileMetadata{
-			MimeType: mimeType,
-			Size_:    uint64(len(pFile.Content)),
-			FileRoot: fileRoots[pFile.Path],
-			// Fragments are not assigned FDSC IDs yet, so we leave them empty or placeholder
-			// We will assign them in SignUpload phase
-			Fragments: []*types.PacketFragmentMapping{}, 
+			MimeType:  mimeType,
+			Size_:     uint64(len(pFile.Content)),
+			FileRoot:  fileRoots[pFile.Path],
+			Fragments: []*types.PacketFragmentMapping{},
 		}
 	}
 
 	manifestPacket := types.ManifestPacket{
-		ProjectName: projectName,
-		Version:     msg.Version,
-		SiteRoot:    siteRoot,
-		Files:       filesMap,
+		ProjectName:  projectName,
+		Version:      msg.Version,
+		SiteRoot:     siteRoot,
+		Files:        filesMap,
 		FragmentSize: uint64(chunkSize),
 	}
-	
+
 	// Pack into GatewayPacketData to serialize
 	gp := types.GatewayPacketData{
 		Packet: &types.GatewayPacketData_ManifestPacket{ManifestPacket: &manifestPacket},
 	}
 	manifestBytes, err := gp.Marshal()
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	// Transition to PendingSign
 	if err := k.Keeper.SetSessionPendingSign(ctx, msg.UploadId, manifestBytes, siteRoot); err != nil {
@@ -143,45 +134,55 @@ func (k msgServer) SignUpload(goCtx context.Context, msg *types.MsgSignUpload) (
 		return nil, fmt.Errorf("site_root mismatch: stored=%s, signed=%s", storedRoot, msg.SiteRoot)
 	}
 
-	// 2. Verify Signature (TODO: Implement actual crypto verification using Creator's PubKey)
-	// For PoC, we assume if the Tx is signed by Creator, and Creator provided the Signature in payload,
-	// and the payload contains the SiteRoot they agreed to, it is valid.
-	// Strictly, we should verify `msg.Signature` against `msg.SiteRoot` using `msg.Creator`'s pubkey.
-	// ctx.Logger().Info("Signature verification skipped in PoC")
+	// 2. Verify Signature
+	// In a real implementation, you would verify the signature here using Creator's PubKey.
+	// For now, we trust the Tx signer matches the Creator.
 
 	// 3. Prepare Distribution
-	
-	// Recover Manifest
 	var gp types.GatewayPacketData
-	if err := gp.Unmarshal(manifestBytes); err != nil { return nil, err }
+	if err := gp.Unmarshal(manifestBytes); err != nil {
+		return nil, err
+	}
 	manifest := gp.GetManifestPacket()
-	if manifest == nil { return nil, fmt.Errorf("invalid manifest data") }
+	if manifest == nil {
+		return nil, fmt.Errorf("invalid manifest data")
+	}
 
 	// Inject Client Signature
 	manifest.ClientSignature = msg.Signature
 	manifest.Creator = msg.Creator
-	
+
 	// Re-load Zip Data to send fragments
 	zipData, err := k.Keeper.GetUploadSessionBuffer(ctx, msg.UploadId)
-	if err != nil { return nil, err }
-	
-	// Re-process to get chunks (CPU cost acceptable for security)
+	if err != nil {
+		return nil, err
+	}
+
+	// Re-process to get chunks
 	processedFiles, _, _, err := ProcessZipAndCalcMerkle(zipData, int(manifest.FragmentSize))
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	// Resolve Channels
 	mdscChannel, err := k.Keeper.MetastoreChannel.Get(ctx)
-	if err != nil { return nil, fmt.Errorf("MDSC channel not found") }
-	
+	if err != nil {
+		return nil, fmt.Errorf("MDSC channel not found")
+	}
+
 	var fdscChannels []string
 	iter, err := k.Keeper.DatastoreChannels.Iterate(ctx, nil)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer iter.Close()
 	for ; iter.Valid(); iter.Next() {
 		key, _ := iter.Key()
 		fdscChannels = append(fdscChannels, key)
 	}
-	if len(fdscChannels) == 0 { return nil, fmt.Errorf("no FDSC channels") }
+	if len(fdscChannels) == 0 {
+		return nil, fmt.Errorf("no FDSC channels")
+	}
 
 	// 4. Distribute Fragments
 	var roundRobinIndex int
@@ -190,15 +191,16 @@ func (k msgServer) SignUpload(goCtx context.Context, msg *types.MsgSignUpload) (
 	for _, pFile := range processedFiles {
 		// Upload chunks
 		mappings, err := k.uploadFragments(ctx, pFile.Chunks, manifest.ProjectName, pFile.Path, fdscChannels, &roundRobinIndex, msg.UploadId, storedRoot)
-		if err != nil { return nil, err }
-		
+		if err != nil {
+			return nil, err
+		}
+
 		// Update Manifest with Locations
 		manifest.Files[pFile.Path].Fragments = mappings
 		totalFragments += uint64(len(mappings))
 	}
 
 	// 5. Start IBC Wait Session (for MDSC commit)
-	// Re-marshal manifest with locations and signature
 	finalGp := types.GatewayPacketData{
 		Packet: &types.GatewayPacketData_ManifestPacket{ManifestPacket: manifest},
 	}
@@ -215,8 +217,7 @@ func (k msgServer) SignUpload(goCtx context.Context, msg *types.MsgSignUpload) (
 	return &types.MsgSignUploadResponse{}, nil
 }
 
-
-// Helper: Upload Fragments (Modified to include SiteRoot)
+// Helper: Upload Fragments
 func (k msgServer) uploadFragments(
 	ctx sdk.Context,
 	chunks [][]byte,
@@ -239,9 +240,9 @@ func (k msgServer) uploadFragments(
 		packetData := types.GatewayPacketData{
 			Packet: &types.GatewayPacketData_FragmentPacket{
 				FragmentPacket: &types.FragmentPacket{
-					Id:   fragmentIDNum,
-					Data: chunkData,
-					SiteRoot: siteRoot, // Added to packet
+					Id:       fragmentIDNum,
+					Data:     chunkData,
+					SiteRoot: siteRoot,
 				},
 			},
 		}
@@ -251,12 +252,16 @@ func (k msgServer) uploadFragments(
 		*roundRobinIndex = rr + 1
 
 		_, err := k.Keeper.TransmitGatewayPacketData(ctx, packetData, "gateway", targetChannel, clienttypes.ZeroHeight(), timeoutTimestamp)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 
-		if err := k.Keeper.FragmentToSession.Set(ctx, fragmentIDStr, uploadID); err != nil { return nil, err }
+		if err := k.Keeper.FragmentToSession.Set(ctx, fragmentIDStr, uploadID); err != nil {
+			return nil, err
+		}
 
 		fragmentMappings = append(fragmentMappings, &types.PacketFragmentMapping{
-			FdscId: targetChannel,
+			FdscId:     targetChannel,
 			FragmentId: fragmentIDStr,
 		})
 	}
@@ -277,15 +282,18 @@ func computeFragmentID(projectName, filename string, index int) uint64 {
 func (k msgServer) RegisterStorage(goCtx context.Context, msg *types.MsgRegisterStorage) (*types.MsgRegisterStorageResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 	for _, info := range msg.StorageInfos {
-		if info.ChannelId == "" { return nil, fmt.Errorf("channel_id required") }
+		if info.ChannelId == "" {
+			return nil, fmt.Errorf("channel_id required")
+		}
 		k.Keeper.StorageInfos.Set(ctx, info.ChannelId, *info)
 	}
 	return &types.MsgRegisterStorageResponse{}, nil
 }
 
-// TransmitGatewayPacketData (Existing helper wrapper)
 func (k Keeper) TransmitGatewayPacketData(ctx sdk.Context, packetData types.GatewayPacketData, sourcePort, sourceChannel string, timeoutHeight clienttypes.Height, timeoutTimestamp uint64) (uint64, error) {
 	packetBytes, err := packetData.Marshal()
-	if err != nil { return 0, err }
+	if err != nil {
+		return 0, err
+	}
 	return k.ibcKeeperFn().ChannelKeeper.SendPacket(ctx, sourcePort, sourceChannel, timeoutHeight, timeoutTimestamp, packetBytes)
 }

@@ -8,4 +8,5 @@ message Fragment {
   string fragment_id = 1;
   bytes data = 2;
   string creator = 3;
+  string site_root = 4; // 追加: 所属するSiteRoot
 }
