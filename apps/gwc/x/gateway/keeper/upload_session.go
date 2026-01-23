@@ -12,13 +12,105 @@ import (
 )
 
 const (
-	// uploadSessionTimeoutSeconds is used when sending the manifest packet after all fragments are ACKed.
 	uploadSessionTimeoutSeconds = 600
+	StateUploading = "UPLOADING"
+	StatePendingSign = "PENDING_SIGN"
 )
 
+// --- Phase 1: Interactive Upload Session Management ---
+
+func (k Keeper) CreateUploadSession(ctx sdk.Context, uploadID string) error {
+	return k.UploadSessionState.Set(ctx, uploadID, StateUploading)
+}
+
+func (k Keeper) AppendUploadChunk(ctx sdk.Context, uploadID string, data []byte) error {
+	state, err := k.UploadSessionState.Get(ctx, uploadID)
+	if err != nil || state != StateUploading {
+		return fmt.Errorf("session not in uploading state or does not exist")
+	}
+
+	// Note: For PoC, simple append. Ideally, store by index to handle out-of-order.
+	// Current assumption: Client sends chunks in order.
+	currentData, _ := k.UploadSessionBuffer.Get(ctx, uploadID) // Ignore error if empty
+	newData := append(currentData, data...)
+	
+	return k.UploadSessionBuffer.Set(ctx, uploadID, newData)
+}
+
+func (k Keeper) GetUploadSessionBuffer(ctx sdk.Context, uploadID string) ([]byte, error) {
+	return k.UploadSessionBuffer.Get(ctx, uploadID)
+}
+
+func (k Keeper) SetSessionPendingSign(ctx sdk.Context, uploadID string, manifestBytes []byte, siteRoot string) error {
+	if err := k.UploadSessionState.Set(ctx, uploadID, StatePendingSign); err != nil {
+		return err
+	}
+	
+	// Store result for verification later
+	res := uploadID + "|" + siteRoot + "|" + base64.StdEncoding.EncodeToString(manifestBytes)
+	return k.UploadSessionResult.Set(ctx, uploadID, res)
+}
+
+func (k Keeper) GetSessionPendingResult(ctx sdk.Context, uploadID string) (string, []byte, error) {
+	state, err := k.UploadSessionState.Get(ctx, uploadID)
+	if err != nil || state != StatePendingSign {
+		return "", nil, fmt.Errorf("session not in pending_sign state")
+	}
+
+	val, err := k.UploadSessionResult.Get(ctx, uploadID)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// Simple parse "ID|ROOT|B64Manifest"
+	parts := splitOnce(val, "|") // Simplified logic, use proper struct in prod
+	// Implement simple split logic assuming format is correct
+	// Go split:
+	var siteRoot, b64Manifest string
+	// Manual split for safety
+	firstPipe := 0
+	for i, c := range val {
+		if c == '|' {
+			firstPipe = i
+			break
+		}
+	}
+	if firstPipe == 0 { return "", nil, fmt.Errorf("corrupted session data") }
+	
+	remaining := val[firstPipe+1:]
+	secondPipe := 0
+	for i, c := range remaining {
+		if c == '|' {
+			secondPipe = i
+			break
+		}
+	}
+	if secondPipe == 0 { return "", nil, fmt.Errorf("corrupted session data") }
+	
+	siteRoot = remaining[:secondPipe]
+	b64Manifest = remaining[secondPipe+1:]
+
+	manifestBytes, err := base64.StdEncoding.DecodeString(b64Manifest)
+	return siteRoot, manifestBytes, err
+}
+
+func splitOnce(s, sep string) []string {
+	// Dummy helper, logic implemented inline above for specific format
+	return nil
+}
+
+// Clean up session data
+func (k Keeper) CleanupUploadSession(ctx sdk.Context, uploadID string) {
+	_ = k.UploadSessionState.Remove(ctx, uploadID)
+	_ = k.UploadSessionBuffer.Remove(ctx, uploadID)
+	_ = k.UploadSessionResult.Remove(ctx, uploadID)
+	// Config, etc.
+}
+
+// --- Phase 2: IBC Waiter Logic (Legacy compatible) ---
+
 // InitUploadSession stores the manifest (as base64(packet_bytes)) and the remaining ACK count.
-// The session is keyed by uploadID, which is computed deterministically from the upload input.
-func (k Keeper) InitUploadSession(ctx sdk.Context, uploadID string, mdscChannel string, pending uint64, manifestPacketBytes []byte) error {
+func (k Keeper) InitIBCWaitSession(ctx sdk.Context, uploadID string, mdscChannel string, pending uint64, manifestPacketBytes []byte) error {
 	pendingStr := strconv.FormatUint(pending, 10)
 	manifestB64 := base64.StdEncoding.EncodeToString(manifestPacketBytes)
 
@@ -35,11 +127,9 @@ func (k Keeper) InitUploadSession(ctx sdk.Context, uploadID string, mdscChannel 
 }
 
 // ConsumeFragmentAck decrements the remaining ACK count for the upload session.
-// It returns the remaining count after decrement. If the session does not exist, it returns (0, false, nil).
 func (k Keeper) ConsumeFragmentAck(ctx sdk.Context, uploadID string) (remaining uint64, exists bool, err error) {
 	pendingStr, err := k.UploadSessionPending.Get(ctx, uploadID)
 	if err != nil {
-		// session missing
 		return 0, false, nil
 	}
 	pending, err := strconv.ParseUint(pendingStr, 10, 64)
@@ -65,7 +155,6 @@ func (k Keeper) FailUploadSession(ctx sdk.Context, uploadID string) {
 }
 
 // PublishManifestIfReady publishes the stored manifest packet if the remaining count is 0.
-// It is safe to call multiple times; on success it cleans up the session data.
 func (k Keeper) PublishManifestIfReady(ctx sdk.Context, uploadID string) error {
 	pendingStr, err := k.UploadSessionPending.Get(ctx, uploadID)
 	if err != nil {
@@ -81,7 +170,6 @@ func (k Keeper) PublishManifestIfReady(ctx sdk.Context, uploadID string) error {
 
 	mdscChannel, err := k.UploadSessionMDSCChannel.Get(ctx, uploadID)
 	if err != nil {
-		// fallback to current configured channel if missing
 		mdscChannel, _ = k.MetastoreChannel.Get(ctx)
 	}
 
@@ -112,7 +200,6 @@ func (k Keeper) PublishManifestIfReady(ctx sdk.Context, uploadID string) error {
 		return fmt.Errorf("failed to transmit manifest packet: %w", err)
 	}
 
-	// cleanup after successful send
 	k.FailUploadSession(ctx, uploadID)
 	return nil
 }
