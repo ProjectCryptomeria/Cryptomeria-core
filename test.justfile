@@ -17,7 +17,7 @@ e2e:
 
 # [Verify] ストレージに保存されたデータの構造確認と復元を行う
 verify:
-    @./ops/scripts/test/external/phase3-verify-test.sh
+    @./ops/scripts/test/poc/stage4-verification.sh
 
 # [Legacy] 旧アップロードテスト（互換性のため維持）
 upload:

@@ -96,7 +96,6 @@ func (im IBCModule) OnChanCloseInit(
 	portID,
 	channelID string,
 ) error {
-	// Disallow user-initiated channel closing for channels
 	return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "user cannot close channel")
 }
 
@@ -129,7 +128,7 @@ func (im IBCModule) OnRecvPacket(
 
 		fragmentIdStr := strconv.FormatUint(fragment.Id, 10)
 
-		// 既に保存済みの場合は「同一データならOK（冪等）/異なるなら拒否（conflict）」
+		// 既に保存済みの場合はチェック
 		exists, err := im.keeper.Fragment.Has(ctx, fragmentIdStr)
 		if err != nil {
 			return channeltypes.NewErrorAcknowledgement(fmt.Errorf("failed to check fragment existence: %w", err))
@@ -137,34 +136,31 @@ func (im IBCModule) OnRecvPacket(
 		if exists {
 			existing, err := im.keeper.Fragment.Get(ctx, fragmentIdStr)
 			if err != nil {
-				// ここに来るのは異常系だが、念のため not found を弾く
-				if errors.Is(err, collections.ErrNotFound) {
-					// fallthrough to normal write
-				} else {
+				if !errors.Is(err, collections.ErrNotFound) {
 					return channeltypes.NewErrorAcknowledgement(fmt.Errorf("failed to load existing fragment: %w", err))
 				}
 			} else {
 				if bytes.Equal(existing.Data, fragment.Data) {
-					ctx.Logger().Info("Duplicate fragment received (idempotent)", "module", types.ModuleName, "fragment_id", fragmentIdStr)
+					ctx.Logger().Info("Duplicate fragment received", "id", fragmentIdStr)
 					return channeltypes.NewResultAcknowledgement([]byte{byte(1)})
 				}
-
-				// 実験で見つけやすいように、メッセージに "conflict" と "index already set" を含める
-				return channeltypes.NewErrorAcknowledgement(fmt.Errorf("fragment conflict: index already set (fragment_id=%s)", fragmentIdStr))
+				return channeltypes.NewErrorAcknowledgement(fmt.Errorf("fragment conflict: %s", fragmentIdStr))
 			}
 		}
 
+		// 保存データを作成
 		val := types.Fragment{
 			FragmentId: fragmentIdStr,
 			Data:       fragment.Data,
-			Creator:    "ibc-sender", // 仮の値
+			Creator:    "ibc-sender",      // TODO: PacketにCreatorフィールドがあれば使う
+			SiteRoot:   fragment.SiteRoot, // ▼ 追加: パケットから受け取ったSiteRootを保存
 		}
 
 		if err := im.keeper.Fragment.Set(ctx, fragmentIdStr, val); err != nil {
 			return channeltypes.NewErrorAcknowledgement(fmt.Errorf("failed to save fragment: %w", err))
 		}
 
-		ctx.Logger().Info("Packet Received & Saved", "module", types.ModuleName, "fragment_id", fragmentIdStr)
+		ctx.Logger().Info("Fragment Saved", "id", fragmentIdStr, "site_root", fragment.SiteRoot)
 
 		return channeltypes.NewResultAcknowledgement([]byte{byte(1)})
 
@@ -227,11 +223,8 @@ func (im IBCModule) OnTimeoutPacket(
 	if err := modulePacketData.Unmarshal(modulePacket.GetData()); err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal packet data: %s", err.Error())
 	}
-
-	// Dispatch packet
 	switch packet := modulePacketData.Packet.(type) {
 	default:
-		// ログ出力のみに留める
 		ctx.Logger().Error("Packet Timeout", "type", fmt.Sprintf("%T", packet))
 		return nil
 	}

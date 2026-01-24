@@ -127,11 +127,14 @@ accounts:
 	@./ops/scripts/util/list-accounts.sh
 
 # [Faucet] 任意のアドレスにミリオネアから送金
-# address: 送金先アドレス (必須)
+# name: 送金先アドレス名 (必須)
 # amount: 送金額 (オプション、デフォルト値あり)
-# chain: 送金先チェーンID (オプション、省略時はGWCへのローカル送金)
-faucet address amount="10000000uatom" chain="":
-	@./ops/scripts/util/faucet.sh {{address}} {{amount}} {{chain}}
+# binary: クライアントバイナリパス (オプション、デフォルト値あり)
+faucet name amount="10000000uatom" binary="./apps/gwc/dist/gwcd":
+	#!/usr/bin/env sh
+	set -e
+	ALICE_ADDR=$({{binary}} keys show {{name}} -a --keyring-backend test)
+	./ops/scripts/util/faucet.sh $ALICE_ADDR {{amount}}
 
 # [Logs] 特定コンポーネントのログを表示
 logs target:

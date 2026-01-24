@@ -33,12 +33,20 @@ var _ types.MsgServer = msgServer{}
 func (k msgServer) InitUpload(goCtx context.Context, msg *types.MsgInitUpload) (*types.MsgInitUploadResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// Create unique ID
 	uploadID := fmt.Sprintf("%s-%d", msg.Creator, ctx.BlockTime().UnixNano())
 
 	if err := k.Keeper.CreateUploadSession(ctx, uploadID); err != nil {
 		return nil, err
 	}
+
+	// ▼ UploadIDをイベントとして発行
+	ctx.EventManager().EmitEvent(
+		sdk.NewEvent(
+			"init_upload",                           // イベントタイプ名
+			sdk.NewAttribute("upload_id", uploadID), // クライアントが欲しい値
+			sdk.NewAttribute("creator", msg.Creator),
+		),
+	)
 
 	ctx.Logger().Info("Upload session initialized", "id", uploadID)
 	return &types.MsgInitUploadResponse{UploadId: uploadID}, nil
@@ -114,6 +122,15 @@ func (k msgServer) CompleteUpload(goCtx context.Context, msg *types.MsgCompleteU
 	if err := k.Keeper.SetSessionPendingSign(ctx, msg.UploadId, manifestBytes, siteRoot); err != nil {
 		return nil, err
 	}
+
+	// ▼ 追加: イベント発行 (クライアントがSiteRootを自動取得するために必須)
+	ctx.EventManager().EmitEvent(
+		sdk.NewEvent(
+			"complete_upload",
+			sdk.NewAttribute("upload_id", msg.UploadId),
+			sdk.NewAttribute("site_root", siteRoot),
+		),
+	)
 
 	ctx.Logger().Info("Upload processed, waiting for sign", "id", msg.UploadId, "site_root", siteRoot)
 	return &types.MsgCompleteUploadResponse{SiteRoot: siteRoot}, nil

@@ -15,14 +15,12 @@ message MetastorePacketData {
 message NoData {}
 
 // PacketFragmentMapping defines the location of a fragment
-// (GWCのPacketFragmentMappingと一致)
 message PacketFragmentMapping {
   string fdsc_id     = 1;
   string fragment_id = 2;
 }
 
 // FileMetadata defines metadata for a single file within the project
-// (GWCのFileMetadataと一致)
 message FileMetadata {
   string mime_type = 1;
   uint64 size      = 2;
@@ -30,10 +28,15 @@ message FileMetadata {
 }
 
 // ManifestPacket defines the structure of the website/project
-// (GWCのManifestPacketと一致: Map構造を使用)
+// GWC側の定義とフィールド番号・型を完全に一致させる必要があります
 message ManifestPacket {
   string project_name = 1;
   string version      = 2;
-  // Map key is the relative path (e.g. "index.html", "assets/logo.png")
   map<string, FileMetadata> files = 3;
+  
+  // 追加: 検証用フィールド
+  string site_root = 4;
+  uint64 fragment_size = 5;
+  bytes  client_signature = 6;
+  string creator = 7;
 }

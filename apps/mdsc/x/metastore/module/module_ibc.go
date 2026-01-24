@@ -123,10 +123,11 @@ func (im IBCModule) OnRecvPacket(
 		manifestData := packet.ManifestPacket
 		projectName := manifestData.ProjectName
 
-		ctx.Logger().Info("Receiving Manifest Packet (Map Structure)",
+		ctx.Logger().Info("Receiving Manifest Packet",
 			"project", projectName,
 			"version", manifestData.Version,
-			"files_count", len(manifestData.Files))
+			"site_root", manifestData.SiteRoot,
+			"creator", manifestData.Creator)
 
 		// 1. 既存または新規のManifestを取得
 		manifest, err := im.keeper.Manifest.Get(ctx, projectName)
@@ -134,12 +135,21 @@ func (im IBCModule) OnRecvPacket(
 			manifest = types.Manifest{
 				ProjectName: projectName,
 				Version:     manifestData.Version,
-				Creator:     "ibc-user", // TODO: 送信元のCreatorをパケットに含める改修を検討
+				Creator:     manifestData.Creator, // パケットから取得するように修正
 				Files:       make(map[string]*types.FileInfo),
+				// ▼ 追加: 新しいフィールドの保存
+				SiteRoot:        manifestData.SiteRoot,
+				ClientSignature: manifestData.ClientSignature,
+				FragmentSize:    manifestData.FragmentSize,
 			}
 		} else { // 更新
-			// バージョン更新
 			manifest.Version = manifestData.Version
+			// 更新時も新しい情報を上書き
+			manifest.Creator = manifestData.Creator
+			manifest.SiteRoot = manifestData.SiteRoot
+			manifest.ClientSignature = manifestData.ClientSignature
+			manifest.FragmentSize = manifestData.FragmentSize
+
 			if manifest.Files == nil {
 				manifest.Files = make(map[string]*types.FileInfo)
 			}
@@ -175,7 +185,7 @@ func (im IBCModule) OnRecvPacket(
 		}
 
 		// デバッグログ
-		fmt.Printf("\n[DEBUG] Manifest Saved: Project=%s, Files Updated=%d\n", projectName, len(manifestData.Files))
+		fmt.Printf("\n[DEBUG] Manifest Saved: Project=%s, SiteRoot=%s\n", projectName, manifest.SiteRoot)
 
 		return channeltypes.NewResultAcknowledgement([]byte{byte(1)})
 
