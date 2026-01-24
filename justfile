@@ -4,6 +4,7 @@ set shell := ["bash", "-c"]
 # --- モジュール読み込み ---
 mod dev "dev.justfile"
 mod test "test.justfile"
+mod chain "chain.justfile"
 
 # --- 変数定義 ---
 PROJECT_NAME := "cryptomeria"
@@ -57,13 +58,14 @@ connect chain:
 
 # [復活: All-in-One] クリーンアップからデプロイ、起動まで一気に行う（開発リセット用）
 all-in-one chains=DEFAULT_CHAINS:
-	@echo "🔥 Running All-in-One Sequence..."
-	@just clean
-	@just dev::build-all
-	@just deploy {{chains}}
-	@sleep 10
-	@time just start-system
-	@echo "✅ All-in-one process complete! System is running."
+    @echo "🔥 Running All-in-One Sequence..."
+    @just clean
+    @just dev::build-all
+    @just deploy {{chains}}
+    @echo "⏳ Waiting 10 seconds for K8s scheduling..."
+    @for i in 10 9 8 7 6 5 4 3 2 1; do echo -n "$i... "; sleep 1; done; echo "🚀 Go!"
+    @time just start-system
+    @echo "✅ All-in-one process complete! System is running."
 
 # [復活: Deploy Clean] データだけ消して再デプロイ（高速リセット）
 deploy-clean chains=DEFAULT_CHAINS:
@@ -110,36 +112,6 @@ resume:
 # 🛠️ Operations & Utilities
 # =============================================================================
 
-# [Status] システムステータスを表示
-status:
-	@./ops/scripts/util/show-status.sh
-
-# [Network] ネットワーク接続状況を表示
-network:
-	@./ops/scripts/util/show-network-status.sh
-
-# [Health] システムの健康状態を診断
-health:
-	@./ops/scripts/util/monitor-health.sh
-
-# [Accounts] 全チェーンのアカウントと残高一覧を表示
-accounts:
-	@./ops/scripts/util/list-accounts.sh
-
-# [Faucet] 任意のアドレスにミリオネアから送金
-# name: 送金先アドレス名 (必須)
-# amount: 送金額 (オプション、デフォルト値あり)
-# binary: クライアントバイナリパス (オプション、デフォルト値あり)
-faucet name amount="10000000uatom" binary="./apps/gwc/dist/gwcd":
-	#!/usr/bin/env sh
-	set -e
-	ALICE_ADDR=$({{binary}} keys show {{name}} -a --keyring-backend test)
-	./ops/scripts/util/faucet.sh $ALICE_ADDR {{amount}}
-
-# [Logs] 特定コンポーネントのログを表示
-logs target:
-	@kubectl logs -f -n {{PROJECT_NAME}} -l app.kubernetes.io/component={{target}} --max-log-requests=10
-
 # [Shell] 特定のPod内でシェルを起動
 shell target:
 	@kubectl exec -it -n {{PROJECT_NAME}} deploy/{{PROJECT_NAME}}-{{target}} -- /bin/bash 2>/dev/null || \
@@ -149,15 +121,3 @@ shell target:
 exec target *command:
 	@kubectl exec -it -n {{PROJECT_NAME}} deploy/{{PROJECT_NAME}}-{{target}} -- {{command}} 2>/dev/null || \
 	kubectl exec -it -n {{PROJECT_NAME}} statefulset/{{PROJECT_NAME}}-{{target}} -- {{command}}
-
-# [Monitor] Mempool内のトランザクション数をリアルタイム監視 (Ctrl+Cで停止)
-monitor-mempool:
-    @watch -n 2 ./ops/scripts/util/monitor-mempool.sh
-
-# [Wallet] GWCにクライアント用ウォレットをインポート (対話モード)
-add-account name:
-    @./ops/scripts/util/import-client-key.sh {{name}}
-
-# [Scale] FDSCのノード数を指定した数に変更する (例: just scale 3)
-scale-fdsc count:
-    @./ops/scripts/control/scale-fdsc.sh {{count}}
