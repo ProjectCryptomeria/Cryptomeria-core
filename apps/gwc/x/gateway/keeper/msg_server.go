@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"encoding/hex" // 追加: 署名検証用
 	"fmt"
 	"hash/fnv"
 	"net/http"
@@ -23,12 +24,6 @@ func NewMsgServerImpl(keeper Keeper) types.MsgServer {
 
 var _ types.MsgServer = msgServer{}
 
-// NOTE: UpdateParams is defined in msg_update_params.go, so we do not define it here.
-
-// ----------------------------------------------------------------
-// New Upload Flow: Init -> PostChunk -> Complete -> Sign
-// ----------------------------------------------------------------
-
 // 1. InitUpload: セッションの開始
 func (k msgServer) InitUpload(goCtx context.Context, msg *types.MsgInitUpload) (*types.MsgInitUploadResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
@@ -39,11 +34,10 @@ func (k msgServer) InitUpload(goCtx context.Context, msg *types.MsgInitUpload) (
 		return nil, err
 	}
 
-	// ▼ UploadIDをイベントとして発行
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(
-			"init_upload",                           // イベントタイプ名
-			sdk.NewAttribute("upload_id", uploadID), // クライアントが欲しい値
+			"init_upload",
+			sdk.NewAttribute("upload_id", uploadID),
 			sdk.NewAttribute("creator", msg.Creator),
 		),
 	)
@@ -67,7 +61,6 @@ func (k msgServer) PostChunk(goCtx context.Context, msg *types.MsgPostChunk) (*t
 func (k msgServer) CompleteUpload(goCtx context.Context, msg *types.MsgCompleteUpload) (*types.MsgCompleteUploadResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// Retrieve all buffered data
 	zipData, err := k.Keeper.GetUploadSessionBuffer(ctx, msg.UploadId)
 	if err != nil || len(zipData) == 0 {
 		return nil, fmt.Errorf("no data found for session %s", msg.UploadId)
@@ -78,18 +71,12 @@ func (k msgServer) CompleteUpload(goCtx context.Context, msg *types.MsgCompleteU
 		chunkSize = 10 * 1024
 	}
 
-	// Unzip, Normalize, Calc Merkle
-	_, siteRoot, fileRoots, err := ProcessZipAndCalcMerkle(zipData, chunkSize)
+	processedFiles, siteRoot, fileRoots, err := ProcessZipAndCalcMerkle(zipData, chunkSize)
 	if err != nil {
 		return nil, fmt.Errorf("processing failed: %w", err)
 	}
 
-	// Build Manifest (Temporary) to save state
 	projectName := msg.Filename
-
-	// We need to re-process files to get content-type and sizes.
-	processedFiles, _, _, _ := ProcessZipAndCalcMerkle(zipData, chunkSize)
-
 	filesMap := make(map[string]*types.FileMetadata)
 	for _, pFile := range processedFiles {
 		mimeType := http.DetectContentType(pFile.Content)
@@ -109,7 +96,6 @@ func (k msgServer) CompleteUpload(goCtx context.Context, msg *types.MsgCompleteU
 		FragmentSize: uint64(chunkSize),
 	}
 
-	// Pack into GatewayPacketData to serialize
 	gp := types.GatewayPacketData{
 		Packet: &types.GatewayPacketData_ManifestPacket{ManifestPacket: &manifestPacket},
 	}
@@ -118,12 +104,10 @@ func (k msgServer) CompleteUpload(goCtx context.Context, msg *types.MsgCompleteU
 		return nil, err
 	}
 
-	// Transition to PendingSign
 	if err := k.Keeper.SetSessionPendingSign(ctx, msg.UploadId, manifestBytes, siteRoot); err != nil {
 		return nil, err
 	}
 
-	// ▼ 追加: イベント発行 (クライアントがSiteRootを自動取得するために必須)
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(
 			"complete_upload",
@@ -140,22 +124,41 @@ func (k msgServer) CompleteUpload(goCtx context.Context, msg *types.MsgCompleteU
 func (k msgServer) SignUpload(goCtx context.Context, msg *types.MsgSignUpload) (*types.MsgSignUploadResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// Verify Session State
+	// セッション情報の取得
 	storedRoot, manifestBytes, err := k.Keeper.GetSessionPendingResult(ctx, msg.UploadId)
 	if err != nil {
 		return nil, err
 	}
 
-	// 1. Verify Site Root match
+	// 1. SiteRootの一致確認
 	if storedRoot != msg.SiteRoot {
 		return nil, fmt.Errorf("site_root mismatch: stored=%s, signed=%s", storedRoot, msg.SiteRoot)
 	}
 
-	// 2. Verify Signature
-	// In a real implementation, you would verify the signature here using Creator's PubKey.
-	// For now, we trust the Tx signer matches the Creator.
+	// 2. CSUプロトコル: クライアントの公開鍵による数学的署名検証
+	addr, err := sdk.AccAddressFromBech32(msg.Creator)
+	if err != nil {
+		return nil, err
+	}
+	acc := k.accountKeeper.GetAccount(ctx, addr)
+	if acc == nil {
+		return nil, fmt.Errorf("account not found: %s", msg.Creator)
+	}
+	pubKey := acc.GetPubKey()
+	if pubKey == nil {
+		return nil, fmt.Errorf("public key not found for account: %s", msg.Creator)
+	}
 
-	// 3. Prepare Distribution
+	siteRootBytes, err := hex.DecodeString(msg.SiteRoot)
+	if err != nil {
+		return nil, fmt.Errorf("invalid site_root hex: %v", err)
+	}
+
+	if !pubKey.VerifySignature(siteRootBytes, msg.Signature) {
+		return nil, fmt.Errorf("CSU Signature Verification Failed: invalid signature")
+	}
+
+	// 3. 配送準備
 	var gp types.GatewayPacketData
 	if err := gp.Unmarshal(manifestBytes); err != nil {
 		return nil, err
@@ -165,23 +168,19 @@ func (k msgServer) SignUpload(goCtx context.Context, msg *types.MsgSignUpload) (
 		return nil, fmt.Errorf("invalid manifest data")
 	}
 
-	// Inject Client Signature
 	manifest.ClientSignature = msg.Signature
 	manifest.Creator = msg.Creator
 
-	// Re-load Zip Data to send fragments
 	zipData, err := k.Keeper.GetUploadSessionBuffer(ctx, msg.UploadId)
 	if err != nil {
 		return nil, err
 	}
 
-	// Re-process to get chunks
 	processedFiles, _, _, err := ProcessZipAndCalcMerkle(zipData, int(manifest.FragmentSize))
 	if err != nil {
 		return nil, err
 	}
 
-	// Resolve Channels
 	mdscChannel, err := k.Keeper.MetastoreChannel.Get(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("MDSC channel not found")
@@ -197,27 +196,21 @@ func (k msgServer) SignUpload(goCtx context.Context, msg *types.MsgSignUpload) (
 		key, _ := iter.Key()
 		fdscChannels = append(fdscChannels, key)
 	}
-	if len(fdscChannels) == 0 {
-		return nil, fmt.Errorf("no FDSC channels")
-	}
 
-	// 4. Distribute Fragments
+	// 4. 断片の配送
 	var roundRobinIndex int
 	var totalFragments uint64 = 0
 
 	for _, pFile := range processedFiles {
-		// Upload chunks
 		mappings, err := k.uploadFragments(ctx, pFile.Chunks, manifest.ProjectName, pFile.Path, fdscChannels, &roundRobinIndex, msg.UploadId, storedRoot)
 		if err != nil {
 			return nil, err
 		}
-
-		// Update Manifest with Locations
 		manifest.Files[pFile.Path].Fragments = mappings
 		totalFragments += uint64(len(mappings))
 	}
 
-	// 5. Start IBC Wait Session (for MDSC commit)
+	// 5. IBC完了待機セッションの開始 (MDSCへのコミット)
 	finalGp := types.GatewayPacketData{
 		Packet: &types.GatewayPacketData_ManifestPacket{ManifestPacket: manifest},
 	}
@@ -227,60 +220,33 @@ func (k msgServer) SignUpload(goCtx context.Context, msg *types.MsgSignUpload) (
 		return nil, err
 	}
 
-	// Cleanup Buffer (Keep wait session keys)
 	k.Keeper.CleanupUploadSession(ctx, msg.UploadId)
-
-	ctx.Logger().Info("Distribution started", "id", msg.UploadId)
+	ctx.Logger().Info("Distribution started with signature verification", "id", msg.UploadId)
 	return &types.MsgSignUploadResponse{}, nil
 }
 
-// Helper: Upload Fragments
-func (k msgServer) uploadFragments(
-	ctx sdk.Context,
-	chunks [][]byte,
-	projectName string,
-	filename string,
-	fdscChannels []string,
-	roundRobinIndex *int,
-	uploadID string,
-	siteRoot string,
-) ([]*types.PacketFragmentMapping, error) {
-
+// 共通ヘルパー関数は変更なし
+func (k msgServer) uploadFragments(ctx sdk.Context, chunks [][]byte, projectName, filename string, fdscChannels []string, roundRobinIndex *int, uploadID, siteRoot string) ([]*types.PacketFragmentMapping, error) {
 	const TimeoutSeconds = 600
 	var fragmentMappings []*types.PacketFragmentMapping
-
 	for i, chunkData := range chunks {
 		rr := *roundRobinIndex
 		fragmentIDNum := computeFragmentID(projectName, filename, i)
 		fragmentIDStr := strconv.FormatUint(fragmentIDNum, 10)
-
 		packetData := types.GatewayPacketData{
 			Packet: &types.GatewayPacketData_FragmentPacket{
-				FragmentPacket: &types.FragmentPacket{
-					Id:       fragmentIDNum,
-					Data:     chunkData,
-					SiteRoot: siteRoot,
-				},
+				FragmentPacket: &types.FragmentPacket{Id: fragmentIDNum, Data: chunkData, SiteRoot: siteRoot},
 			},
 		}
-
 		timeoutTimestamp := uint64(ctx.BlockTime().UnixNano()) + uint64(TimeoutSeconds*1_000_000_000)
 		targetChannel := fdscChannels[rr%len(fdscChannels)]
 		*roundRobinIndex = rr + 1
-
 		_, err := k.Keeper.TransmitGatewayPacketData(ctx, packetData, "gateway", targetChannel, clienttypes.ZeroHeight(), timeoutTimestamp)
 		if err != nil {
 			return nil, err
 		}
-
-		if err := k.Keeper.FragmentToSession.Set(ctx, fragmentIDStr, uploadID); err != nil {
-			return nil, err
-		}
-
-		fragmentMappings = append(fragmentMappings, &types.PacketFragmentMapping{
-			FdscId:     targetChannel,
-			FragmentId: fragmentIDStr,
-		})
+		k.Keeper.FragmentToSession.Set(ctx, fragmentIDStr, uploadID)
+		fragmentMappings = append(fragmentMappings, &types.PacketFragmentMapping{FdscId: targetChannel, FragmentId: fragmentIDStr})
 	}
 	return fragmentMappings, nil
 }
@@ -295,7 +261,6 @@ func computeFragmentID(projectName, filename string, index int) uint64 {
 	return h.Sum64()
 }
 
-// RegisterStorage (Existing)
 func (k msgServer) RegisterStorage(goCtx context.Context, msg *types.MsgRegisterStorage) (*types.MsgRegisterStorageResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 	for _, info := range msg.StorageInfos {

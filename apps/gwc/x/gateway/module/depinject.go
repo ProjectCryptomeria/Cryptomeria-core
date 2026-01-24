@@ -37,7 +37,8 @@ type ModuleInputs struct {
 	AuthKeeper types.AuthKeeper
 	BankKeeper types.BankKeeper
 
-	IBCKeeperFn func() *ibckeeper.Keeper `optional:"true"`
+	IBCKeeperFn   func() *ibckeeper.Keeper `optional:"true"`
+	AccountKeeper types.AccountKeeper
 }
 
 type ModuleOutputs struct {
@@ -60,6 +61,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		authority,
 		in.IBCKeeperFn,
 		in.BankKeeper,
+		in.AccountKeeper,
 	)
 	m := NewAppModule(in.Cdc, k, in.AuthKeeper, in.BankKeeper)
 

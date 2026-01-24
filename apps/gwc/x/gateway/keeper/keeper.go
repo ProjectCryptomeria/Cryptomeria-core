@@ -28,29 +28,30 @@ type Keeper struct {
 	DatastoreChannels collections.KeySet[string]
 	StorageInfos      collections.Map[string, types.StorageInfo]
 
-	// --- Upload session management (Phase 1: Interactive) ---
+	// --- アップロードセッション管理 (フェーズ 1: インタラクティブ) ---
 	// Key: upload_id
-	// Value: State (e.g. "UPLOADING", "PENDING_SIGN")
+	// Value: 状態 (例: "UPLOADING", "PENDING_SIGN")
 	UploadSessionState collections.Map[string, string]
 
 	// Key: upload_id
-	// Value: Appended Binary Data (Zip)
+	// Value: 蓄積されたバイナリデータ (Zip)
 	UploadSessionBuffer collections.Map[string, []byte]
 
 	// Key: upload_id
-	// Value: Result string ("ID|ROOT|B64Manifest")
+	// Value: 結果文字列 ("ID|ROOT|B64Manifest")
 	UploadSessionResult collections.Map[string, string]
 
-	// --- Upload session management (Phase 2: IBC Waiter / Legacy) ---
+	// --- アップロードセッション管理 (フェーズ 2: IBC Waiter) ---
 	UploadSessionPending     collections.Map[string, string]
 	UploadSessionManifest    collections.Map[string, string]
 	UploadSessionMDSCChannel collections.Map[string, string]
 	FragmentToSession        collections.Map[string, string]
 
-	ibcKeeperFn func() *ibckeeper.Keeper
-	bankKeeper  types.BankKeeper
+	ibcKeeperFn   func() *ibckeeper.Keeper
+	bankKeeper    types.BankKeeper
+	accountKeeper types.AccountKeeper // CSUプロトコルでの署名検証に必要
 
-	// Config
+	// 設定
 	ChunkSize int
 }
 
@@ -61,6 +62,7 @@ func NewKeeper(
 	authority []byte,
 	ibcKeeperFn func() *ibckeeper.Keeper,
 	bankKeeper types.BankKeeper,
+	accountKeeper types.AccountKeeper, // 追加
 ) Keeper {
 	if _, err := addressCodec.BytesToString(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address %s: %s", authority, err))
@@ -74,21 +76,20 @@ func NewKeeper(
 		addressCodec: addressCodec,
 		authority:    authority,
 
-		bankKeeper:  bankKeeper,
-		ibcKeeperFn: ibcKeeperFn,
-		Port:        collections.NewItem(sb, types.PortKey, "port", collections.StringValue),
-		Params:      collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
+		bankKeeper:    bankKeeper,
+		accountKeeper: accountKeeper, // 初期化
+		ibcKeeperFn:   ibcKeeperFn,
+		Port:          collections.NewItem(sb, types.PortKey, "port", collections.StringValue),
+		Params:        collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 
 		MetastoreChannel:  collections.NewItem(sb, types.MetastoreChannelKey, "metastore_channel", collections.StringValue),
 		DatastoreChannels: collections.NewKeySet(sb, types.DatastoreChannelKey, "datastore_channels", collections.StringKey),
 		StorageInfos:      collections.NewMap(sb, types.StorageEndpointKey, "storage_infos", collections.StringKey, codec.CollValue[types.StorageInfo](cdc)),
 
-		// Initialize New Session Collections
 		UploadSessionState:  collections.NewMap(sb, types.UploadSessionStateKey, "upload_session_state", collections.StringKey, collections.StringValue),
 		UploadSessionBuffer: collections.NewMap(sb, types.UploadSessionBufferKey, "upload_session_buffer", collections.StringKey, collections.BytesValue),
 		UploadSessionResult: collections.NewMap(sb, types.UploadSessionResultKey, "upload_session_result", collections.StringKey, collections.StringValue),
 
-		// Initialize Legacy/Waiter Collections
 		UploadSessionPending:     collections.NewMap(sb, types.UploadSessionPendingKey, "upload_session_pending", collections.StringKey, collections.StringValue),
 		UploadSessionManifest:    collections.NewMap(sb, types.UploadSessionManifestKey, "upload_session_manifest", collections.StringKey, collections.StringValue),
 		UploadSessionMDSCChannel: collections.NewMap(sb, types.UploadSessionMDSCChannelKey, "upload_session_mdsc_channel", collections.StringKey, collections.StringValue),

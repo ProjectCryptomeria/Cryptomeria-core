@@ -7,6 +7,12 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
+// AccountKeeper は署名検証のために Auth モジュールに期待するインターフェースを定義します。
+type AccountKeeper interface {
+	// GetAccount は指定されたアドレスのアカウント情報を取得します。
+	GetAccount(context.Context, sdk.AccAddress) sdk.AccountI
+}
+
 // AuthKeeper defines the expected interface for the Auth module.
 type AuthKeeper interface {
 	AddressCodec() address.Codec
