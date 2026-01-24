@@ -32,7 +32,13 @@ exec_tx_and_wait() {
     for i in {1..30}; do
         local res=$($BINARY q tx "$tx_hash" --node "$NODE_URL" -o json 2>/dev/null || echo "")
         if [ -n "$res" ] && [ "$res" != "null" ]; then
-            # 成功時、結果のJSONを返す
+            # ✅ Code が 0 以外（エラー）の場合は即座に終了させる
+            local code=$(echo "$res" | jq -r '.code')
+            if [ "$code" != "0" ]; then
+                echo "❌ Error: $desc が失敗しました (Code: $code)" >&2
+                echo "   Log: $(echo "$res" | jq -r '.raw_log')" >&2
+                exit 1
+            fi
             echo "$res"
             return 0
         fi
@@ -79,16 +85,11 @@ RES=$(exec_tx_and_wait "CompleteUpload" "$CMD")
 SITE_ROOT=$(echo "$RES" | jq -r '.events[] | select(.type=="complete_upload") | .attributes[] | select(.key=="site_root") | .value' | head -n 1)
 
 # 4. Local Signing
-echo "   4. Generating Local Signature (Alice's Secret Key Simulation)..."
-# 秘密鍵はAliceの手元から出さない
-REAL_SIGNATURE=$(node - <<EOF
-const crypto = require('crypto');
-const privKey = crypto.createHash('sha256').update('alice-secret-key').digest();
-const sig = crypto.createHmac('sha256', privKey).update(Buffer.from('$SITE_ROOT', 'hex')).digest('base64');
-process.stdout.write(sig);
-EOF
-)
-
+# ✅ Alice の公開鍵に対応する正当な署名を生成します
+echo "   4. Generating Local Signature using Binary..."
+# SiteRoot(Hex) をバイナリとして解釈し、secp256k1 で署名
+REAL_SIGNATURE=$($BINARY keys sign $USER $(echo $SITE_ROOT) --keyring-backend test)
+echo "   4. Real Signature: $REAL_SIGNATURE"
 # 5. Sign Upload (バグ修正: $CHAIN_ID のケースミスを修正)
 echo "   5. Submitting Sign-Upload with REAL signature..."
 CMD="$BINARY tx gateway sign-upload $UPLOAD_ID $SITE_ROOT $REAL_SIGNATURE --from $USER --chain-id $CHAIN_ID --node $NODE_URL --keyring-backend test"

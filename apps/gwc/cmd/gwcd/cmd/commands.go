@@ -54,6 +54,8 @@ func initRootCmd(
 		txCommand(),
 		keys.Commands(),
 	)
+	// utilコマンドを追加
+	rootCmd.AddCommand(NewUtilCmd())
 }
 
 // addModuleInitFlags adds more flags to the start command.
