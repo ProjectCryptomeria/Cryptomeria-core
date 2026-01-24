@@ -8,7 +8,7 @@ BINARY="/workspace/apps/gwc/dist/gwcd"
 NODE_URL="tcp://localhost:26657"
 CHAIN_ID="gwc"
 USER="alice"
-PROJECT="k8s-test-project-v1"
+PROJECT="k8s-test-project-v1-$(date +%Y%m%d%H%M%S)"
 
 echo "🚀 Starting Signed Upload E2E Test against K8s..."
 echo "Target Node: $NODE_URL"
@@ -18,29 +18,35 @@ echo "Target Node: $NODE_URL"
 # ---------------------------------------------------------
 submit_tx() {
     local cmd="$@"
-    local tx_json=$($cmd 2>&1)
+    # stderrもstdoutにマージして取得
+    local raw_output=$($cmd 2>&1)
     local exit_code=$?
 
     # コマンド自体の失敗
     if [ $exit_code -ne 0 ]; then
-        echo "❌ Command failed with exit code $exit_code"
-        echo "$tx_json"
+        echo "❌ Command failed with exit code $exit_code" >&2
+        echo "$raw_output" >&2
         exit 1
     fi
+
+    # "gas estimate:" などのノイズ行を除去してJSON部分のみ抽出
+    # grep -v で "gas estimate" を含む行を除外
+    local tx_json=$(echo "$raw_output" | grep -v "^gas estimate:")
 
     # JSONパース確認
     local code=$(echo "$tx_json" | jq -r '.code' 2>/dev/null)
     if [ -z "$code" ] || [ "$code" == "null" ]; then
-        echo "❌ Failed to parse Tx response (Not JSON?)"
-        echo "$tx_json"
+        echo "❌ Failed to parse Tx response (Not JSON?)" >&2
+        echo "⬇️  Raw Output:" >&2
+        echo "$raw_output" >&2
         exit 1
     fi
 
     # CheckTx (Mempool) エラーの確認
     if [ "$code" != "0" ]; then
-        echo "❌ CheckTx Failed (Mempool Error) code: $code"
-        echo "⬇️  Details:"
-        echo "$tx_json" | jq .
+        echo "❌ CheckTx Failed (Mempool Error) code: $code" >&2
+        echo "⬇️  Details:" >&2
+        echo "$tx_json" | jq . >&2
         exit 1
     fi
 
@@ -77,8 +83,6 @@ wait_for_tx() {
             exit 1
         else
             # JSONとしてパースできない、または予期せぬエラー
-            # まだブロックに含まれていない可能性もあるので、明示的なエラーでなければ待つ
-            # しかし、明らかなエラーレスポンスなら表示して終了
             if echo "$result" | grep -q "error"; then
                  echo "❌ Query failed:" >&2
                  echo "$result" >&2
@@ -110,8 +114,8 @@ cd /tmp/test-upload && zip -r ../test.zip ./* && cd - >/dev/null
 # 1. Init Upload
 # ---------------------------------------------------------
 echo "1️⃣  Init Upload..."
-# submit_tx 関数経由で実行（エラーならここで止まる）
-INIT_TX_JSON=$($BINARY tx gateway init-upload "$PROJECT" 1024 \
+# 初回はガス指定なし(デフォルト)
+INIT_TX_JSON=$(submit_tx $BINARY tx gateway init-upload "$PROJECT" 1024 \
   --from $USER --chain-id $CHAIN_ID --node "$NODE_URL" --keyring-backend test \
   -y -o json)
 
@@ -134,6 +138,7 @@ echo "✅ UploadID: $UPLOAD_ID"
 # 2. Post Chunk
 # ---------------------------------------------------------
 echo "2️⃣  Post Chunk..."
+# ここで --gas auto を使うため "gas estimate" が出る可能性がある
 CHUNK_TX_JSON=$(submit_tx $BINARY tx gateway post-chunk "$UPLOAD_ID" 0 /tmp/test.zip \
   --from $USER --chain-id $CHAIN_ID --node "$NODE_URL" --keyring-backend test \
   --gas auto --gas-adjustment 1.5 \
@@ -146,7 +151,7 @@ echo "   Chunk committed."
 # 3. Complete Upload
 # ---------------------------------------------------------
 echo "3️⃣  Complete Upload..."
-COMP_TX_JSON=$(submit_tx $BINARY tx gateway complete-upload "$UPLOAD_ID" "test.zip" "1.0.0" 1024 \
+COMP_TX_JSON=$(submit_tx $BINARY tx gateway complete-upload "$UPLOAD_ID" "$PROJECT" "1.0.0" 1024 \
   --from $USER --chain-id $CHAIN_ID --node "$NODE_URL" --keyring-backend test \
   --gas auto --gas-adjustment 1.5 \
   -y -o json)
