@@ -1,11 +1,10 @@
-
 # dev.just
 set shell := ["bash", "-c"]
 
 PROJECT_NAME := "cryptomeria"
 
 _default:
-	@just -l dev
+    @just -l dev
 
 # =============================================================================
 # 🏗️ Build Tasks
@@ -13,52 +12,66 @@ _default:
 
 # [Build All] 全てのDockerイメージをビルド
 build-all:
-	@echo "🏗️  Building all images..."
-	@just dev::build-chain-all
-	@just dev::build-image-all
+    @echo "🏗️  Building all images..."
+    @just dev::build-chain-all
+    @just dev::build-image-all
 
-# [Parallel] 各コンポーネントのビルド定義
+# [Parallel] 各コンポーネントのビルド定義（イメージビルドは並列のまま維持）
 [parallel]
 build-image-all: (build-image 'fdsc') (build-image 'mdsc') (build-image 'gwc') (build-image 'relayer')
 
-# [Build Image] 個別イメージビルド (Relayerの特殊処理を含む最新版)
+# [Build Image] 個別イメージビルド
+# 変更点: 自動ビルドを廃止し、バイナリの存在チェックのみを行うように変更
 build-image target:
-	#!/usr/bin/env bash
-	set -e
-	echo "🐳 Building Docker image for {{target}}..."
-	
-	# Relayer用: Gatewayバイナリのコピー
-	if [ "{{target}}" == "relayer" ]; then
-		if [ ! -f "apps/gwc/dist/gwcd" ]; then
-			 echo "⚠️  Gwcd binary not found. Compiling gwc first..."
-			 cd apps/gwc && ignite chain build -o dist/ --skip-proto && cd -
-		fi
-		cp "apps/gwc/dist/gwcd" "apps/relayer/gwcd"
-	else
-		# チェーン用: バイナリビルド
-		just dev::build-chain {{target}}
-	fi
+    #!/usr/bin/env bash
+    set -e
+    echo "🐳 Building Docker image for {{target}}..."
+    
+    # Relayer用: Gatewayバイナリのコピー処理
+    if [ "{{target}}" == "relayer" ]; then
+        # gwcdバイナリが存在するかチェック
+        if [ ! -f "apps/gwc/dist/gwcd" ]; then
+             echo "❌ Error: Gwcd binary not found at apps/gwc/dist/gwcd."
+             echo "ℹ️  Please run 'just dev::build-chain gwc' first."
+             exit 1
+        fi
+        cp "apps/gwc/dist/gwcd" "apps/relayer/gwcd"
+    else
+        # チェーン用: バイナリ存在チェック
+        # ignite build -o dist/ で生成されるバイナリパスを確認 (例: fdsc -> fdscd)
+        BINARY_PATH="apps/{{target}}/dist/{{target}}d"
+        
+        if [ ! -f "$BINARY_PATH" ]; then
+            echo "❌ Error: Binary not found at $BINARY_PATH."
+            echo "ℹ️  Binary must be compiled before building the image."
+            echo "👉 Run 'just dev::build-chain {{target}}' or 'just dev::build-chain-all' first."
+            exit 1
+        fi
+        echo "✅ Binary found: $BINARY_PATH"
+    fi
 
-	cd "apps/{{target}}"
-	docker build -t "{{PROJECT_NAME}}/{{target}}:latest" .
-	
-	if [ "{{target}}" == "relayer" ]; then rm gwcd; fi
+    cd "apps/{{target}}"
+    docker build -t "{{PROJECT_NAME}}/{{target}}:latest" .
+    
+    # 後処理: Relayer用にコピーしたバイナリを削除
+    if [ "{{target}}" == "relayer" ]; then rm gwcd; fi
 
-[parallel]
+# [Build Chain All] 全チェーンのバイナリをコンパイル
+# 変更点: [parallel]を削除し、逐次実行に変更（メモリ負荷軽減のため）
 build-chain-all: (build-chain 'fdsc') (build-chain 'mdsc') (build-chain 'gwc')
-	
+    
 
 # [Build Chain] バイナリのみコンパイル（ローカル実行用）
 build-chain target:
-	#!/usr/bin/env bash
-	set -e
-	if [[ ! "{{target}}" =~ ^(fdsc|mdsc|gwc)$ ]]; then
-		echo "❌ Error: Invalid target '{{target}}'."
-		exit 1
-	fi
-	echo "🏗️  Compiling binary for {{target}}..."
-	cd apps/{{target}} && ignite chain build -o dist/ --skip-proto
-	echo "✅ Binary compiled: dist/{{target}}d"
+    #!/usr/bin/env bash
+    set -e
+    if [[ ! "{{target}}" =~ ^(fdsc|mdsc|gwc)$ ]]; then
+        echo "❌ Error: Invalid target '{{target}}'."
+        exit 1
+    fi
+    echo "🏗️  Compiling binary for {{target}}..."
+    cd apps/{{target}} && ignite chain build -o dist/ --skip-proto
+    echo "✅ Binary compiled: dist/{{target}}d"
 
 # =============================================================================
 # 🔧 Code Generation & Scaffold 
@@ -69,28 +82,28 @@ build-chain target:
 generate-all: (generate 'fdsc') (generate 'mdsc') (generate 'gwc')
 
 generate target:
-	@echo "🔧 Generating code for {{target}}..."
-	@cd apps/{{target}} && ignite generate proto-go
+    @echo "🔧 Generating code for {{target}}..."
+    @cd apps/{{target}} && ignite generate proto-go
 
 # [Scaffold] 新しいチェーンの雛形作成
 scaffold target:
-	#!/usr/bin/env bash
-	set -e
-	case {{target}} in
-		fdsc)
-		./ops/scripts/scaffold/scaffold-chain.sh {{target}} fdsc
-		;;
-		mdsc)
-		./ops/scripts/scaffold/scaffold-chain.sh {{target}} metastore
-		;;
-		gwc)
-		./ops/scripts/scaffold/scaffold-chain.sh {{target}} gateway
-		;;
-		*)
-		echo "❌ Error: Invalid target '{{target}}'."
-		exit 1
-		;;
-	esac
+    #!/usr/bin/env bash
+    set -e
+    case {{target}} in
+        fdsc)
+        ./ops/scripts/scaffold/scaffold-chain.sh {{target}} fdsc
+        ;;
+        mdsc)
+        ./ops/scripts/scaffold/scaffold-chain.sh {{target}} metastore
+        ;;
+        gwc)
+        ./ops/scripts/scaffold/scaffold-chain.sh {{target}} gateway
+        ;;
+        *)
+        echo "❌ Error: Invalid target '{{target}}'."
+        exit 1
+        ;;
+    esac
 
 # =============================================================================
 # 🔥 Hot Reload 
@@ -98,53 +111,53 @@ scaffold target:
 
 # [Hot Reload] ローカルでビルドしたバイナリを稼働中のPodに注入して再起動
 hot-reload target:
-	#!/usr/bin/env bash
-	set -ex
-	echo "🔥 Hot reloading {{target}}..."
-	just dev::build-chain {{target}}
-	
-	BINARY_NAME="{{target}}d"
-	LOCAL_BINARY="apps/{{target}}/dist/$BINARY_NAME"
-	POD=$(kubectl get pod -n {{PROJECT_NAME}} -l app.kubernetes.io/component={{target}} -o jsonpath="{.items[0].metadata.name}")
-	
-	if [ -z "$POD" ]; then echo "❌ Pod not found."; exit 1; fi
-	
-	echo " 	 Injecting binary into $POD..."
-	kubectl cp "$LOCAL_BINARY" {{PROJECT_NAME}}/$POD:/tmp/"$BINARY_NAME"_new
-	
-	kubectl exec -n {{PROJECT_NAME}} $POD -- /bin/bash -c "
-		set -e
-		mv /tmp/${BINARY_NAME}_new /home/{{target}}/bin/$BINARY_NAME
-		chmod +x /home/{{target}}/bin/$BINARY_NAME
-		killall $BINARY_NAME || true
-		sleep 2
-	"
-	echo "✅ {{target}} reloaded!"
+    #!/usr/bin/env bash
+    set -ex
+    echo "🔥 Hot reloading {{target}}..."
+    just dev::build-chain {{target}}
+    
+    BINARY_NAME="{{target}}d"
+    LOCAL_BINARY="apps/{{target}}/dist/$BINARY_NAME"
+    POD=$(kubectl get pod -n {{PROJECT_NAME}} -l app.kubernetes.io/component={{target}} -o jsonpath="{.items[0].metadata.name}")
+    
+    if [ -z "$POD" ]; then echo "❌ Pod not found."; exit 1; fi
+    
+    echo "   Injecting binary into $POD..."
+    kubectl cp "$LOCAL_BINARY" {{PROJECT_NAME}}/$POD:/tmp/"$BINARY_NAME"_new
+    
+    kubectl exec -n {{PROJECT_NAME}} $POD -- /bin/bash -c "
+        set -e
+        mv /tmp/${BINARY_NAME}_new /home/{{target}}/bin/$BINARY_NAME
+        chmod +x /home/{{target}}/bin/$BINARY_NAME
+        killall $BINARY_NAME || true
+        sleep 2
+    "
+    echo "✅ {{target}} reloaded!"
 
 #===================================
 # BFF Utils
 #===================================
 bff-install:
-	@cd util/Cryptomeria-Bff && yarn run init && yarn install
+    @cd util/Cryptomeria-Bff && yarn run init && yarn install
 
 bff-dev:
-	@cd util/Cryptomeria-Bff && yarn dev
+    @cd util/Cryptomeria-Bff && yarn dev
 
 bff-test:
-	@cd util/Cryptomeria-Bff && yarn test
+    @cd util/Cryptomeria-Bff && yarn test
 
 # =============================================================================
 # 🔌 Controller Utils 
 # =============================================================================
 
 ctl-install:
-	@cd util/Cryptomeria-TScontroller && yarn install
+    @cd util/Cryptomeria-TScontroller && yarn install
 
 ctl-dev:
-	@cd util/Cryptomeria-TScontroller && yarn start
+    @cd util/Cryptomeria-TScontroller && yarn start
 
 ctl-exec args:
-	@cd util/Cryptomeria-TScontroller && yarn {{args}}
+    @cd util/Cryptomeria-TScontroller && yarn {{args}}
 
 
 
@@ -200,4 +213,3 @@ archive target=".":
             exit 1
         fi
     fi
-

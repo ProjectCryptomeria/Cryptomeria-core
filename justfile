@@ -62,7 +62,7 @@ all-in-one chains=DEFAULT_CHAINS:
 	@just dev::build-all
 	@just deploy {{chains}}
 	@sleep 10
-	@just start-system
+	@time just start-system
 	@echo "✅ All-in-one process complete! System is running."
 
 # [復活: Deploy Clean] データだけ消して再デプロイ（高速リセット）
