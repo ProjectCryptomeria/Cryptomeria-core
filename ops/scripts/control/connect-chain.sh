@@ -99,8 +99,9 @@ register_storage_on_gwc() {
     log_info "Found Channel ID: $channel_id. Registering..."
     local target_endpoint="http://${RELEASE_NAME}-${TARGET_CHAIN}-0.${HEADLESS_SERVICE}:1317"
 
+    # 修正箇所: 4番目の引数として $DST_PORT_PREFIX (connection-type) を追加
     pod_exec "$gwc_pod" gwcd tx gateway register-storage \
-        "$channel_id" "$TARGET_CHAIN" "$target_endpoint" \
+        "$channel_id" "$TARGET_CHAIN" "$target_endpoint" "$DST_PORT_PREFIX" \
         --from "local-admin" --chain-id "$GWC_CHAIN" -y --keyring-backend test --home /home/gwc/.gwc || true
 }
 

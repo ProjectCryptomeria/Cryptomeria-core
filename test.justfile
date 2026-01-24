@@ -29,8 +29,8 @@ download:
     @echo "--> 📥 Downloading test data (Legacy)..."
     @./ops/scripts/test/poc/download-test.sh
 
-# [Process] 特定のプロセステストを実行（旧 test コマンド相当）
-process name:
+# [Poc] 特定のプロセステストを実行（旧 test コマンド相当）
+poc name:
     @echo "--> 🧪 Running {{name}}-test process..."
     @# ここで具体的なスクリプトを呼ぶか、引数に応じて分岐
     @if [ -f "./ops/scripts/test/poc/{{name}}-test.sh" ]; then \
