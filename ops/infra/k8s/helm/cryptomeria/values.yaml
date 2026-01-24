@@ -39,7 +39,7 @@ gwc:
   image:
     repository: cryptomeria/gwc
     tag: "latest"
-    pullPolicy: Never
+    pullPolicy: Always
   service:
     rpcPort: 26657
     apiPort: 1317
@@ -60,7 +60,7 @@ mdsc:
   image:
     repository: cryptomeria/mdsc
     tag: "latest"
-    pullPolicy: Never
+    pullPolicy: Always
   service:
     rpcPort: 26657
     apiPort: 1317
@@ -82,7 +82,7 @@ fdsc:
   image:
     repository: cryptomeria/fdsc
     tag: "latest"
-    pullPolicy: Never
+    pullPolicy: Always
   service:
     rpcPort: 26657
     apiPort: 1317
@@ -104,7 +104,7 @@ relayer:
   image:
     repository: cryptomeria/relayer
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   persistence:
     enabled: true
     size: 1Gi

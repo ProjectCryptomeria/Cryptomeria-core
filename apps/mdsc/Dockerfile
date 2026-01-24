@@ -19,6 +19,8 @@ WORKDIR /home/mdsc
 # ▼▼▼ ここにキャッシュバスターを追加 ▼▼▼
 # デフォルト値は1だが、ビルド時に値を渡すことで強制的にキャッシュを破棄する
 ARG CACHEBUST=1
+# 修正箇所: 変数を RUN で使用することで、このステップ以降のキャッシュを強制的に破棄します。
+RUN echo "Force rebuild if binary changed: $CACHEBUST"
 
 # ローカルでビルドしたバイナリをユーザーのホームディレクトリ配下のbinにコピー
 # --chown を指定して、mdscユーザーが書き込み権限を持つようにする

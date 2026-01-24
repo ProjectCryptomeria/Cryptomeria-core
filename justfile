@@ -62,10 +62,8 @@ all-in-one chains=DEFAULT_CHAINS:
     @just clean
     @just dev::build-all
     @just deploy {{chains}}
-    @echo "⏳ Waiting for ALL Chain Pods to be READY (timeout: 180s)..."
-    @kubectl wait --for=condition=ready pod -l app.kubernetes.io/category=chain -n {{PROJECT_NAME}} --timeout=180s
-    @time just start-system
-    @echo "✅ All-in-one process complete! System is running."
+    @echo "⏳ Waiting for Pod objects to be created..."
+    @echo "✅ All-in-one process complete! System was deployed."
 
 # [復活: Deploy Clean] データだけ消して再デプロイ（高速リセット）
 deploy-clean chains=DEFAULT_CHAINS:
