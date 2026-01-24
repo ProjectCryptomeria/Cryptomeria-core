@@ -51,7 +51,9 @@ build-image target:
     fi
 
     cd "apps/{{target}}"
-    docker build -t "{{PROJECT_NAME}}/{{target}}:latest" .
+    docker build \
+        --build-arg CACHEBUST=$(date +%s) \
+        -t "{{PROJECT_NAME}}/{{target}}:latest" .
     
     # 後処理: Relayer用にコピーしたバイナリを削除
     if [ "{{target}}" == "relayer" ]; then rm gwcd; fi

@@ -16,6 +16,10 @@ RUN groupadd fdsc && useradd fdsc -g fdsc -s /bin/bash -m
 USER fdsc
 WORKDIR /home/fdsc
 
+# ▼▼▼ ここにキャッシュバスターを追加 ▼▼▼
+# デフォルト値は1だが、ビルド時に値を渡すことで強制的にキャッシュを破棄する
+ARG CACHEBUST=1
+
 # ローカルでビルドしたバイナリをユーザーのホームディレクトリ配下のbinにコピー
 # --chown を指定して、fdscユーザーが書き込み権限を持つようにする
 COPY --chown=fdsc:fdsc ./dist/fdscd /home/fdsc/bin/fdscd

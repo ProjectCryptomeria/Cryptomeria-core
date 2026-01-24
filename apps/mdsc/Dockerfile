@@ -16,6 +16,10 @@ RUN groupadd mdsc && useradd mdsc -g mdsc -s /bin/bash -m
 USER mdsc
 WORKDIR /home/mdsc
 
+# ▼▼▼ ここにキャッシュバスターを追加 ▼▼▼
+# デフォルト値は1だが、ビルド時に値を渡すことで強制的にキャッシュを破棄する
+ARG CACHEBUST=1
+
 # ローカルでビルドしたバイナリをユーザーのホームディレクトリ配下のbinにコピー
 # --chown を指定して、mdscユーザーが書き込み権限を持つようにする
 COPY --chown=mdsc:mdsc ./dist/mdscd /home/mdsc/bin/mdscd

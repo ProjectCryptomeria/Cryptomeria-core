@@ -28,10 +28,10 @@ wait_for_pod_name() {
     local label=$1
     local ns="cryptomeria"
     
-    echo -n "🔍 Waiting for pod creation (app=$label)... " >&2
+    echo -n "🔍 Waiting for pod creation ( app.kubernetes.io/component=$label)... " >&2
     for i in {1..30}; do
         # 2>/dev/null でエラーを隠しつつ取得試行
-        local name=$(kubectl get pods -n $ns -l app=$label -o jsonpath="{.items[0].metadata.name}" 2>/dev/null)
+        local name=$(kubectl get pods -n $ns -l app.kubernetes.io/component=$label -o jsonpath="{.items[0].metadata.name}" 2>/dev/null)
         
         if [ -n "$name" ]; then
             echo "✅ Found: $name" >&2
@@ -46,10 +46,21 @@ wait_for_pod_name() {
     exit 1
 }
 
+# 修正対象: ops/scripts/lib/common.sh
+
 # Relayer Podを特定 (シングルトン)
 ensure_relayer_pod() {
     if [ -z "$RELAYER_POD" ]; then
         RELAYER_POD=$(wait_for_pod_name "relayer")
+        
+        # ▼▼▼ 追加: Podが見つかった後、コンテナがReadyになるまで待機する ▼▼▼
+        if [ -n "$RELAYER_POD" ]; then
+            echo "⏳ Waiting for Relayer container to be ready..." >&2
+            # タイムアウト60秒で Ready 状態になるのを待機
+            kubectl wait --for=condition=Ready pod/"$RELAYER_POD" -n "$NAMESPACE" --timeout=60s >/dev/null
+        fi
+        # ▲▲▲ 追加ここまで ▲▲▲
+
         if [ -z "$RELAYER_POD" ]; then
             log_error "Relayer pod not found in namespace '$NAMESPACE'."
         fi

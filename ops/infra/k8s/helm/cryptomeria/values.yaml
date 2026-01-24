@@ -25,7 +25,7 @@ genesisServer:
 ports:
   gwcBase: 30000
   mdscBase: 30010
-  fdscBase: 30020  # FDSCはここから +10 ずつインクリメント (fdsc-0=30020, fdsc-1=30030)
+  fdscBase: 30020 # FDSCはここから +10 ずつインクリメント (fdsc-0=30020, fdsc-1=30030)
 
 # =============================================================================
 # Component Configurations
@@ -39,7 +39,7 @@ gwc:
   image:
     repository: cryptomeria/gwc
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Never
   service:
     rpcPort: 26657
     apiPort: 1317
@@ -49,7 +49,7 @@ gwc:
       type: NodePort
   persistence:
     enabled: true
-    size: 10Gi
+    size: 3Gi
   resources: {}
 
 # -----------------------------------------------------------------------------
@@ -60,7 +60,7 @@ mdsc:
   image:
     repository: cryptomeria/mdsc
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Never
   service:
     rpcPort: 26657
     apiPort: 1317
@@ -71,7 +71,7 @@ mdsc:
       type: NodePort
   persistence:
     enabled: true
-    size: 10Gi
+    size: 3Gi
   resources: {}
 
 # -----------------------------------------------------------------------------
@@ -82,7 +82,7 @@ fdsc:
   image:
     repository: cryptomeria/fdsc
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Never
   service:
     rpcPort: 26657
     apiPort: 1317
@@ -93,7 +93,7 @@ fdsc:
       type: NodePort
   persistence:
     enabled: true
-    size: 10Gi
+    size: 4Gi
   resources: {}
 
 # -----------------------------------------------------------------------------
@@ -118,7 +118,7 @@ relayer:
 # 本番環境では false にし、External Secret Operator等を使用することを推奨
 staticMnemonics:
   enabled: true
-  
+
   # --- GWC: 全役役揃い踏み ---
   gwc:
     localAdmin: "noise glove aim involve lemon stairs step junk easily drink else attitude sauce monster weapon donkey tobacco hope build exhaust birth accuse immune ordinary"

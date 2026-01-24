@@ -56,14 +56,14 @@ connect chain:
 # 🔄 Recovery & Cleanup (Restored)
 # =============================================================================
 
-# [復活: All-in-One] クリーンアップからデプロイ、起動まで一気に行う（開発リセット用）
+# [復活: All-in-One] クリーンアップからデプロイ、起動まで一気に行う
 all-in-one chains=DEFAULT_CHAINS:
     @echo "🔥 Running All-in-One Sequence..."
     @just clean
     @just dev::build-all
     @just deploy {{chains}}
-    @echo "⏳ Waiting 10 seconds for K8s scheduling..."
-    @for i in 10 9 8 7 6 5 4 3 2 1; do echo -n "$i... "; sleep 1; done; echo "🚀 Go!"
+    @echo "⏳ Waiting for ALL Chain Pods to be READY (timeout: 180s)..."
+    @kubectl wait --for=condition=ready pod -l app.kubernetes.io/category=chain -n {{PROJECT_NAME}} --timeout=180s
     @time just start-system
     @echo "✅ All-in-one process complete! System is running."
 
