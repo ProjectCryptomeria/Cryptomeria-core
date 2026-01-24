@@ -14,12 +14,15 @@ message GatewayPacketData {
 
 message NoDataPacket {}
 
-// FragmentPacket defines a single chunk of file data
+// FragmentPacket defines a single fragment of file data
 message FragmentPacket {
-  uint64 id   = 1;
-  bytes  data = 2;
-  // 追加: 検証用SiteRoot
-  string site_root = 3;
+  string session_id = 1;
+  // RootProof for verification reference
+  string root_proof = 2;
+  // identifies the fragment position
+  string path = 3;
+  uint64 index = 4;
+  bytes data = 5;
 }
 
 // PacketFragmentMapping defines the location of a fragment
@@ -33,7 +36,7 @@ message FileMetadata {
   string mime_type = 1;
   uint64 size      = 2;
   repeated PacketFragmentMapping fragments = 3;
-  // 追加: 各ファイルのMerkle Root
+  // file_root is the Merkle root of fragments in this file
   string file_root = 4;
 }
 
@@ -42,10 +45,12 @@ message ManifestPacket {
   string project_name = 1;
   string version      = 2;
   map<string, FileMetadata> files = 3;
-  
-  // 追加: 検証用フィールド
-  string site_root = 4;
+
+  // CSU verification fields
+  string root_proof = 4;
   uint64 fragment_size = 5;
-  bytes  client_signature = 6;
-  string creator = 7;
+
+  // identity fields
+  string owner = 6;
+  string session_id = 7;
 }

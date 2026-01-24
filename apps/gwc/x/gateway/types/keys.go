@@ -34,26 +34,26 @@ var (
 	// DatastoreChannelKey: FDSCへのチャネルIDリストを保存 (複数可)
 	DatastoreChannelKey = collections.NewPrefix("channel_fdsc")
 
-	// ストレージエンドポイント保存用 (Key: ChainID, Value: API URL)
+	// ストレージエンドポイント保存用 (Key: ChannelID, Value: StorageInfo)
 	StorageEndpointKey = collections.NewPrefix("storage_endpoint")
 
-	// --- Upload session management ---
-	
-	// UploadSessionStateKey: セッションの状態 (Uploading, PendingSign)
-	UploadSessionStateKey = collections.NewPrefix("session_state")
+	// --- CSU Session management ---
 
-	// UploadSessionBufferKey: 受信中のZipデータ (バイナリ)
-	UploadSessionBufferKey = collections.NewPrefix("session_buffer")
+	// SessionKey: セッション本体 (Key: session_id, Value: types.Session)
+	SessionKey = collections.NewPrefix("session")
 
-	// UploadSessionConfigKey: ファイル名、バージョン、フラグメントサイズ等の設定
-	UploadSessionConfigKey = collections.NewPrefix("session_config")
+	// SessionFragmentSeenKey: (session_id, path, index) の重複防止 (Key: frag_key, Value: empty)
+	SessionFragmentSeenKey = collections.NewPrefix("sess_frag_seen")
 
-	// UploadSessionResultKey: 計算済みのSiteRootとManifest(一時保存)
-	UploadSessionResultKey = collections.NewPrefix("session_result")
+	// FragmentSeqToFragmentKey: FDSCへ送った FragmentPacket の IBC sequence -> frag_key
+	// Key: seq_key (zero-padded decimal string), Value: frag_key
+	FragmentSeqToFragmentKey = collections.NewPrefix("seq_frag")
 
-	// Legacy/IBC Waiter keys
-	UploadSessionPendingKey = collections.NewPrefix("upload_session_pending")
-	UploadSessionManifestKey = collections.NewPrefix("upload_session_manifest")
-	UploadSessionMDSCChannelKey = collections.NewPrefix("upload_session_mdsc_channel")
-	FragmentToSessionKey = collections.NewPrefix("fragment_to_session")
+	// ManifestSeqToSessionKey: MDSCへ送った ManifestPacket の IBC sequence -> session_id
+	// Key: seq_key (zero-padded decimal string), Value: session_id
+	ManifestSeqToSessionKey = collections.NewPrefix("seq_manifest")
+
+	// SessionUploadTokenHashKey: off-chain upload token の hash を保存（平文保存しない）
+	// Key: session_id, Value: sha256(token) など
+	SessionUploadTokenHashKey = collections.NewPrefix("sess_upload_token_hash")
 )

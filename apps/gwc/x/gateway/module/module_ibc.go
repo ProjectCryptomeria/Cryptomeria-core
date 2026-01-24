@@ -2,7 +2,7 @@ package gateway
 
 import (
 	"fmt"
-	"strconv"
+	"strings"
 
 	errorsmod "cosmossdk.io/errors"
 
@@ -124,12 +124,25 @@ func (im IBCModule) OnRecvPacket(
 		return channeltypes.NewErrorAcknowledgement(errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal packet data: %s", err.Error()))
 	}
 
-	// Dispatch packet
+	// GWC 側は基本的に送信者なので、受信Packetは想定しない（現状）
 	switch packet := modulePacketData.Packet.(type) {
 	default:
 		err := fmt.Errorf("unrecognized %s packet type: %T", types.ModuleName, packet)
 		return channeltypes.NewErrorAcknowledgement(err)
 	}
+}
+
+// splitFragKey extracts session_id from frag_key:
+//
+//	session_id + "\x00" + path + "\x00" + index(%020d)
+//
+// (indexやpathは不要なので先頭だけ取り出す)
+func splitFragKey(fragKey string) (sessionID string, ok bool) {
+	parts := strings.SplitN(fragKey, "\x00", 2)
+	if len(parts) != 2 {
+		return "", false
+	}
+	return parts[0], true
 }
 
 // OnAcknowledgementPacket implements the IBCModule interface
@@ -140,9 +153,10 @@ func (im IBCModule) OnAcknowledgementPacket(
 	acknowledgement []byte,
 	relayer sdk.AccAddress,
 ) error {
+	// NOTE: ibc-go v10 は proto bytes を渡す。Ackは Unmarshal が正しい。
 	var ack channeltypes.Acknowledgement
-	if err := im.cdc.UnmarshalJSON(acknowledgement, &ack); err != nil {
-		return errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal packet acknowledgement: %v", err)
+	if err := ack.Unmarshal(acknowledgement); err != nil {
+		return errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal acknowledgement: %v", err)
 	}
 
 	var modulePacketData types.GatewayPacketData
@@ -150,11 +164,10 @@ func (im IBCModule) OnAcknowledgementPacket(
 		return errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal packet data: %s", err.Error())
 	}
 
-	var eventType = types.EventTypePacket
-
+	// (既存) ACKイベントは残す
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(
-			eventType,
+			types.EventTypePacket,
 			sdk.NewAttribute(types.AttributeKeyAck, fmt.Sprintf("%v", ack)),
 		),
 	)
@@ -163,14 +176,14 @@ func (im IBCModule) OnAcknowledgementPacket(
 	case *channeltypes.Acknowledgement_Result:
 		ctx.EventManager().EmitEvent(
 			sdk.NewEvent(
-				eventType,
+				types.EventTypePacket,
 				sdk.NewAttribute(types.AttributeKeyAckSuccess, string(resp.Result)),
 			),
 		)
 	case *channeltypes.Acknowledgement_Error:
 		ctx.EventManager().EmitEvent(
 			sdk.NewEvent(
-				eventType,
+				types.EventTypePacket,
 				sdk.NewAttribute(types.AttributeKeyAckError, resp.Error),
 			),
 		)
@@ -178,42 +191,84 @@ func (im IBCModule) OnAcknowledgementPacket(
 
 	// Dispatch packet
 	switch packet := modulePacketData.Packet.(type) {
-	// --- 追加: Ack受信時のハンドリング (エラー回避のため必須) ---
+
 	case *types.GatewayPacketData_FragmentPacket:
-		fragIDStr := strconv.FormatUint(packet.FragmentPacket.Id, 10)
-		// ACKが来たfragmentからupload_session_idを引く
-		uploadID, err := im.keeper.FragmentToSession.Get(ctx, fragIDStr)
+		// layer5: seq -> frag_key -> session_id で相関する
+		seq := modulePacket.Sequence
+
+		fragKey, err := im.keeper.GetFragmentKeyBySeq(ctx, seq)
 		if err != nil {
-			// mappingが無い場合は無視（古い/異常系）
+			// mappingが無いなら無視（古い/異常系/すでに掃除済み）
 			return nil
 		}
-		// mappingは不要になるので先に削除（ストア肥大化防止）
-		_ = im.keeper.FragmentToSession.Remove(ctx, fragIDStr)
+		// mapping はACK/Timeout処理で不要になるので削除
+		_ = im.keeper.UnbindFragmentSeq(ctx, seq)
 
-		switch ack.Response.(type) {
-		case *channeltypes.Acknowledgement_Result:
-			remaining, _, err := im.keeper.ConsumeFragmentAck(ctx, uploadID)
-			if err != nil {
-				ctx.Logger().Error("Failed to consume fragment ACK", "upload_id", uploadID, "error", err)
-				return nil
-			}
-			if remaining == 0 {
-				// 全断片が揃ったのでManifestを公開する
-				if err := im.keeper.PublishManifestIfReady(ctx, uploadID); err != nil {
-					ctx.Logger().Error("Failed to publish manifest after ACKs", "upload_id", uploadID, "error", err)
-					return nil
-				}
-				ctx.Logger().Info("All fragment ACKs received; manifest published", "upload_id", uploadID)
-			}
-		case *channeltypes.Acknowledgement_Error:
-			ctx.Logger().Error("Fragment ACK error; marking upload failed", "upload_id", uploadID)
-			im.keeper.FailUploadSession(ctx, uploadID)
+		sessionID, ok := splitFragKey(fragKey)
+		if !ok {
+			return nil
 		}
+
+		sess, err := im.keeper.GetSession(ctx, sessionID)
+		if err != nil {
+			// セッションが無いなら無視
+			return nil
+		}
+
+		switch r := ack.Response.(type) {
+		case *channeltypes.Acknowledgement_Result:
+			sess.AckSuccessCount++
+		case *channeltypes.Acknowledgement_Error:
+			sess.AckErrorCount++
+			// fragment側のACKエラーで即Closeするかは設計次第だが、
+			// layer0要件は "MDSC ACKで成功" なので、ここではカウントのみ増やす。
+			_ = r
+		}
+
+		_ = im.keeper.SetSession(ctx, sess)
 		return nil
+
 	case *types.GatewayPacketData_ManifestPacket:
-		// マニフェストのAck受信。正常終了。
+		// layer0/layer5: MDSC manifest の ACK が「完了条件」
+		seq := modulePacket.Sequence
+
+		sessionID, err := im.keeper.GetSessionIDByManifestSeq(ctx, seq)
+		if err != nil {
+			return nil
+		}
+		_ = im.keeper.UnbindManifestSeq(ctx, seq)
+
+		sess, err := im.keeper.GetSession(ctx, sessionID)
+		if err != nil {
+			return nil
+		}
+
+		switch r := ack.Response.(type) {
+		case *channeltypes.Acknowledgement_Result:
+			sess.State = types.SessionState_SESSION_STATE_CLOSED_SUCCESS
+			sess.CloseReason = ""
+			ctx.EventManager().EmitEvent(
+				sdk.NewEvent(
+					"csu_close_success",
+					sdk.NewAttribute("session_id", sessionID),
+				),
+			)
+			_ = r
+		case *channeltypes.Acknowledgement_Error:
+			sess.State = types.SessionState_SESSION_STATE_CLOSED_FAILED
+			sess.CloseReason = r.Error
+			ctx.EventManager().EmitEvent(
+				sdk.NewEvent(
+					"csu_close_failed",
+					sdk.NewAttribute("session_id", sessionID),
+					sdk.NewAttribute("reason", r.Error),
+				),
+			)
+		}
+
+		_ = im.keeper.SetSession(ctx, sess)
 		return nil
-	// -----------------------------------------------------
+
 	default:
 		errMsg := fmt.Sprintf("unrecognized %s packet type: %T", types.ModuleName, packet)
 		return errorsmod.Wrap(sdkerrors.ErrUnknownRequest, errMsg)
@@ -232,25 +287,58 @@ func (im IBCModule) OnTimeoutPacket(
 		return errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal packet data: %s", err.Error())
 	}
 
-	// Dispatch packet
 	switch packet := modulePacketData.Packet.(type) {
-	// --- 追加: Timeout時のハンドリング ---
+
 	case *types.GatewayPacketData_FragmentPacket:
-		fragIDStr := strconv.FormatUint(packet.FragmentPacket.Id, 10)
-		uploadID, err := im.keeper.FragmentToSession.Get(ctx, fragIDStr)
+		// fragment timeout -> ack_error_count++
+		seq := modulePacket.Sequence
+
+		fragKey, err := im.keeper.GetFragmentKeyBySeq(ctx, seq)
 		if err == nil {
-			_ = im.keeper.FragmentToSession.Remove(ctx, fragIDStr)
-			ctx.Logger().Error("Fragment Packet Timeout; marking upload failed", "upload_id", uploadID, "fragment_id", fragIDStr)
-			im.keeper.FailUploadSession(ctx, uploadID)
-		} else {
-			ctx.Logger().Error("Fragment Packet Timeout!", "id", packet.FragmentPacket.Id)
+			_ = im.keeper.UnbindFragmentSeq(ctx, seq)
+
+			sessionID, ok := splitFragKey(fragKey)
+			if ok {
+				sess, err := im.keeper.GetSession(ctx, sessionID)
+				if err == nil {
+					sess.AckErrorCount++
+					_ = im.keeper.SetSession(ctx, sess)
+				}
+			}
 		}
+
+		ctx.Logger().Error("Fragment Packet Timeout", "seq", seq)
+		_ = packet
 		return nil
+
 	case *types.GatewayPacketData_ManifestPacket:
-		// FilenameではなくProjectNameをログに出力
-		ctx.Logger().Error("Manifest Packet Timeout!", "project_name", packet.ManifestPacket.ProjectName)
+		// manifest timeout -> close failed (layer0)
+		seq := modulePacket.Sequence
+
+		sessionID, err := im.keeper.GetSessionIDByManifestSeq(ctx, seq)
+		if err == nil {
+			_ = im.keeper.UnbindManifestSeq(ctx, seq)
+
+			sess, err := im.keeper.GetSession(ctx, sessionID)
+			if err == nil {
+				sess.State = types.SessionState_SESSION_STATE_CLOSED_FAILED
+				sess.CloseReason = "manifest packet timeout"
+				_ = im.keeper.SetSession(ctx, sess)
+			}
+
+			ctx.EventManager().EmitEvent(
+				sdk.NewEvent(
+					"csu_close_failed",
+					sdk.NewAttribute("session_id", sessionID),
+					sdk.NewAttribute("reason", "manifest timeout"),
+				),
+			)
+		}
+
+		ctx.Logger().Error("Manifest Packet Timeout", "seq", seq)
+		_ = packet
 		return nil
-	// ------------------------------------
+
 	default:
 		errMsg := fmt.Sprintf("unrecognized %s packet type: %T", types.ModuleName, packet)
 		return errorsmod.Wrap(sdkerrors.ErrUnknownRequest, errMsg)

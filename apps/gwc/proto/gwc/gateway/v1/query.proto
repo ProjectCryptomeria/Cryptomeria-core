@@ -22,6 +22,16 @@ service Query {
   rpc StorageEndpoints(QueryStorageEndpointsRequest) returns (QueryStorageEndpointsResponse) {
     option (google.api.http).get = "/gwc/gateway/v1/storage_endpoints";
   }
+
+  // --- CSU session queries ---
+
+  rpc Session(QuerySessionRequest) returns (QuerySessionResponse) {
+    option (google.api.http).get = "/gwc/gateway/v1/sessions/{session_id}";
+  }
+
+  rpc SessionsByOwner(QuerySessionsByOwnerRequest) returns (QuerySessionsByOwnerResponse) {
+    option (google.api.http).get = "/gwc/gateway/v1/sessions/by_owner/{owner}";
+  }
 }
 
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -44,5 +54,23 @@ message QueryStorageEndpointsRequest {
 // QueryStorageEndpointsResponse is response type for the Query/StorageEndpoints RPC method.
 message QueryStorageEndpointsResponse {
   repeated StorageInfo storage_infos = 1;
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+message QuerySessionRequest {
+  string session_id = 1;
+}
+
+message QuerySessionResponse {
+  Session session = 1 [(gogoproto.nullable) = false];
+}
+
+message QuerySessionsByOwnerRequest {
+  string owner = 1;
+  cosmos.base.query.v1beta1.PageRequest pagination = 2;
+}
+
+message QuerySessionsByOwnerResponse {
+  repeated Session sessions = 1 [(gogoproto.nullable) = false];
   cosmos.base.query.v1beta1.PageResponse pagination = 2;
 }

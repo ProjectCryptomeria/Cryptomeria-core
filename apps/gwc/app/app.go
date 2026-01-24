@@ -187,24 +187,6 @@ func New(
 		panic(err)
 	}
 
-	// Read ChunkSize from config
-	chunkSize := 1024 * 10 // Default 10KB
-	if v := appOpts.Get("gwc.chunk_size"); v != nil {
-		if i, ok := v.(int); ok {
-			chunkSize = i
-		} else if f, ok := v.(float64); ok {
-			chunkSize = int(f)
-		}
-	}
-	app.GatewayKeeper.ChunkSize = chunkSize // Set it after injection because depinject creates the keeper?
-	// Wait, depinject creates the keeper.
-	// If depinject creates the keeper, I cannot pass arguments to NewKeeper via depinject easily unless I provide a custom provider.
-	// The `NewKeeper` function is likely used by depinject if it matches the signature.
-	// But I changed the signature of `NewKeeper`.
-	// So depinject might fail if I don't update the provider or if it auto-wires.
-	// Let's check module.go/depinject.go.
-
-
 	// add to default baseapp options
 	// enable optimistic execution
 	baseAppOptions = append(baseAppOptions, baseapp.SetOptimisticExecution())
@@ -302,7 +284,7 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 	// Read configuration from AppOptions
 	mdscEndpoint, _ := app.appOpts.Get("gwc.mdsc_endpoint").(string)
 	fdscEndpointsRaw, _ := app.appOpts.Get("gwc.fdsc_endpoints").(map[string]interface{})
-	
+
 	fdscEndpoints := make(map[string]string)
 	for k, v := range fdscEndpointsRaw {
 		if strVal, ok := v.(string); ok {

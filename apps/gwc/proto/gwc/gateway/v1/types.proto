@@ -7,13 +7,74 @@ option go_package = "gwc/x/gateway/types";
 message StorageInfo {
   // channel_id is the local IBC channel ID connected to this chain (e.g., "channel-0")
   string channel_id = 1;
-  
+
   // chain_id is the chain ID of the connected storage chain (e.g., "fdsc-1")
   string chain_id = 2;
-  
+
   // api_endpoint is the HTTP API endpoint for downloading files (e.g., "http://localhost:1317")
   string api_endpoint = 3;
-  
+
   // connection_type indicates whether this is "mdsc" or "fdsc"
   string connection_type = 4;
+}
+
+// --- CSU Proof Types ---
+
+message MerkleStep {
+  // sibling_hex is a 32-byte hash encoded as hex string.
+  string sibling_hex = 1;
+  // sibling_is_left indicates whether sibling is placed on the left side in concatenation.
+  bool sibling_is_left = 2;
+}
+
+message MerkleProof {
+  repeated MerkleStep steps = 1;
+}
+
+// --- CSU Session Types ---
+
+enum SessionState {
+  SESSION_STATE_UNSPECIFIED = 0;
+  SESSION_STATE_INIT = 1;
+  SESSION_STATE_ROOT_COMMITTED = 2;
+  SESSION_STATE_DISTRIBUTING = 3;
+  SESSION_STATE_FINALIZING = 4; // manifest sent, waiting for MDSC ack
+  SESSION_STATE_CLOSED_SUCCESS = 5;
+  SESSION_STATE_CLOSED_FAILED = 6;
+}
+
+message Session {
+  string session_id = 1;
+  string owner = 2;
+  string executor = 3;
+
+  // RootProof hex string.
+  string root_proof_hex = 4;
+
+  uint64 fragment_size = 5;
+  int64 deadline_unix = 6;
+
+  SessionState state = 7;
+  string close_reason = 8;
+
+  // counters for observability
+  uint64 distributed_count = 9;
+  uint64 ack_success_count = 10;
+  uint64 ack_error_count = 11;
+}
+
+// DistributeItem carries fragment bytes and its proofs for on-chain verification.
+message DistributeItem {
+  string path = 1;
+  uint64 index = 2;
+  bytes fragment_bytes = 3;
+
+  // fragment_proof proves fragment leaf -> file_root
+  MerkleProof fragment_proof = 4;
+
+  // file_size is the full size of the file in bytes
+  uint64 file_size = 5;
+
+  // file_proof proves file leaf -> root_proof
+  MerkleProof file_proof = 6;
 }

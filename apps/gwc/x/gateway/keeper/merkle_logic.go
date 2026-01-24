@@ -4,97 +4,132 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sort"
+
+	"gwc/x/gateway/types"
 )
 
-// CalculateSiteRoot computes the Merkle Root of the entire site (project).
-// It constructs the tree from bottom up: Fragments -> File -> Site.
-// Returns the siteRoot (hex string) and a map of FileRoot for each file.
-func CalculateSiteRoot(files []ProcessedFile) (string, map[string]string, error) {
-	if len(files) == 0 {
-		return "", nil, fmt.Errorf("no files to process")
+// sha256Bytes returns sha256(data).
+func sha256Bytes(data []byte) []byte {
+	sum := sha256.Sum256(data)
+	return sum[:]
+}
+
+// mustHex32 decodes hex string into 32-byte slice, otherwise returns error.
+func mustHex32(h string) ([]byte, error) {
+	b, err := hex.DecodeString(h)
+	if err != nil {
+		return nil, fmt.Errorf("invalid hex: %w", err)
 	}
+	if len(b) != 32 {
+		return nil, fmt.Errorf("invalid hash length: expected 32 bytes, got %d", len(b))
+	}
+	return b, nil
+}
 
-	// 1. Sort files by Path to ensure deterministic SiteRoot
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].Path < files[j].Path
-	})
+// HashFragmentLeaf computes the CSU fragment leaf hash.
+//
+// Domain-separated string scheme (deterministic):
+//
+//	leaf_frag = SHA256("FRAG:{path}:{index}:{hex(SHA256(fragment_bytes))}")
+//
+// Notes:
+// - path is used as-is (must match what was used when building RootProof off-chain)
+// - index is decimal
+// - fragment_bytes hash is hex-encoded lowercase (std hex.EncodeToString)
+func HashFragmentLeaf(path string, index uint64, fragmentBytes []byte) []byte {
+	fragDigest := sha256Bytes(fragmentBytes)
+	fragDigestHex := hex.EncodeToString(fragDigest)
 
-	fileRoots := make(map[string]string)
-	var fileLeafHashes []string
+	payload := []byte(fmt.Sprintf("FRAG:%s:%d:%s", path, index, fragDigestHex))
+	return sha256Bytes(payload)
+}
 
-	for _, file := range files {
-		// Calculate FileRoot from fragments
-		fRoot, err := calculateFileRoot(file.Path, file.Chunks)
-		if err != nil {
-			return "", nil, err
+// HashFileLeaf computes the CSU file leaf hash.
+//
+// Domain-separated string scheme (deterministic):
+//
+//	leaf_file = SHA256("FILE:{path}:{file_size}:{hex(file_root)}")
+func HashFileLeaf(path string, fileSize uint64, fileRoot []byte) []byte {
+	fileRootHex := hex.EncodeToString(fileRoot)
+	payload := []byte(fmt.Sprintf("FILE:%s:%d:%s", path, fileSize, fileRootHex))
+	return sha256Bytes(payload)
+}
+
+// VerifyMerkleProof computes the Merkle root by walking the proof from the leaf.
+//
+// - If proof is nil or steps are empty, the root is the leaf itself.
+// - Each step contains sibling hash and whether sibling is on the left in concatenation.
+func VerifyMerkleProof(leaf []byte, proof *types.MerkleProof) ([]byte, error) {
+	if proof == nil || len(proof.Steps) == 0 {
+		// single-leaf tree
+		if len(leaf) != 32 {
+			return nil, fmt.Errorf("leaf must be 32 bytes, got %d", len(leaf))
 		}
-		fileRoots[file.Path] = fRoot
-
-		// Create Leaf for Site Tree: H("FILE" + path + size + fileRoot)
-		leafHash := hashFileEntry(file.Path, uint64(len(file.Content)), fRoot)
-		fileLeafHashes = append(fileLeafHashes, leafHash)
+		return leaf, nil
 	}
 
-	// Calculate SiteRoot from File Leafs
-	siteRoot := calculateMerkleRoot(fileLeafHashes)
-	return siteRoot, fileRoots, nil
+	if len(leaf) != 32 {
+		return nil, fmt.Errorf("leaf must be 32 bytes, got %d", len(leaf))
+	}
+
+	current := leaf
+	for i, step := range proof.Steps {
+		sib, err := mustHex32(step.SiblingHex)
+		if err != nil {
+			return nil, fmt.Errorf("invalid sibling_hex at step %d: %w", i, err)
+		}
+
+		var concat []byte
+		if step.SiblingIsLeft {
+			concat = append(append([]byte{}, sib...), current...)
+		} else {
+			concat = append(append([]byte{}, current...), sib...)
+		}
+		current = sha256Bytes(concat)
+	}
+	return current, nil
 }
 
-// calculateFileRoot computes Merkle Root for a single file from its chunks
-func calculateFileRoot(filePath string, chunks [][]byte) (string, error) {
-	if len(chunks) == 0 {
-		// Empty file
-		return hashFragmentEntry(filePath, 0, []byte{}), nil
+// VerifyFragment verifies a DistributeItem against the session RootProof.
+//
+// CSU rules (layer4):
+//  1. fragment_leaf := HashFragmentLeaf(path, index, fragment_bytes)
+//  2. file_root := VerifyMerkleProof(fragment_leaf, fragment_proof)
+//  3. file_leaf := HashFileLeaf(path, file_size, file_root)
+//  4. root := VerifyMerkleProof(file_leaf, file_proof)
+//  5. root must equal root_proof_hex (session RootProof)
+func VerifyFragment(rootProofHex string, item *types.DistributeItem) error {
+	if item == nil {
+		return fmt.Errorf("item is nil")
+	}
+	if item.Path == "" {
+		return fmt.Errorf("item.path is empty")
 	}
 
-	var leafHashes []string
-	for i, chunk := range chunks {
-		// Create Leaf for File Tree: H("FRAG" + path + index + dataHash)
-		leaf := hashFragmentEntry(filePath, i, chunk)
-		leafHashes = append(leafHashes, leaf)
+	rootProof, err := mustHex32(rootProofHex)
+	if err != nil {
+		return fmt.Errorf("invalid root_proof_hex: %w", err)
 	}
 
-	return calculateMerkleRoot(leafHashes), nil
-}
-
-// calculateMerkleRoot computes the root of a list of hashes (standard binary Merkle Tree)
-func calculateMerkleRoot(hashes []string) string {
-	if len(hashes) == 0 {
-		return ""
-	}
-	if len(hashes) == 1 {
-		return hashes[0]
+	fragLeaf := HashFragmentLeaf(item.Path, item.Index, item.FragmentBytes)
+	fileRoot, err := VerifyMerkleProof(fragLeaf, item.FragmentProof)
+	if err != nil {
+		return fmt.Errorf("fragment_proof verification failed: %w", err)
 	}
 
-	// If odd number of nodes, duplicate the last one
-	if len(hashes)%2 != 0 {
-		hashes = append(hashes, hashes[len(hashes)-1])
+	fileLeaf := HashFileLeaf(item.Path, item.FileSize, fileRoot)
+	root, err := VerifyMerkleProof(fileLeaf, item.FileProof)
+	if err != nil {
+		return fmt.Errorf("file_proof verification failed: %w", err)
 	}
 
-	var nextLevel []string
-	for i := 0; i < len(hashes); i += 2 {
-		combined := hashes[i] + hashes[i+1]
-		hash := sha256.Sum256([]byte(combined))
-		nextLevel = append(nextLevel, hex.EncodeToString(hash[:]))
+	if len(root) != 32 {
+		return fmt.Errorf("computed root invalid length: %d", len(root))
 	}
-
-	return calculateMerkleRoot(nextLevel)
-}
-
-// hashFragmentEntry: SHA256("FRAG" || filePath || index || SHA256(data))
-func hashFragmentEntry(path string, index int, data []byte) string {
-	dataHash := sha256.Sum256(data)
-	dataHashStr := hex.EncodeToString(dataHash[:])
-	
-	raw := fmt.Sprintf("FRAG:%s:%d:%s", path, index, dataHashStr)
-	hash := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(hash[:])
-}
-
-// hashFileEntry: SHA256("FILE" || filePath || size || fileRoot)
-func hashFileEntry(path string, size uint64, fileRoot string) string {
-	raw := fmt.Sprintf("FILE:%s:%d:%s", path, size, fileRoot)
-	hash := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(hash[:])
+	for i := 0; i < 32; i++ {
+		if root[i] != rootProof[i] {
+			return fmt.Errorf("root_proof mismatch")
+		}
+	}
+	return nil
 }

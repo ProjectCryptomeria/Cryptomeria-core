@@ -14,8 +14,7 @@ type queryServer struct {
 	Keeper
 }
 
-// NewQueryServerImpl returns an implementation of the QueryServer interface
-// for the provided Keeper.
+// NewQueryServerImpl returns an implementation of the QueryServer interface for the provided Keeper.
 func NewQueryServerImpl(k Keeper) types.QueryServer {
 	return queryServer{Keeper: k}
 }
@@ -32,7 +31,6 @@ func (k queryServer) Params(goCtx context.Context, req *types.QueryParamsRequest
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-
 	return &types.QueryParamsResponse{Params: params}, nil
 }
 
@@ -42,15 +40,11 @@ func (k queryServer) StorageEndpoints(goCtx context.Context, req *types.QuerySto
 	}
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
-
 	var storageInfos []*types.StorageInfo
 
-	// StorageInfosマップ (Key: ChannelID, Value: StorageInfo) を走査
 	err := k.Keeper.StorageInfos.Walk(ctx, nil, func(channelID string, info types.StorageInfo) (bool, error) {
-		// マップから取得した値(info)のアドレスを取るのではなく、新しい構造体を作成してリストに追加
-		// (Protoの繰り返しフィールドはポインタのスライスであることが多いため)
 		storageInfos = append(storageInfos, &types.StorageInfo{
-			ChannelId:      info.ChannelId, // KeyのChannelIDを優先（あるいはinfo内のものと一致しているはず）
+			ChannelId:      info.ChannelId,
 			ChainId:        info.ChainId,
 			ApiEndpoint:    info.ApiEndpoint,
 			ConnectionType: info.ConnectionType,
@@ -61,6 +55,41 @@ func (k queryServer) StorageEndpoints(goCtx context.Context, req *types.QuerySto
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	// Proto定義のフィールド名は `storage_infos` なので Go構造体では `StorageInfos`
 	return &types.QueryStorageEndpointsResponse{StorageInfos: storageInfos}, nil
+}
+
+// Session returns a session by id.
+func (k queryServer) Session(goCtx context.Context, req *types.QuerySessionRequest) (*types.QuerySessionResponse, error) {
+	if req == nil || req.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id required")
+	}
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	sess, err := k.Keeper.Sessions.Get(ctx, req.SessionId)
+	if err != nil {
+		return nil, status.Error(codes.NotFound, err.Error())
+	}
+	return &types.QuerySessionResponse{Session: sess}, nil
+}
+
+// SessionsByOwner returns sessions filtered by owner.
+// NOTE: This is O(n) scan unless you add an index (Issue later).
+func (k queryServer) SessionsByOwner(goCtx context.Context, req *types.QuerySessionsByOwnerRequest) (*types.QuerySessionsByOwnerResponse, error) {
+	if req == nil || req.Owner == "" {
+		return nil, status.Error(codes.InvalidArgument, "owner required")
+	}
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	var out []types.Session
+	err := k.Keeper.Sessions.Walk(ctx, nil, func(sessionID string, sess types.Session) (bool, error) {
+		if sess.Owner == req.Owner {
+			out = append(out, sess)
+		}
+		return false, nil
+	})
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	return &types.QuerySessionsByOwnerResponse{Sessions: out}, nil
 }

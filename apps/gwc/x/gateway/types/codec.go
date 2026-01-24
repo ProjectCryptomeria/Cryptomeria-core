@@ -9,11 +9,11 @@ import (
 func RegisterInterfaces(registry types.InterfaceRegistry) {
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgUpdateParams{},
-		// 新しいメッセージを登録
-		&MsgInitUpload{},
-		&MsgPostChunk{},
-		&MsgCompleteUpload{},
-		&MsgSignUpload{},
+		&MsgInitSession{},
+		&MsgCommitRootProof{},
+		&MsgDistributeBatch{},
+		&MsgFinalizeAndCloseSession{},
+		&MsgAbortAndCloseSession{},
 		&MsgRegisterStorage{},
 	)
 	msgservice.RegisterMsgServiceDesc(registry, &_Msg_serviceDesc)

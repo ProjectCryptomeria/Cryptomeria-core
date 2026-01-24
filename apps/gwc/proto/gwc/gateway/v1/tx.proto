@@ -5,6 +5,7 @@ import "amino/amino.proto";
 import "cosmos/msg/v1/msg.proto";
 import "cosmos_proto/cosmos.proto";
 import "gogoproto/gogo.proto";
+import "gwc/gateway/v1/packet.proto";
 import "gwc/gateway/v1/params.proto";
 import "gwc/gateway/v1/types.proto";
 
@@ -16,18 +17,22 @@ service Msg {
 
   rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
 
-  // ステップ1: アップロードセッションの開始
-  rpc InitUpload(MsgInitUpload) returns (MsgInitUploadResponse);
+  // --- CSU Session Flow ---
 
-  // ステップ2: Zipデータのチャンク送信 (分割送信)
-  rpc PostChunk(MsgPostChunk) returns (MsgPostChunkResponse);
+  // Step 1: Initialize a CSU session (creates session_id and returns session_upload_token for TUS/HTTP upload)
+  rpc InitSession(MsgInitSession) returns (MsgInitSessionResponse);
 
-  // ステップ3: 送信完了通知 & サーバー側での展開・計算要求
-  // 戻り値として計算された SiteRoot が返る
-  rpc CompleteUpload(MsgCompleteUpload) returns (MsgCompleteUploadResponse);
+  // Step 2: Commit RootProof (computed from the extracted zip contents)
+  rpc CommitRootProof(MsgCommitRootProof) returns (MsgCommitRootProofResponse);
 
-  // ステップ4: SiteRootへの署名送信 & IBC配信開始 (確定)
-  rpc SignUpload(MsgSignUpload) returns (MsgSignUploadResponse);
+  // Step 3: Distribute fragments to FDSC (executor executes this via authz; signer is executor)
+  rpc DistributeBatch(MsgDistributeBatch) returns (MsgDistributeBatchResponse);
+
+  // Step 4: Upload manifest to MDSC and close session on MDSC ACK (success path)
+  rpc FinalizeAndCloseSession(MsgFinalizeAndCloseSession) returns (MsgFinalizeAndCloseSessionResponse);
+
+  // Abort session and close immediately (failure path)
+  rpc AbortAndCloseSession(MsgAbortAndCloseSession) returns (MsgAbortAndCloseSessionResponse);
 
   // Storage登録 (既存維持)
   rpc RegisterStorage(MsgRegisterStorage) returns (MsgRegisterStorageResponse);
@@ -48,44 +53,65 @@ message MsgRegisterStorage {
 }
 message MsgRegisterStorageResponse {}
 
-// --- Upload Flow Messages ---
+// --- CSU Session Flow Messages ---
 
-message MsgInitUpload {
-  option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
-  string project_name = 2;
-  uint64 expected_size = 3; // バッファ確保の目安
-}
-message MsgInitUploadResponse {
-  string upload_id = 1;
-}
+message MsgInitSession {
+  option (cosmos.msg.v1.signer) = "owner";
+  string owner = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
 
-message MsgPostChunk {
-  option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
-  string upload_id = 2;
-  uint64 chunk_index = 3;
-  bytes data = 4;
-}
-message MsgPostChunkResponse {}
+  // executor is the address that will execute Distribute/Finalize/Abort (passed from client)
+  string executor = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
 
-message MsgCompleteUpload {
-  option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
-  string upload_id = 2;
-  string filename = 3;        // 元のファイル名(拡張子判別用)
-  string version = 4;         // バージョン指定
-  uint64 fragment_size = 5;   // 分割設定
+  // fragment_size is the fixed fragment size used for splitting files
+  uint64 fragment_size = 3;
+
+  // deadline_unix is the session deadline (unix seconds). 0 means "use chain default".
+  int64 deadline_unix = 4;
 }
-message MsgCompleteUploadResponse {
-  string site_root = 1; // GWCが計算したRoot
+message MsgInitSessionResponse {
+  string session_id = 1;
+
+  // session_upload_token is used by TUS/HTTP upload endpoint (off-chain) to authorize the upload.
+  string session_upload_token = 2;
+
+  // resolved_deadline_unix is the deadline actually stored in chain state.
+  int64 resolved_deadline_unix = 3;
 }
 
-message MsgSignUpload {
-  option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
-  string upload_id = 2;
-  string site_root = 3; // クライアントが署名したRoot (照合用)
-  bytes signature = 4;  // SiteRootに対する署名
+message MsgCommitRootProof {
+  option (cosmos.msg.v1.signer) = "owner";
+  string owner = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string session_id = 2;
+
+  // root_proof_hex is the RootProof as hex string.
+  string root_proof_hex = 3;
 }
-message MsgSignUploadResponse {}
+message MsgCommitRootProofResponse {}
+
+message MsgDistributeBatch {
+  option (cosmos.msg.v1.signer) = "executor";
+  string executor = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string session_id = 2;
+
+  repeated DistributeItem items = 3 [(gogoproto.nullable) = false];
+}
+message MsgDistributeBatchResponse {}
+
+message MsgFinalizeAndCloseSession {
+  option (cosmos.msg.v1.signer) = "executor";
+  string executor = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string session_id = 2;
+
+  // manifest is sent to MDSC. Session is closed as SUCCESS only after MDSC ACK is received.
+  ManifestPacket manifest = 3 [(gogoproto.nullable) = false];
+}
+message MsgFinalizeAndCloseSessionResponse {}
+
+message MsgAbortAndCloseSession {
+  option (cosmos.msg.v1.signer) = "executor";
+  string executor = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string session_id = 2;
+
+  string reason = 3;
+}
+message MsgAbortAndCloseSessionResponse {}

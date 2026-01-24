@@ -28,31 +28,26 @@ type Keeper struct {
 	DatastoreChannels collections.KeySet[string]
 	StorageInfos      collections.Map[string, types.StorageInfo]
 
-	// --- アップロードセッション管理 (フェーズ 1: インタラクティブ) ---
-	// Key: upload_id
-	// Value: 状態 (例: "UPLOADING", "PENDING_SIGN")
-	UploadSessionState collections.Map[string, string]
+	// --- CSU Session management (upload_id 完全削除 / 後方互換なし) ---
 
-	// Key: upload_id
-	// Value: 蓄積されたバイナリデータ (Zip)
-	UploadSessionBuffer collections.Map[string, []byte]
+	// Sessions: Key=session_id, Value=types.Session
+	Sessions collections.Map[string, types.Session]
 
-	// Key: upload_id
-	// Value: 結果文字列 ("ID|ROOT|B64Manifest")
-	UploadSessionResult collections.Map[string, string]
+	// SessionFragmentSeen: Key=frag_key (session_id\x00path\x00%020d(index))
+	SessionFragmentSeen collections.KeySet[string]
 
-	// --- アップロードセッション管理 (フェーズ 2: IBC Waiter) ---
-	UploadSessionPending     collections.Map[string, string]
-	UploadSessionManifest    collections.Map[string, string]
-	UploadSessionMDSCChannel collections.Map[string, string]
-	FragmentToSession        collections.Map[string, string]
+	// FragmentSeqToFragmentKey: Key=seq_key (%020d), Value=frag_key
+	FragmentSeqToFragmentKey collections.Map[string, string]
+
+	// ManifestSeqToSessionID: Key=seq_key (%020d), Value=session_id
+	ManifestSeqToSessionID collections.Map[string, string]
+
+	// SessionUploadTokenHash: Key=session_id, Value=sha256(token) etc.
+	SessionUploadTokenHash collections.Map[string, []byte]
 
 	ibcKeeperFn   func() *ibckeeper.Keeper
 	bankKeeper    types.BankKeeper
-	accountKeeper types.AccountKeeper // CSUプロトコルでの署名検証に必要
-
-	// 設定
-	ChunkSize int
+	accountKeeper types.AccountKeeper // 既存：後続Issueで整理（現Issueでは保持）
 }
 
 func NewKeeper(
@@ -62,7 +57,7 @@ func NewKeeper(
 	authority []byte,
 	ibcKeeperFn func() *ibckeeper.Keeper,
 	bankKeeper types.BankKeeper,
-	accountKeeper types.AccountKeeper, // 追加
+	accountKeeper types.AccountKeeper,
 ) Keeper {
 	if _, err := addressCodec.BytesToString(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address %s: %s", authority, err))
@@ -77,23 +72,54 @@ func NewKeeper(
 		authority:    authority,
 
 		bankKeeper:    bankKeeper,
-		accountKeeper: accountKeeper, // 初期化
+		accountKeeper: accountKeeper,
 		ibcKeeperFn:   ibcKeeperFn,
-		Port:          collections.NewItem(sb, types.PortKey, "port", collections.StringValue),
-		Params:        collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
+
+		Port:   collections.NewItem(sb, types.PortKey, "port", collections.StringValue),
+		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 
 		MetastoreChannel:  collections.NewItem(sb, types.MetastoreChannelKey, "metastore_channel", collections.StringValue),
 		DatastoreChannels: collections.NewKeySet(sb, types.DatastoreChannelKey, "datastore_channels", collections.StringKey),
 		StorageInfos:      collections.NewMap(sb, types.StorageEndpointKey, "storage_infos", collections.StringKey, codec.CollValue[types.StorageInfo](cdc)),
 
-		UploadSessionState:  collections.NewMap(sb, types.UploadSessionStateKey, "upload_session_state", collections.StringKey, collections.StringValue),
-		UploadSessionBuffer: collections.NewMap(sb, types.UploadSessionBufferKey, "upload_session_buffer", collections.StringKey, collections.BytesValue),
-		UploadSessionResult: collections.NewMap(sb, types.UploadSessionResultKey, "upload_session_result", collections.StringKey, collections.StringValue),
+		Sessions: collections.NewMap(
+			sb,
+			types.SessionKey,
+			"sessions",
+			collections.StringKey,
+			codec.CollValue[types.Session](cdc),
+		),
 
-		UploadSessionPending:     collections.NewMap(sb, types.UploadSessionPendingKey, "upload_session_pending", collections.StringKey, collections.StringValue),
-		UploadSessionManifest:    collections.NewMap(sb, types.UploadSessionManifestKey, "upload_session_manifest", collections.StringKey, collections.StringValue),
-		UploadSessionMDSCChannel: collections.NewMap(sb, types.UploadSessionMDSCChannelKey, "upload_session_mdsc_channel", collections.StringKey, collections.StringValue),
-		FragmentToSession:        collections.NewMap(sb, types.FragmentToSessionKey, "fragment_to_session", collections.StringKey, collections.StringValue),
+		SessionFragmentSeen: collections.NewKeySet(
+			sb,
+			types.SessionFragmentSeenKey,
+			"session_fragment_seen",
+			collections.StringKey,
+		),
+
+		FragmentSeqToFragmentKey: collections.NewMap(
+			sb,
+			types.FragmentSeqToFragmentKey,
+			"fragment_seq_to_fragment_key",
+			collections.StringKey,
+			collections.StringValue,
+		),
+
+		ManifestSeqToSessionID: collections.NewMap(
+			sb,
+			types.ManifestSeqToSessionKey,
+			"manifest_seq_to_session_id",
+			collections.StringKey,
+			collections.StringValue,
+		),
+
+		SessionUploadTokenHash: collections.NewMap(
+			sb,
+			types.SessionUploadTokenHashKey,
+			"session_upload_token_hash",
+			collections.StringKey,
+			collections.BytesValue,
+		),
 	}
 
 	schema, err := sb.Build()
