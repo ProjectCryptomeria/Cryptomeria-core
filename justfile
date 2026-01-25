@@ -29,7 +29,6 @@ deploy chains=DEFAULT_CHAINS:
 		--set fdsc.replicas={{chains}} --timeout 10m
 	echo "✅ Infrastructure deployed. Run 'just start-system' next."
 
-# [Template] 生成されるYAMLを確認する (Dry Run)
 template chains=DEFAULT_CHAINS:
 	@echo "--> 📄 Rendering Helm template with {{chains}} FDSC node(s)..."
 	@helm dependency update "./ops/infra/k8s/helm/{{PROJECT_NAME}}" > /dev/null 2>&1
@@ -38,8 +37,11 @@ template chains=DEFAULT_CHAINS:
 		--set fdsc.replicas={{chains}}
 
 # [Start] デプロイ済みの環境を初期化し、リレイヤー起動と全接続を行う。
+# 修正: init-relayer.sh がチェーンを見逃さないよう、全PodのReadyを待機する手順を追加
 start-system:
 	@echo "🚀 Starting System (Init -> Start -> Connect All)..."
+	@echo "0. Waiting for all pods to be ready..."
+	@kubectl -n {{PROJECT_NAME}} wait --for=condition=ready pod --all --timeout=300s
 	@echo "1. Initializing Relayer config..."
 	@./ops/scripts/control/init-relayer.sh
 	@echo "2. Connecting all chains..."
@@ -48,7 +50,6 @@ start-system:
 	@./ops/scripts/control/start-relayer.sh
 	@echo "✅ System started successfully!"
 
-# [Connect New] 新規追加されたチェーンなどを個別に接続する
 connect chain:
 	@./ops/scripts/control/connect-chain.sh {{chain}}
 
@@ -65,13 +66,11 @@ all-in-one chains=DEFAULT_CHAINS:
     @echo "⏳ Waiting for Pod objects to be created..."
     @echo "✅ All-in-one process complete! System was deployed."
 
-# [復活: Deploy Clean] データだけ消して再デプロイ（高速リセット）
 deploy-clean chains=DEFAULT_CHAINS:
 	@just clean
 	@just deploy {{chains}}
 	@echo "✅ Redeployment complete (Namespace preserved)!"
 
-# [Undeploy] HelmリリースとPVCを削除
 undeploy:
 	@echo "--> 🛑 Uninstalling Helm release..."
 	@-helm uninstall {{PROJECT_NAME}} --namespace {{PROJECT_NAME}} --wait

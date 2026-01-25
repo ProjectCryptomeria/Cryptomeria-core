@@ -16,7 +16,7 @@ source "${ROOT_DIR}/ops/scripts/lib/common.sh"
 
 # 基本設定
 NAMESPACE="${NAMESPACE:-cryptomeria}"
-BINARY="${BINARY:-gwcd}"
+BINARY="${BINARY:-${ROOT_DIR}/apps/gwc/dist/gwcd}"
 NODE_URL="${NODE_URL:-tcp://localhost:26657}"
 API_URL="${API_URL:-http://localhost:1317}"
 CHAIN_ID="${CHAIN_ID:-gwc}"

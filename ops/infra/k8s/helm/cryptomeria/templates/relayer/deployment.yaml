@@ -23,8 +23,9 @@ spec:
           image: "{{ .Values.relayer.image.repository }}:{{ .Values.relayer.image.tag }}"
           imagePullPolicy: {{ .Values.relayer.image.pullPolicy }}
           # 無限ループで待機 (外部スクリプトからの制御待ち)
+          # 修正: SIGTERM即時終了のために trap と wait を使用
           command: ["/bin/sh", "-c"]
-          args: ["while true; do sleep 30; done;"]
+          args: ["trap 'exit 0' TERM; while :; do sleep 3600 & wait $!; done"]
           volumeMounts:
             - name: data
               mountPath: /home/relayer/.relayer
