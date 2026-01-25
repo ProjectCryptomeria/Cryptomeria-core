@@ -119,3 +119,6 @@ shell target:
 exec target *command:
 	@kubectl exec -it -n {{PROJECT_NAME}} deploy/{{PROJECT_NAME}}-{{target}} -- {{command}} 2>/dev/null || \
 	kubectl exec -it -n {{PROJECT_NAME}} statefulset/{{PROJECT_NAME}}-{{target}} -- {{command}}
+
+port-forward:
+	@./ops/scripts/control/port-forward.sh
