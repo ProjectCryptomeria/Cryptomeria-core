@@ -21,71 +21,74 @@ func (k msgServer) FinalizeAndCloseSession(goCtx context.Context, msg *types.Msg
 		return nil, errorsmod.Wrap(types.ErrSessionNotFound, err.Error())
 	}
 
-	// executor must match session.executor
+	// Executor mismatch check
 	if sess.Executor != msg.Executor {
 		return nil, errorsmod.Wrapf(types.ErrExecutorMismatch, "executor mismatch: session.executor=%s msg.executor=%s", sess.Executor, msg.Executor)
 	}
 
-	// Issue8: require session-bound authz grant for Finalize
+	// Authz check (Executor must have permission)
 	if err := k.Keeper.RequireSessionBoundAuthz(ctx, sess, msg.Executor, msg.SessionId, types.MsgTypeURLFinalizeAndCloseSession); err != nil {
 		return nil, err
 	}
 
-	// closed sessions reject
+	// Check state
 	if sess.State == types.SessionState_SESSION_STATE_CLOSED_SUCCESS || sess.State == types.SessionState_SESSION_STATE_CLOSED_FAILED {
 		return nil, errorsmod.Wrap(types.ErrSessionClosed, "session is closed")
 	}
 
-	// must have root proof committed
+	// Must have root proof committed and be in valid state
 	if sess.RootProofHex == "" || (sess.State != types.SessionState_SESSION_STATE_ROOT_COMMITTED && sess.State != types.SessionState_SESSION_STATE_DISTRIBUTING) {
 		return nil, errorsmod.Wrap(types.ErrRootProofNotCommitted, "root proof not committed or invalid state")
 	}
 
-	// validate manifest identity + root_proof match
+	// Validate manifest identity against session
 	manifest := msg.Manifest
 	if manifest.SessionId != msg.SessionId {
-		return nil, errorsmod.Wrapf(types.ErrInvalidManifest, "manifest.session_id mismatch: %s != %s", manifest.SessionId, msg.SessionId)
+		return nil, errorsmod.Wrapf(types.ErrInvalidManifest, "manifest.session_id mismatch")
 	}
 	if manifest.Owner != sess.Owner {
-		return nil, errorsmod.Wrapf(types.ErrInvalidManifest, "manifest.owner mismatch: %s != %s", manifest.Owner, sess.Owner)
+		return nil, errorsmod.Wrapf(types.ErrInvalidManifest, "manifest.owner mismatch")
 	}
 	if manifest.RootProof != sess.RootProofHex {
-		return nil, errorsmod.Wrapf(types.ErrInvalidManifest, "manifest.root_proof mismatch: %s != %s", manifest.RootProof, sess.RootProofHex)
+		return nil, errorsmod.Wrapf(types.ErrInvalidManifest, "manifest.root_proof mismatch")
 	}
 	if manifest.FragmentSize != sess.FragmentSize {
-		return nil, errorsmod.Wrapf(types.ErrInvalidManifest, "manifest.fragment_size mismatch: %d != %d", manifest.FragmentSize, sess.FragmentSize)
+		return nil, errorsmod.Wrapf(types.ErrInvalidManifest, "manifest.fragment_size mismatch")
 	}
 
-	// obtain MDSC channel
+	// Get MDSC channel
 	mdscChannel, err := k.Keeper.MetastoreChannel.Get(ctx)
 	if err != nil || mdscChannel == "" {
 		return nil, errorsmod.Wrap(types.ErrNoMetastoreChannel, "MDSC channel not found")
 	}
 
+	// Send IBC Packet
 	packetData := types.GatewayPacketData{
 		Packet: &types.GatewayPacketData_ManifestPacket{
 			ManifestPacket: &manifest,
 		},
 	}
-
 	timeoutTimestamp := uint64(ctx.BlockTime().UnixNano()) + uint64(manifestTimeoutSeconds*1_000_000_000)
 	seq, err := k.Keeper.TransmitGatewayPacketData(ctx, packetData, "gateway", mdscChannel, clienttypes.ZeroHeight(), timeoutTimestamp)
 	if err != nil {
 		return nil, err
 	}
 
-	// bind seq -> session_id for MDSC ACK correlation (Issue5)
+	// Bind sequence for ACK
 	if err := k.Keeper.BindManifestSeq(ctx, seq, msg.SessionId); err != nil {
 		return nil, err
 	}
 
-	// Issue6: Close処理同Tx統合（少なくとも state を Finalizing にし、以後の操作を拒否）
+	// State Update: Transition to FINALIZING
+	// The session is conceptually "closed" for further uploads, pending ACK.
 	sess.State = types.SessionState_SESSION_STATE_FINALIZING
 	if err := k.Keeper.SetSession(ctx, sess); err != nil {
 		return nil, err
 	}
 
-	// Issue6/7: revoke authz + feegrant on Close tx (best-effort revoke)
+	// CRITICAL: Revoke Authz and Feegrant grants IMMEDIATELY.
+	// This ensures "Authz lifetime matches Session lifetime".
+	// Even if ACK fails later, the Executor cannot retry without new grants (which Owner must explicitly give).
 	k.Keeper.RevokeCSUGrants(ctx, sess.Owner)
 
 	ctx.EventManager().EmitEvent(
@@ -93,7 +96,6 @@ func (k msgServer) FinalizeAndCloseSession(goCtx context.Context, msg *types.Msg
 			"csu_finalize_sent",
 			sdk.NewAttribute("session_id", msg.SessionId),
 			sdk.NewAttribute("executor", msg.Executor),
-			sdk.NewAttribute("mdsc_channel", mdscChannel),
 			sdk.NewAttribute("manifest_seq", fmt.Sprintf("%d", seq)),
 		),
 	)

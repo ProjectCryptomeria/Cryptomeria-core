@@ -22,16 +22,34 @@ import (
 type GatewayConfig struct {
 	MDSCEndpoint  string
 	FDSCEndpoints map[string]string
+	UploadDir     string // TUSアップロード用の一時ディレクトリ
 }
 
 // RegisterCustomHTTPRoutes はGateway ChainのカスタムHTTPルートを登録します
 func RegisterCustomHTTPRoutes(clientCtx client.Context, r *mux.Router, k Keeper, config GatewayConfig) {
-	// 修正: パス変数 {project}, {version}, {path:.*} を使用した動的ルーティング
+	// 1. レンダリング用 (ダウンロード) ルート
 	r.HandleFunc("/render/{project}/{version}/{path:.*}", func(w http.ResponseWriter, req *http.Request) {
 		handleRender(clientCtx, k, w, req, config)
 	}).Methods("GET")
+
+	// 2. TUS アップロードルート (/upload/tus-stream/)
+	// TUSプロトコルは /files/ などのベースパス以下の様々なメソッド(POST, HEAD, PATCH, OPTIONS)を使用するため
+	// PathPrefix でサブーティングする。
+	if config.UploadDir == "" {
+		config.UploadDir = "./tmp/uploads" // デフォルト値
+	}
+	
+	tusHandler, err := NewTusHandler(clientCtx, k, config.UploadDir, "/upload/tus-stream/")
+	if err != nil {
+		// 初期化失敗時はログに出してルート登録をスキップするか、panicさせる
+		fmt.Printf("Failed to initialize TUS handler: %v\n", err)
+	} else {
+		// StripPrefix でハンドラに渡すパスを調整する
+		r.PathPrefix("/upload/tus-stream/").Handler(http.StripPrefix("/upload/tus-stream", tusHandler))
+	}
 }
 
+// handleRender は指定されたプロジェクト・バージョンのファイルを解決・復元して返却します
 func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req *http.Request, config GatewayConfig) {
 	// 1. パス変数の解析
 	vars := mux.Vars(req)
