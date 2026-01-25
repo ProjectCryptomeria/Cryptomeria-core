@@ -12,8 +12,8 @@ generate_genesis() {
     local BINARY=$2
     local KEY_FILE=$3
     local HOME_DIR="/tmp/genesis_home/$CHAIN_ID"
-    
-    if ! command -v $BINARY >/dev/null 2>&1; then
+
+    if ! command -v $BINARY ; then
         echo "⚠️  Skipping generation for $CHAIN_ID: Binary '$BINARY' not found in this container."
         return 0
     fi
@@ -29,10 +29,10 @@ generate_genesis() {
     mkdir -p $HOME_DIR
 
     # 1. Init
-    $BINARY init $CHAIN_ID --chain-id $CHAIN_ID --home $HOME_DIR >/dev/null 2>&1
+    $BINARY init $CHAIN_ID --chain-id $CHAIN_ID --home $HOME_DIR
 
     # 2. Add Key (Local Admin)
-    $BINARY keys add local-admin --recover --keyring-backend=test --home $HOME_DIR < $KEY_FILE >/dev/null 2>&1
+    $BINARY keys add local-admin --recover --keyring-backend=test --home $HOME_DIR < $KEY_FILE
     local ADDR=$($BINARY keys show local-admin -a --keyring-backend=test --home $HOME_DIR)
 
     # 3. Add Genesis Account (Local Admin)
@@ -45,7 +45,7 @@ generate_genesis() {
     if [ -f "$RELAYER_KEY_FILE" ]; then
         echo "   -> Adding Relayer account from $RELAYER_KEY_FILE"
         # Relayerキーのインポート
-        $BINARY keys add relayer --recover --keyring-backend=test --home $HOME_DIR < $RELAYER_KEY_FILE >/dev/null 2>&1
+        $BINARY keys add relayer --recover --keyring-backend=test --home $HOME_DIR < $RELAYER_KEY_FILE
         local RELAYER_ADDR=$($BINARY keys show relayer -a --keyring-backend=test --home $HOME_DIR)
         
         # 資金追加 (10億 uatom)
@@ -56,10 +56,10 @@ generate_genesis() {
     # ▲▲▲ 修正ここまで ▲▲▲
 
     # 4. Gentx
-    $BINARY genesis gentx local-admin 10000000uatom --keyring-backend=test --chain-id $CHAIN_ID --home $HOME_DIR >/dev/null 2>&1
+    $BINARY genesis gentx local-admin 10000000uatom --keyring-backend=test --chain-id $CHAIN_ID --home $HOME_DIR
 
     # 5. Collect Gentxs
-    $BINARY genesis collect-gentxs --home $HOME_DIR >/dev/null 2>&1
+    $BINARY genesis collect-gentxs --home $HOME_DIR
 
     # 6. Export
     cp $HOME_DIR/config/genesis.json $OUTPUT_DIR/$CHAIN_ID.json

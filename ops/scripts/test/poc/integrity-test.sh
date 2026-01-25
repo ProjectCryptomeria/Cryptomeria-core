@@ -70,6 +70,25 @@ fail() {
   exit 1
 }
 
+# キー名からアドレスを取得するヘルパー関数
+get_addr() {
+  local key_name="$1"
+  local addr=""
+
+  # 1. まずローカルのバイナリで取得を試みる
+  addr=$("${BINARY}" keys show "${key_name}" -a --keyring-backend test 2>/dev/null || true)
+
+  # 2. ローカルになければ、GWCのPod内から取得を試みる
+  if [[ -z "$addr" ]]; then
+    # common.sh の関数を使ってPod名を特定
+    local pod_name=$(get_chain_pod_name "gwc")
+    
+    # Pod内でコマンド実行 (ホームディレクトリは /home/gwc/.gwc と仮定)
+    addr=$(kubectl exec -n "${NAMESPACE}" "${pod_name}" -- gwcd keys show "${key_name}" -a --keyring-backend test --home /home/gwc/.gwc 2>/dev/null | tr -d '\r' || true)
+  fi
+
+  echo "$addr"
+}
 # トランザクションを実行し、コミットされるまで待機する関数
 # (common.sh の exec_tx_and_wait は `q tx` に --node を含まない場合があるため、ここで再定義)
 execute_tx_and_wait() {
@@ -78,7 +97,7 @@ execute_tx_and_wait() {
 
   local tx_response
   # コマンド実行 (失敗してもスクリプトを止めずにキャプチャする)
-  tx_response=$(eval "$cmd" 2>/dev/null || true)
+  tx_response=$(eval "$cmd"|| true)
   
   local txhash
   txhash=$(echo "${tx_response}" | jq -r '.txhash // empty')
@@ -147,17 +166,18 @@ discover_storage_channels() {
   log "GWCからストレージチャンネル (fdsc/mdsc) を検索しています"
 
   local storage_json
-  storage_json="$(${BINARY} q gateway storage-endpoints --node "${NODE_URL}" -o json 2>/dev/null || true)"
+  storage_json="$(${BINARY} q gateway endpoints --node "${NODE_URL}" -o json 2>/dev/null || true)"
 
   if [[ -z "${storage_json}" || "${storage_json}" == "null" ]]; then
-    log "警告: ローカルノードから storage-endpoints を取得できませんでした。チェーンのデフォルト値に依存して続行します。"
+    log "警告: ローカルノードから endpoints を取得できませんでした。チェーンのデフォルト値に依存して続行します。"
     storage_json='{"storage_infos":[]}'
   fi
+  echo "${storage_json}" | jq .
 
   # FDSCチャンネルIDのリストを取得
-  FDSC_CHANNELS=$(echo "${storage_json}" | jq -r '.storage_infos[]? | select(.connection_type=="fdsc") | .channel_id' | sort -u | tr '\n' ' ' | sed 's/ *$//')
+  FDSC_CHANNELS=$(echo "${storage_json}" | jq -r '.storage_infos[]? | select(.connection_type=="datastore") | .channel_id' | sort -u | tr '\n' ' ' | sed 's/ *$//')
   # MDSCチャンネルIDを取得
-  MDSC_CHANNEL=$(echo "${storage_json}" | jq -r '.storage_infos[]? | select(.connection_type=="mdsc") | .channel_id' | head -n1)
+  MDSC_CHANNEL=$(echo "${storage_json}" | jq -r '.storage_infos[]? | select(.connection_type=="metastore") | .channel_id' | head -n1)
 
   if [[ -z "${FDSC_CHANNELS}" ]]; then
     log "警告: storage_endpoints に FDSC チャンネルが見つかりません。DistributeBatch が失敗する可能性があります。"
@@ -170,17 +190,19 @@ discover_storage_channels() {
 # Step 3: セッションの初期化 (InitSession)
 init_session() {
   log "セッション初期化を実行します (owner=${OWNER_KEY}, executor=${EXECUTOR_KEY}, fragment_size=${FRAGMENT_SIZE})"
-
+# ▼▼▼ 追加: 変数 deadline を定義 (現在時刻 + 1時間) ▼▼▼
+  local deadline=$(($(date +%s) + 3600))
   local init_res
   init_res=$(execute_tx_and_wait "${BINARY} tx gateway init-session \
-    --executor \"$(get_addr ${EXECUTOR_KEY})\" \
-    --fragment-size \"${FRAGMENT_SIZE}\" \
-    --from \"${OWNER_KEY}\" \
-    --keyring-backend test \
-    --chain-id \"${CHAIN_ID}\" \
-    --node \"${NODE_URL}\" \
-    --broadcast-mode sync \
-    -y -o json")
+      \"$(get_addr ${EXECUTOR_KEY})\" \
+      \"${FRAGMENT_SIZE}\" \
+      \"${deadline}\" \
+      --from \"${OWNER_KEY}\" \
+      --keyring-backend test \
+      --chain-id \"${CHAIN_ID}\" \
+      --node \"${NODE_URL}\" \
+      --broadcast-mode sync \
+      -y -o json")
 
   # イベントログから session_id を抽出
   SESSION_ID=$(echo "${init_res}" | jq -r '.events[]? | select(.type=="csu_init_session") | .attributes[]? | select(.key=="session_id") | .value' | head -n1)

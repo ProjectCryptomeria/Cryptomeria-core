@@ -8,6 +8,7 @@ import (
 
 	"cosmossdk.io/collections"
 	errorsmod "cosmossdk.io/errors"
+	"cosmossdk.io/x/feegrant"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
@@ -75,11 +76,8 @@ func (k Keeper) RequireSessionBoundAuthz(ctx sdk.Context, sess types.Session, ms
 		return errorsmod.Wrap(types.ErrAuthzMissingOrInvalid, "authz keeper is not configured")
 	}
 
-	auth, _, err := k.authzKeeper.GetAuthorization(ctx, ownerAddr, adminAddr, msgTypeURL)
-	if err != nil {
-		// treat any read error as invalid
-		return errorsmod.Wrapf(types.ErrAuthzMissingOrInvalid, "get authorization failed: %v", err)
-	}
+	// NOTE: GetAuthorization no longer returns an error in SDK v0.47+
+	auth, _ := k.authzKeeper.GetAuthorization(ctx, ownerAddr, adminAddr, msgTypeURL)
 	if auth == nil {
 		return errorsmod.Wrapf(types.ErrAuthzMissingOrInvalid, "authorization not found: msg_type_url=%s", msgTypeURL)
 	}
@@ -121,7 +119,7 @@ func (k Keeper) RevokeCSUGrants(ctx sdk.Context, ownerBech32 string) {
 	// authz revoke (Issue6)
 	if k.authzKeeper != nil {
 		for _, msgTypeURL := range types.CSUAuthorizedMsgTypeURLs() {
-			if err := k.authzKeeper.Revoke(ctx, ownerAddr, adminAddr, msgTypeURL); err != nil {
+			if err := k.authzKeeper.DeleteGrant(ctx, ownerAddr, adminAddr, msgTypeURL); err != nil {
 				ctx.Logger().Info("RevokeCSUGrants: authz revoke failed (ignored)", "msg_type_url", msgTypeURL, "err", err)
 			}
 		}
@@ -130,8 +128,13 @@ func (k Keeper) RevokeCSUGrants(ctx sdk.Context, ownerBech32 string) {
 	}
 
 	// feegrant revoke (Issue7)
+	// We use the injected MsgServer wrapper to perform the revocation
 	if k.feegrantKeeper != nil {
-		if err := k.feegrantKeeper.RevokeAllowance(ctx, ownerAddr, adminAddr); err != nil {
+		msg := &feegrant.MsgRevokeAllowance{
+			Granter: ownerBech32,
+			Grantee: localAdmin,
+		}
+		if _, err := k.feegrantKeeper.RevokeAllowance(ctx, msg); err != nil {
 			ctx.Logger().Info("RevokeCSUGrants: feegrant revoke failed (ignored)", "err", err)
 		}
 	} else {
