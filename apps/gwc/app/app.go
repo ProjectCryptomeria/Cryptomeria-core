@@ -51,15 +51,15 @@ import (
 )
 
 const (
-	// Name is the name of the application.
+	// Name はアプリケーションの名前です。
 	Name = "gwc"
-	// AccountAddressPrefix is the prefix for accounts addresses.
+	// AccountAddressPrefix はアカウントアドレスのプレフィックスです。
 	AccountAddressPrefix = "cosmos"
-	// ChainCoinType is the coin type of the chain.
+	// ChainCoinType はチェーンのコインタイプです。
 	ChainCoinType = 118
 )
 
-// DefaultNodeHome default home directories for the application daemon
+// DefaultNodeHome はアプリケーションデーモンのデフォルトホームディレクトリです。
 var DefaultNodeHome string
 
 var (
@@ -67,9 +67,8 @@ var (
 	_ servertypes.Application = (*App)(nil)
 )
 
-// App extends an ABCI application, but with most of its parameters exported.
-// They are exported for convenience in creating helper functions, as object
-// capabilities aren't needed for testing.
+// App は ABCI アプリケーションを拡張したものですが、ほとんどのパラメータがエクスポートされています。
+// これらはヘルパー関数の作成を容易にするためにエクスポートされており、テスト目的でオブジェクト機能が必要なわけではありません。
 type App struct {
 	*runtime.App
 	legacyAmino       *codec.LegacyAmino
@@ -78,9 +77,9 @@ type App struct {
 	interfaceRegistry codectypes.InterfaceRegistry
 	appOpts           servertypes.AppOptions
 
-	// keepers
-	// only keepers required by the app are exposed
-	// the list of all modules is available in the app_config
+	// キーパー (Keepers)
+	// アプリで必要なキーパーのみを公開しています。
+	// すべてのモジュールのリストは app_config で利用可能です。
 	AuthKeeper            authkeeper.AccountKeeper
 	BankKeeper            bankkeeper.Keeper
 	StakingKeeper         *stakingkeeper.Keeper
@@ -94,13 +93,13 @@ type App struct {
 	CircuitBreakerKeeper  circuitkeeper.Keeper
 	ParamsKeeper          paramskeeper.Keeper
 
-	// ibc keepers
+	// IBC キーパー
 	IBCKeeper           *ibckeeper.Keeper
 	ICAControllerKeeper icacontrollerkeeper.Keeper
 	ICAHostKeeper       icahostkeeper.Keeper
 	TransferKeeper      ibctransferkeeper.Keeper
 
-	// simulation manager
+	// シミュレーションマネージャー
 	sm            *module.SimulationManager
 	GatewayKeeper gatewaykeeper.Keeper
 }
@@ -114,12 +113,12 @@ func init() {
 	}
 }
 
-// AppConfig returns the default app config.
+// AppConfig はデフォルトのアプリ設定を返します。
 func AppConfig() depinject.Config {
 	return depinject.Configs(
 		appConfig,
 		depinject.Supply(
-			// supply custom module basics
+			// カスタムモジュール設定を提供
 			map[string]module.AppModuleBasic{
 				genutiltypes.ModuleName: genutil.NewAppModuleBasic(genutiltypes.DefaultMessageValidator),
 			},
@@ -127,7 +126,7 @@ func AppConfig() depinject.Config {
 	)
 }
 
-// New returns a reference to an initialized App.
+// New は初期化された App への参照を返します。
 func New(
 	logger log.Logger,
 	db dbm.DB,
@@ -140,24 +139,24 @@ func New(
 		app        = &App{}
 		appBuilder *runtime.AppBuilder
 
-		// merge the AppConfig and other configuration in one config
+		// AppConfig とその他の設定を1つの設定にマージします
 		appConfig = depinject.Configs(
 			AppConfig(),
 			depinject.Supply(
-				appOpts, // supply app options
-				logger,  // supply logger
+				appOpts, // アプリオプションの提供
+				logger,  // ロガーの提供
 
-				// Supply with IBC keeper getter for the IBC modules with App Wiring.
-				// The IBC Keeper cannot be passed because it has not been initiated yet.
-				// Passing the getter, the app IBC Keeper will always be accessible.
-				// This needs to be removed after IBC supports App Wiring.
+				// App Wiring を使用する IBC モジュール用の IBC Keeper ゲッターを提供します。
+				// IBC Keeper はまだ初期化されていないため、直接渡すことはできません。
+				// ゲッターを渡すことで、アプリの IBC Keeper に常にアクセスできるようになります。
+				// IBC が App Wiring をサポートした後は、これを削除する必要があります。
 				app.GetIBCKeeper,
 
-				// here alternative options can be supplied to the DI container.
-				// those options can be used f.e to override the default behavior of some modules.
-				// for instance supplying a custom address codec for not using bech32 addresses.
-				// read the depinject documentation and depinject module wiring for more information
-				// on available options and how to use them.
+				// ここで、DI コンテナに代替オプションを提供できます。
+				// これらのオプションを使用して、一部のモジュールのデフォルト動作をオーバーライドできます。
+				// 例えば、bech32 アドレスを使用しないカスタムアドレスコーデックを提供するなどです。
+				// 使用可能なオプションとその使用方法については、depinject のドキュメントと
+				// depinject モジュールのワイヤリングを参照してください。
 			),
 		)
 	)
@@ -188,22 +187,22 @@ func New(
 		panic(err)
 	}
 
-	// add to default baseapp options
-	// enable optimistic execution
+	// デフォルトの baseapp オプションに追加
+	// 楽観的実行 (Optimistic Execution) を有効化
 	baseAppOptions = append(baseAppOptions, baseapp.SetOptimisticExecution())
 
-	// build app
+	// アプリのビルド
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
 	app.appOpts = appOpts
 
-	// register legacy modules
+	// レガシーモジュールの登録
 	if err := app.registerIBCModules(appOpts); err != nil {
 		panic(err)
 	}
 
-	/****  Module Options ****/
+	/**** モジュールオプション ****/
 
-	// create the simulation manager and define the order of the modules for deterministic simulations
+	// シミュレーションマネージャーを作成し、決定論的シミュレーションのためのモジュールの順序を定義します
 	overrideModules := map[string]module.AppModuleSimulation{
 		authtypes.ModuleName: auth.NewAppModule(app.appCodec, app.AuthKeeper, authsims.RandomGenesisAccounts, nil),
 	}
@@ -211,10 +210,10 @@ func New(
 
 	app.sm.RegisterStoreDecoders()
 
-	// A custom InitChainer sets if extra pre-init-genesis logic is required.
-	// This is necessary for manually registered modules that do not support app wiring.
-	// Manually set the module version map as shown below.
-	// The upgrade module will automatically handle de-duplication of the module version map.
+	// カスタム InitChainer は、追加の genesis 前初期化ロジックが必要な場合に設定します。
+	// これは、App Wiring をサポートしていない手動登録モジュールに必要です。
+	// 以下に示すように、モジュールバージョンマップを手動で設定します。
+	// アップグレードモジュールは、モジュールバージョンマップの重複排除を自動的に処理します。
 	app.SetInitChainer(func(ctx sdk.Context, req *abci.RequestInitChain) (*abci.ResponseInitChain, error) {
 		if err := app.UpgradeKeeper.SetModuleVersionMap(ctx, app.ModuleManager.GetVersionMap()); err != nil {
 			return nil, err
@@ -229,33 +228,33 @@ func New(
 	return app
 }
 
-// GetSubspace returns a param subspace for a given module name.
+// GetSubspace は指定されたモジュール名のパラメータサブスペースを返します。
 func (app *App) GetSubspace(moduleName string) paramstypes.Subspace {
 	subspace, _ := app.ParamsKeeper.GetSubspace(moduleName)
 	return subspace
 }
 
-// LegacyAmino returns App's amino codec.
+// LegacyAmino はアプリの Amino コーデックを返します。
 func (app *App) LegacyAmino() *codec.LegacyAmino {
 	return app.legacyAmino
 }
 
-// AppCodec returns App's app codec.
+// AppCodec はアプリのアプリコーデックを返します。
 func (app *App) AppCodec() codec.Codec {
 	return app.appCodec
 }
 
-// InterfaceRegistry returns App's InterfaceRegistry.
+// InterfaceRegistry はアプリの InterfaceRegistry を返します。
 func (app *App) InterfaceRegistry() codectypes.InterfaceRegistry {
 	return app.interfaceRegistry
 }
 
-// TxConfig returns App's TxConfig
+// TxConfig はアプリの TxConfig を返します。
 func (app *App) TxConfig() client.TxConfig {
 	return app.txConfig
 }
 
-// GetKey returns the KVStoreKey for the provided store key.
+// GetKey は指定されたストアキーに対応する KVStoreKey を返します。
 func (app *App) GetKey(storeKey string) *storetypes.KVStoreKey {
 	kvStoreKey, ok := app.UnsafeFindStoreKey(storeKey).(*storetypes.KVStoreKey)
 	if !ok {
@@ -264,25 +263,19 @@ func (app *App) GetKey(storeKey string) *storetypes.KVStoreKey {
 	return kvStoreKey
 }
 
-// SimulationManager implements the SimulationApp interface
+// SimulationManager は SimulationApp インターフェースを実装します。
 func (app *App) SimulationManager() *module.SimulationManager {
 	return app.sm
 }
 
-// RegisterAPIRoutes registers all application module routes with the provided
-// API server.
+// RegisterAPIRoutes は、APIサーバーにすべてのアプリケーションモジュールのルートを登録します。
 func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig) {
-	app.App.RegisterAPIRoutes(apiSvr, apiConfig)
-	// register swagger API in app.go so that other applications can override easily
-	if err := server.RegisterSwaggerAPI(apiSvr.ClientCtx, apiSvr.Router, apiConfig.Swagger); err != nil {
-		panic(err)
-	}
+	// 【重要】カスタムHTTPルートの登録を最初に行います。
+	// ベース実装(app.App.RegisterAPIRoutes)は、gRPC-Gatewayのキャッチオールハンドラ("/")を
+	// 登録するため、それよりも前に登録しないとリクエストが到達しません。
+	// gorilla/muxは登録された順序でマッチングを行います。
 
-	// register app's OpenAPI routes.
-	docs.RegisterOpenAPIService(Name, apiSvr.Router)
-
-	// Register Custom HTTP Routes for Stage 4 (On-chain Web)
-	// Read configuration from AppOptions
+	// 1. AppOptionsからGateway設定を読み込み
 	mdscEndpoint, _ := app.appOpts.Get("gwc.mdsc_endpoint").(string)
 	fdscEndpointsRaw, _ := app.appOpts.Get("gwc.fdsc_endpoints").(map[string]interface{})
 
@@ -298,12 +291,26 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 		FDSCEndpoints: fdscEndpoints,
 	}
 
+	// 2. カスタムHTTPハンドラ（TUSアップロード/レンダリング）の登録
 	gatewayserver.RegisterCustomHTTPRoutes(apiSvr.ClientCtx, apiSvr.Router, app.GatewayKeeper, gatewayConfig)
+
+	// 3. Swagger / OpenAPI の登録（これらも特定のプレフィックスを持つため、キャッチオールより前に登録推奨）
+	// 他のアプリケーションが容易にオーバーライドできるように、swagger API を app.go で登録します。
+	if err := server.RegisterSwaggerAPI(apiSvr.ClientCtx, apiSvr.Router, apiConfig.Swagger); err != nil {
+		panic(err)
+	}
+
+	// アプリの OpenAPI ルートを登録します。
+	docs.RegisterOpenAPIService(Name, apiSvr.Router)
+
+	// 4. 標準APIルート（gRPC Gateway）の登録
+	// ここで "/" へのキャッチオールハンドラが登録されます。
+	app.App.RegisterAPIRoutes(apiSvr, apiConfig)
 }
 
-// GetMaccPerms returns a copy of the module account permissions
+// GetMaccPerms はモジュールアカウントの権限のコピーを返します。
 //
-// NOTE: This is solely to be used for testing purposes.
+// 注意: これはテスト目的でのみ使用されます。
 func GetMaccPerms() map[string][]string {
 	dup := make(map[string][]string)
 	for _, perms := range moduleAccPerms {
@@ -313,7 +320,7 @@ func GetMaccPerms() map[string][]string {
 	return dup
 }
 
-// BlockedAddresses returns all the app's blocked account addresses.
+// BlockedAddresses はアプリのブロックされたアカウントアドレスをすべて返します。
 func BlockedAddresses() map[string]bool {
 	result := make(map[string]bool)
 

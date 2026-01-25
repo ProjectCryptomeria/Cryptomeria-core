@@ -99,10 +99,30 @@ register_storage_on_gwc() {
     log_info "Found Channel ID: $channel_id. Registering..."
     local target_endpoint="http://${RELEASE_NAME}-${TARGET_CHAIN}-0.${HEADLESS_SERVICE}:1317"
 
-    # 修正箇所: 4番目の引数として $DST_PORT_PREFIX (connection-type) を追加
-    pod_exec "$gwc_pod" gwcd tx gateway register-storage \
+    # 修正: エラー無視( || true )を削除し、ブロックコミット待機と結果検証を追加
+    local output
+    output=$(pod_exec "$gwc_pod" gwcd tx gateway register-storage \
         "$channel_id" "$TARGET_CHAIN" "$target_endpoint" "$DST_PORT_PREFIX" \
-        --from "local-admin" --chain-id "$GWC_CHAIN" -y --keyring-backend test --home /home/gwc/.gwc || true
+        --from "local-admin" --chain-id "$GWC_CHAIN" \
+        --gas auto --gas-adjustment 1.5 --gas-prices 0.1stake \
+        --broadcast-mode block \
+        -y --keyring-backend test --home /home/gwc/.gwc 2>&1)
+    
+    local status=$?
+    
+    # デバッグ用にログ出力
+    echo "$output"
+
+    if [ $status -ne 0 ]; then
+        log_error "Failed to execute tx register-storage command."
+    fi
+
+    # Cosmos SDKの成功コード (code: 0) を確認
+    if echo "$output" | grep -q '"code": 0'; then
+        log_success "✅ Registered storage info for $channel_id ($TARGET_CHAIN)"
+    else
+        log_error "❌ Transaction failed on-chain. Check authority or gas issues."
+    fi
 }
 
 # =============================================================================

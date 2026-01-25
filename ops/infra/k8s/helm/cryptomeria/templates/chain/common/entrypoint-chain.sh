@@ -83,6 +83,13 @@ if [ -f "$MNEMONIC_FILE" ]; then
     # 既に存在する場合のエラーを回避するため、一度削除するか、|| true で無視する
     # ここでは既存チェックを省き、エラー無視で追記を試みる
     $CHAIN_BINARY keys add local-admin --recover --keyring-backend test --home $CHAIN_HOME < $MNEMONIC_FILE >/dev/null 2>&1 || true
+
+    # ▼▼▼ 修正: local-adminのアドレスを取得し、Authority用の環境変数をセット ▼▼▼
+    if [ "$CHAIN_BINARY" == "gwcd" ]; then
+        ADMIN_ADDR=$($CHAIN_BINARY keys show local-admin -a --keyring-backend test --home $CHAIN_HOME)
+        export GWC_GATEWAY_AUTHORITY="$ADMIN_ADDR"
+        echo "🔧 [Env Override] GWC_GATEWAY_AUTHORITY set to local-admin: $GWC_GATEWAY_AUTHORITY"
+    fi
 else
     log_step "No mnemonic found at $MNEMONIC_FILE. Skipping import."
 fi

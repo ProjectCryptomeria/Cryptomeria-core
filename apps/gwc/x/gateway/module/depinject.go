@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"os"
+
 	"cosmossdk.io/core/address"
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/core/store"
@@ -61,7 +63,13 @@ type ModuleOutputs struct {
 func ProvideModule(in ModuleInputs) ModuleOutputs {
 	// default to governance authority if not provided
 	authority := authtypes.NewModuleAddress(types.GovModuleName)
-	if in.Config.Authority != "" {
+
+	// Priority 1: Environment Variable (for Dev/Ops override)
+	// This allows local-admin to act as authority without code changes
+	if envAuth := os.Getenv("GWC_GATEWAY_AUTHORITY"); envAuth != "" {
+		authority = authtypes.NewModuleAddressOrBech32Address(envAuth)
+	} else if in.Config.Authority != "" {
+		// Priority 2: Config file
 		authority = authtypes.NewModuleAddressOrBech32Address(in.Config.Authority)
 	}
 
