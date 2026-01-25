@@ -46,10 +46,14 @@ func initRootCmd(
 		AddFlags: addModuleInitFlags,
 	})
 
+	// genesisコマンドを取得してカスタムコマンドを追加
+	genesisCmd := genutilcli.Commands(txConfig, basicManager, app.DefaultNodeHome)
+	genesisCmd.AddCommand(SetLocalAdminCmd(app.DefaultNodeHome))
+
 	// add keybase, auxiliary RPC, query, genesis, and tx child commands
 	rootCmd.AddCommand(
 		server.StatusCommand(),
-		genutilcli.Commands(txConfig, basicManager, app.DefaultNodeHome),
+		genesisCmd,
 		queryCommand(),
 		txCommand(),
 		keys.Commands(),

@@ -61,6 +61,13 @@ generate_genesis() {
     # 5. Collect Gentxs
     $BINARY genesis collect-gentxs --home $HOME_DIR
 
+    # ▼▼▼ 追加: GWCチェーンの場合のみ、gatewayモジュールのパラメータ(local_admin)を設定 ▼▼▼
+    if [ "$CHAIN_ID" = "gwc" ]; then
+        echo "🔧 Configuring gwc gateway.params.local_admin via custom command..."
+        $BINARY genesis set-local-admin "$ADDR" --home "$HOME_DIR"
+    fi
+    # ▲▲▲ 追加ここまで ▲▲▲
+
     # 6. Export
     cp $HOME_DIR/config/genesis.json $OUTPUT_DIR/$CHAIN_ID.json
     

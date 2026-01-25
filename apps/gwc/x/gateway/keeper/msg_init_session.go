@@ -31,15 +31,12 @@ func (k msgServer) InitSession(goCtx context.Context, msg *types.MsgInitSession)
 	}
 
 	// Enforce local-admin configured (Issue8)
+	// システムのパラメータとしてLocalAdminが設定されていない場合はエラー
 	if params.LocalAdmin == "" {
 		return nil, errorsmod.Wrap(types.ErrLocalAdminNotConfigured, "params.local_admin must be set for CSU")
 	}
 
-	// Enforce executor fixed to local-admin (Issue8)
-	// (Allow client to send executor field, but it must match local-admin.)
-	if msg.Executor != "" && msg.Executor != params.LocalAdmin {
-		return nil, errorsmod.Wrapf(types.ErrLocalAdminMismatch, "executor must be local-admin: got=%s want=%s", msg.Executor, params.LocalAdmin)
-	}
+	// Executorはパラメータで指定されたLocalAdminに固定する (ユーザー入力は不要)
 	executor := params.LocalAdmin
 
 	// Enforce fragment_size limit at session creation time (Issue11)

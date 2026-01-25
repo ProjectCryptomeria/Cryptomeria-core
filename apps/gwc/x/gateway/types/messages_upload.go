@@ -21,10 +21,8 @@ func (msg *MsgInitSession) ValidateBasic() error {
 	if err != nil {
 		return errors.Wrapf(sdkerrors.ErrInvalidAddress, "invalid owner address (%s)", err)
 	}
-	_, err = sdk.AccAddressFromBech32(msg.Executor)
-	if err != nil {
-		return errors.Wrapf(sdkerrors.ErrInvalidAddress, "invalid executor address (%s)", err)
-	}
+	// Executorフィールド削除に伴い検証削除
+
 	if msg.FragmentSize == 0 {
 		return errors.Wrap(sdkerrors.ErrInvalidRequest, "fragment_size must be > 0")
 	}

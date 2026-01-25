@@ -48,31 +48,33 @@ func GetTxCmd() *cobra.Command {
 	return cmd
 }
 
-// init-session [executor] [fragment-size] [deadline-unix(0=default)]
+// init-session [fragment-size] [deadline-unix(0=default)]
+// executor引数は不要のため削除
 func CmdInitSession() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "init-session [executor] [fragment-size] [deadline-unix]",
+		Use:   "init-session [fragment-size] [deadline-unix]",
 		Short: "Initialize a new CSU session (returns session_id and session_upload_token)",
-		Args:  cobra.ExactArgs(3),
+		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			clientCtx, err := client.GetClientTxContext(cmd)
 			if err != nil {
 				return err
 			}
 
-			executor := args[0]
-			fragSize, err := strconv.ParseUint(args[1], 10, 64)
+			// args[0] is fragment-size
+			fragSize, err := strconv.ParseUint(args[0], 10, 64)
 			if err != nil {
 				return err
 			}
-			deadlineUnix, err := strconv.ParseInt(args[2], 10, 64)
+			// args[1] is deadline-unix
+			deadlineUnix, err := strconv.ParseInt(args[1], 10, 64)
 			if err != nil {
 				return err
 			}
 
 			msg := types.MsgInitSession{
-				Owner:        clientCtx.GetFromAddress().String(),
-				Executor:     executor,
+				Owner: clientCtx.GetFromAddress().String(),
+				// Executor field is removed from MsgInitSession
 				FragmentSize: fragSize,
 				DeadlineUnix: deadlineUnix,
 			}

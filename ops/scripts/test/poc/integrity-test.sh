@@ -73,22 +73,10 @@ fail() {
 # キー名からアドレスを取得するヘルパー関数
 get_addr() {
   local key_name="$1"
-  local addr=""
-
-  # 1. まずローカルのバイナリで取得を試みる
-  addr=$("${BINARY}" keys show "${key_name}" -a --keyring-backend test 2>/dev/null || true)
-
-  # 2. ローカルになければ、GWCのPod内から取得を試みる
-  if [[ -z "$addr" ]]; then
-    # common.sh の関数を使ってPod名を特定
-    local pod_name=$(get_chain_pod_name "gwc")
-    
-    # Pod内でコマンド実行 (ホームディレクトリは /home/gwc/.gwc と仮定)
-    addr=$(kubectl exec -n "${NAMESPACE}" "${pod_name}" -- gwcd keys show "${key_name}" -a --keyring-backend test --home /home/gwc/.gwc 2>/dev/null | tr -d '\r' || true)
-  fi
-
-  echo "$addr"
+  # keyring-backend test を指定してアドレス(-a)を取得
+  "${BINARY}" keys show "${key_name}" -a --keyring-backend test
 }
+
 # トランザクションを実行し、コミットされるまで待機する関数
 # (common.sh の exec_tx_and_wait は `q tx` に --node を含まない場合があるため、ここで再定義)
 execute_tx_and_wait() {
@@ -194,7 +182,6 @@ init_session() {
   local deadline=$(($(date +%s) + 3600))
   local init_res
   init_res=$(execute_tx_and_wait "${BINARY} tx gateway init-session \
-      \"$(get_addr ${EXECUTOR_KEY})\" \
       \"${FRAGMENT_SIZE}\" \
       \"${deadline}\" \
       --from \"${OWNER_KEY}\" \
