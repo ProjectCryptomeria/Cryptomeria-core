@@ -2,89 +2,170 @@ package metastore
 
 import (
 	"math/rand"
+	"strconv"
 
-	"github.com/cosmos/cosmos-sdk/types/module"
+	"github.com/cosmos/cosmos-sdk/baseapp"
+	"github.com/cosmos/cosmos-sdk/client"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	simtypes "github.com/cosmos/cosmos-sdk/types/simulation"
 	"github.com/cosmos/cosmos-sdk/x/simulation"
 
-	"mdsc/testutil/sample"
-	metastoresimulation "mdsc/x/metastore/simulation"
+	"mdsc/x/metastore/keeper"
 	"mdsc/x/metastore/types"
 )
 
-// GenerateGenesisState creates a randomized GenState of the module.
-func (AppModule) GenerateGenesisState(simState *module.SimulationState) {
-	accs := make([]string, len(simState.Accounts))
-	for i, acc := range simState.Accounts {
-		accs[i] = acc.Address.String()
+func SimulateMsgCreateManifest(
+	ak types.AuthKeeper,
+	bk types.BankKeeper,
+	k keeper.Keeper,
+	txGen client.TxConfig,
+) simtypes.Operation {
+	return func(r *rand.Rand, app *baseapp.BaseApp, ctx sdk.Context, accs []simtypes.Account, chainID string,
+	) (simtypes.OperationMsg, []simtypes.FutureOperation, error) {
+		simAccount, _ := simtypes.RandomAcc(r, accs)
+
+		i := r.Int()
+		msg := &types.MsgCreateManifest{
+			Creator:     simAccount.Address.String(),
+			ProjectName: strconv.Itoa(i),
+		}
+
+		found, err := k.Manifest.Has(ctx, msg.ProjectName)
+		if err == nil && found {
+			return simtypes.NoOpMsg(types.ModuleName, sdk.MsgTypeURL(msg), "Manifest already exist"), nil, nil
+		}
+
+		txCtx := simulation.OperationInput{
+			R:               r,
+			App:             app,
+			TxGen:           txGen,
+			Cdc:             nil,
+			Msg:             msg,
+			Context:         ctx,
+			SimAccount:      simAccount,
+			ModuleName:      types.ModuleName,
+			CoinsSpentInMsg: sdk.NewCoins(),
+			AccountKeeper:   ak,
+			Bankkeeper:      bk,
+		}
+		return simulation.GenAndDeliverTxWithRandFees(txCtx)
 	}
-	metastoreGenesis := types.GenesisState{
-		Params: types.DefaultParams(),
-		PortId: types.PortID,
-		ManifestMap: []types.Manifest{{Creator: sample.AccAddress(),
-			ProjectName: "0",
-		}, {Creator: sample.AccAddress(),
-			ProjectName: "1",
-		}}}
-	simState.GenState[types.ModuleName] = simState.Cdc.MustMarshalJSON(&metastoreGenesis)
 }
 
-// RegisterStoreDecoder registers a decoder.
-func (am AppModule) RegisterStoreDecoder(_ simtypes.StoreDecoderRegistry) {}
+func SimulateMsgUpdateManifest(
+	ak types.AuthKeeper,
+	bk types.BankKeeper,
+	k keeper.Keeper,
+	txGen client.TxConfig,
+) simtypes.Operation {
+	return func(r *rand.Rand, app *baseapp.BaseApp, ctx sdk.Context, accs []simtypes.Account, chainID string,
+	) (simtypes.OperationMsg, []simtypes.FutureOperation, error) {
+		var (
+			simAccount = simtypes.Account{}
+			manifest   = types.Manifest{}
+			msg        = &types.MsgUpdateManifest{}
+			found      = false
+		)
 
-// WeightedOperations returns the all the gov module operations with their respective weights.
-func (am AppModule) WeightedOperations(simState module.SimulationState) []simtypes.WeightedOperation {
-	operations := make([]simtypes.WeightedOperation, 0)
-	const (
-		opWeightMsgCreateManifest          = "op_weight_msg_metastore"
-		defaultWeightMsgCreateManifest int = 100
-	)
+		var allManifest []types.Manifest
+		err := k.Manifest.Walk(ctx, nil, func(key string, value types.Manifest) (stop bool, err error) {
+			allManifest = append(allManifest, value)
+			return false, nil
+		})
+		if err != nil {
+			panic(err)
+		}
 
-	var weightMsgCreateManifest int
-	simState.AppParams.GetOrGenerate(opWeightMsgCreateManifest, &weightMsgCreateManifest, nil,
-		func(_ *rand.Rand) {
-			weightMsgCreateManifest = defaultWeightMsgCreateManifest
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgCreateManifest,
-		metastoresimulation.SimulateMsgCreateManifest(am.authKeeper, am.bankKeeper, am.keeper, simState.TxConfig),
-	))
-	const (
-		opWeightMsgUpdateManifest          = "op_weight_msg_metastore"
-		defaultWeightMsgUpdateManifest int = 100
-	)
+		for _, obj := range allManifest {
+			acc, err := ak.AddressCodec().StringToBytes(obj.Owner)
+			if err != nil {
+				return simtypes.OperationMsg{}, nil, err
+			}
 
-	var weightMsgUpdateManifest int
-	simState.AppParams.GetOrGenerate(opWeightMsgUpdateManifest, &weightMsgUpdateManifest, nil,
-		func(_ *rand.Rand) {
-			weightMsgUpdateManifest = defaultWeightMsgUpdateManifest
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgUpdateManifest,
-		metastoresimulation.SimulateMsgUpdateManifest(am.authKeeper, am.bankKeeper, am.keeper, simState.TxConfig),
-	))
-	const (
-		opWeightMsgDeleteManifest          = "op_weight_msg_metastore"
-		defaultWeightMsgDeleteManifest int = 100
-	)
+			simAccount, found = simtypes.FindAccount(accs, sdk.AccAddress(acc))
+			if found {
+				manifest = obj
+				break
+			}
+		}
+		if !found {
+			return simtypes.NoOpMsg(types.ModuleName, sdk.MsgTypeURL(msg), "manifest owner not found"), nil, nil
+		}
+		msg.Creator = simAccount.Address.String()
+		msg.ProjectName = manifest.ProjectName
 
-	var weightMsgDeleteManifest int
-	simState.AppParams.GetOrGenerate(opWeightMsgDeleteManifest, &weightMsgDeleteManifest, nil,
-		func(_ *rand.Rand) {
-			weightMsgDeleteManifest = defaultWeightMsgDeleteManifest
-		},
-	)
-	operations = append(operations, simulation.NewWeightedOperation(
-		weightMsgDeleteManifest,
-		metastoresimulation.SimulateMsgDeleteManifest(am.authKeeper, am.bankKeeper, am.keeper, simState.TxConfig),
-	))
-
-	return operations
+		txCtx := simulation.OperationInput{
+			R:               r,
+			App:             app,
+			TxGen:           txGen,
+			Cdc:             nil,
+			Msg:             msg,
+			Context:         ctx,
+			SimAccount:      simAccount,
+			ModuleName:      types.ModuleName,
+			CoinsSpentInMsg: sdk.NewCoins(),
+			AccountKeeper:   ak,
+			Bankkeeper:      bk,
+		}
+		return simulation.GenAndDeliverTxWithRandFees(txCtx)
+	}
 }
 
-// ProposalMsgs returns msgs used for governance proposals for simulations.
-func (am AppModule) ProposalMsgs(simState module.SimulationState) []simtypes.WeightedProposalMsg {
-	return []simtypes.WeightedProposalMsg{}
+func SimulateMsgDeleteManifest(
+	ak types.AuthKeeper,
+	bk types.BankKeeper,
+	k keeper.Keeper,
+	txGen client.TxConfig,
+) simtypes.Operation {
+	return func(r *rand.Rand, app *baseapp.BaseApp, ctx sdk.Context, accs []simtypes.Account, chainID string,
+	) (simtypes.OperationMsg, []simtypes.FutureOperation, error) {
+		var (
+			simAccount = simtypes.Account{}
+			manifest   = types.Manifest{}
+			msg        = &types.MsgUpdateManifest{}
+			found      = false
+		)
+
+		var allManifest []types.Manifest
+		err := k.Manifest.Walk(ctx, nil, func(key string, value types.Manifest) (stop bool, err error) {
+			allManifest = append(allManifest, value)
+			return false, nil
+		})
+		if err != nil {
+			panic(err)
+		}
+
+		for _, obj := range allManifest {
+			acc, err := ak.AddressCodec().StringToBytes(obj.Owner)
+			if err != nil {
+				return simtypes.OperationMsg{}, nil, err
+			}
+
+			simAccount, found = simtypes.FindAccount(accs, sdk.AccAddress(acc))
+			if found {
+				manifest = obj
+				break
+			}
+		}
+		if !found {
+			return simtypes.NoOpMsg(types.ModuleName, sdk.MsgTypeURL(msg), "manifest owner not found"), nil, nil
+		}
+		msg.Creator = simAccount.Address.String()
+		msg.ProjectName = manifest.ProjectName
+
+		txCtx := simulation.OperationInput{
+			R:               r,
+			App:             app,
+			TxGen:           txGen,
+			Cdc:             nil,
+			Msg:             msg,
+			Context:         ctx,
+			SimAccount:      simAccount,
+			ModuleName:      types.ModuleName,
+			CoinsSpentInMsg: sdk.NewCoins(),
+			AccountKeeper:   ak,
+			Bankkeeper:      bk,
+		}
+		return simulation.GenAndDeliverTxWithRandFees(txCtx)
+	}
 }

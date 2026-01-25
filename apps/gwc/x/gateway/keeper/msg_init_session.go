@@ -9,21 +9,56 @@ import (
 
 	"gwc/x/gateway/types"
 
+	"cosmossdk.io/collections"
+	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )
-
-const defaultDeadlineSeconds int64 = 24 * 60 * 60 // TODO: move to params in Issue11
 
 func (k msgServer) InitSession(goCtx context.Context, msg *types.MsgInitSession) (*types.MsgInitSessionResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
+	// Load params (fallback to defaults if not set or zero-filled)
+	params, err := k.Keeper.Params.Get(ctx)
+	if err != nil {
+		if collections.ErrNotFound != nil && err == collections.ErrNotFound {
+			params = types.DefaultParams()
+		} else {
+			params = types.DefaultParams()
+		}
+	}
+	if params.MaxFragmentBytes == 0 || params.MaxFragmentsPerSession == 0 || params.DefaultDeadlineSeconds == 0 {
+		params = types.DefaultParams()
+	}
+
+	// Enforce local-admin configured (Issue8)
+	if params.LocalAdmin == "" {
+		return nil, errorsmod.Wrap(types.ErrLocalAdminNotConfigured, "params.local_admin must be set for CSU")
+	}
+
+	// Enforce executor fixed to local-admin (Issue8)
+	// (Allow client to send executor field, but it must match local-admin.)
+	if msg.Executor != "" && msg.Executor != params.LocalAdmin {
+		return nil, errorsmod.Wrapf(types.ErrLocalAdminMismatch, "executor must be local-admin: got=%s want=%s", msg.Executor, params.LocalAdmin)
+	}
+	executor := params.LocalAdmin
+
+	// Enforce fragment_size limit at session creation time (Issue11)
+	if params.MaxFragmentBytes > 0 && msg.FragmentSize > params.MaxFragmentBytes {
+		return nil, errorsmod.Wrapf(
+			types.ErrLimitExceeded,
+			"fragment_size exceeds max_fragment_bytes: fragment_size=%d max=%d",
+			msg.FragmentSize,
+			params.MaxFragmentBytes,
+		)
+	}
+
 	// session_id: deterministic, unique enough (owner + blocktime nanos)
 	sessionID := fmt.Sprintf("%s-%d", msg.Owner, ctx.BlockTime().UnixNano())
 
-	// deadline resolution
+	// deadline resolution (Issue11)
 	var deadlineUnix int64
 	if msg.DeadlineUnix == 0 {
-		deadlineUnix = ctx.BlockTime().Add(time.Duration(defaultDeadlineSeconds) * time.Second).Unix()
+		deadlineUnix = ctx.BlockTime().Add(time.Duration(params.DefaultDeadlineSeconds) * time.Second).Unix()
 	} else {
 		deadlineUnix = msg.DeadlineUnix
 	}
@@ -43,7 +78,7 @@ func (k msgServer) InitSession(goCtx context.Context, msg *types.MsgInitSession)
 	sess := types.Session{
 		SessionId:        sessionID,
 		Owner:            msg.Owner,
-		Executor:         msg.Executor,
+		Executor:         executor,
 		RootProofHex:     "",
 		FragmentSize:     msg.FragmentSize,
 		DeadlineUnix:     deadlineUnix,
@@ -62,7 +97,7 @@ func (k msgServer) InitSession(goCtx context.Context, msg *types.MsgInitSession)
 			"csu_init_session",
 			sdk.NewAttribute("session_id", sessionID),
 			sdk.NewAttribute("owner", msg.Owner),
-			sdk.NewAttribute("executor", msg.Executor),
+			sdk.NewAttribute("executor", executor),
 			sdk.NewAttribute("fragment_size", fmt.Sprintf("%d", msg.FragmentSize)),
 			sdk.NewAttribute("deadline_unix", fmt.Sprintf("%d", deadlineUnix)),
 		),

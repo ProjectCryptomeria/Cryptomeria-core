@@ -7,7 +7,6 @@ import (
 	"gwc/x/gateway/types"
 
 	errorsmod "cosmossdk.io/errors"
-
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	clienttypes "github.com/cosmos/ibc-go/v10/modules/core/02-client/types"
 )
@@ -25,6 +24,11 @@ func (k msgServer) FinalizeAndCloseSession(goCtx context.Context, msg *types.Msg
 	// executor must match session.executor
 	if sess.Executor != msg.Executor {
 		return nil, errorsmod.Wrapf(types.ErrExecutorMismatch, "executor mismatch: session.executor=%s msg.executor=%s", sess.Executor, msg.Executor)
+	}
+
+	// Issue8: require session-bound authz grant for Finalize
+	if err := k.Keeper.RequireSessionBoundAuthz(ctx, sess, msg.Executor, msg.SessionId, types.MsgTypeURLFinalizeAndCloseSession); err != nil {
+		return nil, err
 	}
 
 	// closed sessions reject
@@ -75,11 +79,14 @@ func (k msgServer) FinalizeAndCloseSession(goCtx context.Context, msg *types.Msg
 		return nil, err
 	}
 
-	// move to FINALIZING (closed only on MDSC ACK)
+	// Issue6: Close処理同Tx統合（少なくとも state を Finalizing にし、以後の操作を拒否）
 	sess.State = types.SessionState_SESSION_STATE_FINALIZING
 	if err := k.Keeper.SetSession(ctx, sess); err != nil {
 		return nil, err
 	}
+
+	// Issue6/7: revoke authz + feegrant on Close tx (best-effort revoke)
+	k.Keeper.RevokeCSUGrants(ctx, sess.Owner)
 
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(

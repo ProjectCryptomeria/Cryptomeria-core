@@ -3,10 +3,20 @@ package fdsc.datastore.v1;
 
 option go_package = "fdsc/x/datastore/types";
 
-// Fragment defines the Fragment message.
+// Fragment defines the Fragment message stored in FDSC.
+//
+// NOTE:
+// - FDSC previously stored `site_root`. CSU uses `root_proof`.
+// - `fragment_id` is a datastore-local identifier (string) that should be derived
+//   deterministically from (session_id, path, index) in the IBC receiver.
 message Fragment {
   string fragment_id = 1;
   bytes data = 2;
   string creator = 3;
-  string site_root = 4; // 追加: 所属するSiteRoot
+
+  // CSU metadata for verification / traceability
+  string root_proof = 4;
+  string session_id = 5;
+  string path = 6;
+  uint64 index = 7;
 }

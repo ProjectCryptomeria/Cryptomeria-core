@@ -3,40 +3,66 @@ package mdsc.metastore.v1;
 
 option go_package = "mdsc/x/metastore/types";
 
-// MetastorePacketData defines the Metastore data packet.
+// MetastorePacketData defines the packet data for the metastore module.
+//
+// IMPORTANT:
+// - This proto MUST be wire-compatible with `gwc.gateway.v1.GatewayPacketData`
+//   because GWC sends `GatewayPacketData` over IBC and MDSC unmarshals the bytes
+//   as `MetastorePacketData` on receive.
+// - Wire-compatibility means: same field numbers + same field types for all
+//   messages that are actually sent (ManifestPacket), and the same oneof field
+//   numbers (1/2/3).
 message MetastorePacketData {
   oneof packet {
-    NoData noData = 1;
-    ManifestPacket manifestPacket = 3;
+    NoDataPacket   no_data_packet   = 1;
+    FragmentPacket fragment_packet  = 2; // not used by MDSC, kept for compatibility
+    ManifestPacket manifest_packet  = 3;
   }
 }
 
-// NoData defines an empty data packet.
-message NoData {}
+message NoDataPacket {}
 
-// PacketFragmentMapping defines the location of a fragment
+// FragmentPacket is kept for wire-compatibility with `gwc.gateway.v1.FragmentPacket`.
+// MDSC does not expect to receive fragment packets.
+message FragmentPacket {
+  string session_id = 1;
+  // RootProof for verification reference
+  string root_proof = 2;
+  // identifies the fragment position
+  string path = 3;
+  uint64 index = 4;
+  bytes data = 5;
+}
+
+// PacketFragmentMapping defines the location of a fragment.
+// Wire-compatible with `gwc.gateway.v1.PacketFragmentMapping`.
 message PacketFragmentMapping {
   string fdsc_id     = 1;
   string fragment_id = 2;
 }
 
-// FileMetadata defines metadata for a single file within the project
+// FileMetadata defines metadata for a single file within the project.
+// Wire-compatible with `gwc.gateway.v1.FileMetadata`.
 message FileMetadata {
   string mime_type = 1;
   uint64 size      = 2;
   repeated PacketFragmentMapping fragments = 3;
+  // file_root is the Merkle root of fragments in this file
+  string file_root = 4;
 }
 
-// ManifestPacket defines the structure of the website/project
-// GWC側の定義とフィールド番号・型を完全に一致させる必要があります
+// ManifestPacket defines the structure of the website/project.
+// Wire-compatible with `gwc.gateway.v1.ManifestPacket`.
 message ManifestPacket {
   string project_name = 1;
   string version      = 2;
   map<string, FileMetadata> files = 3;
-  
-  // 追加: 検証用フィールド
-  string site_root = 4;
+
+  // CSU verification fields
+  string root_proof = 4;
   uint64 fragment_size = 5;
-  bytes  client_signature = 6;
-  string creator = 7;
+
+  // identity fields
+  string owner = 6;
+  string session_id = 7;
 }

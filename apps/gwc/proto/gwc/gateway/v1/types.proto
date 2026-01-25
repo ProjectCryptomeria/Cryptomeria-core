@@ -77,4 +77,8 @@ message DistributeItem {
 
   // file_proof proves file leaf -> root_proof
   MerkleProof file_proof = 6;
+
+  // Optional: specify the target FDSC IBC channel to send this fragment to.
+  // If empty, GWC will choose a channel (round-robin) from registered datastore channels.
+  string target_fdsc_channel = 7;
 }

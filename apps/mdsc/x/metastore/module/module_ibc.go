@@ -74,6 +74,7 @@ func (im IBCModule) OnChanOpenAck(
 	if counterpartyVersion != types.Version {
 		return errorsmod.Wrapf(types.ErrInvalidVersion, "invalid counterparty version: %s, expected %s", counterpartyVersion, types.Version)
 	}
+
 	return nil
 }
 
@@ -92,7 +93,6 @@ func (im IBCModule) OnChanCloseInit(
 	portID,
 	channelID string,
 ) error {
-	// Disallow user-initiated channel closing for channels
 	return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "user cannot close channel")
 }
 
@@ -119,15 +119,30 @@ func (im IBCModule) OnRecvPacket(
 
 	// Dispatch packet
 	switch packet := modulePacketData.Packet.(type) {
+	case *types.MetastorePacketData_NoDataPacket:
+		return channeltypes.NewResultAcknowledgement([]byte{byte(1)})
+
+	case *types.MetastorePacketData_FragmentPacket:
+		// MDSC should not receive fragments; accept for forward-compat without persisting.
+		_ = packet.FragmentPacket
+		return channeltypes.NewResultAcknowledgement([]byte{byte(1)})
+
 	case *types.MetastorePacketData_ManifestPacket:
 		manifestData := packet.ManifestPacket
 		projectName := manifestData.ProjectName
 
+		if err := types.ValidateManifestPacketIdentity(manifestData); err != nil {
+			errMsg := fmt.Errorf("invalid manifest packet: %w", err)
+			ctx.Logger().Error(errMsg.Error())
+			return channeltypes.NewErrorAcknowledgement(errMsg)
+		}
+
 		ctx.Logger().Info("Receiving Manifest Packet",
 			"project", projectName,
 			"version", manifestData.Version,
-			"site_root", manifestData.SiteRoot,
-			"creator", manifestData.Creator)
+			"root_proof", manifestData.RootProof,
+			"owner", manifestData.Owner,
+			"session_id", manifestData.SessionId)
 
 		// 1. 既存または新規のManifestを取得
 		manifest, err := im.keeper.Manifest.Get(ctx, projectName)
@@ -135,19 +150,18 @@ func (im IBCModule) OnRecvPacket(
 			manifest = types.Manifest{
 				ProjectName: projectName,
 				Version:     manifestData.Version,
-				Creator:     manifestData.Creator, // パケットから取得するように修正
+				Owner:       manifestData.Owner,
 				Files:       make(map[string]*types.FileInfo),
-				// ▼ 追加: 新しいフィールドの保存
-				SiteRoot:        manifestData.SiteRoot,
-				ClientSignature: manifestData.ClientSignature,
-				FragmentSize:    manifestData.FragmentSize,
+
+				RootProof:    manifestData.RootProof,
+				SessionId:    manifestData.SessionId,
+				FragmentSize: manifestData.FragmentSize,
 			}
 		} else { // 更新
 			manifest.Version = manifestData.Version
-			// 更新時も新しい情報を上書き
-			manifest.Creator = manifestData.Creator
-			manifest.SiteRoot = manifestData.SiteRoot
-			manifest.ClientSignature = manifestData.ClientSignature
+			manifest.Owner = manifestData.Owner
+			manifest.RootProof = manifestData.RootProof
+			manifest.SessionId = manifestData.SessionId
 			manifest.FragmentSize = manifestData.FragmentSize
 
 			if manifest.Files == nil {
@@ -169,8 +183,9 @@ func (im IBCModule) OnRecvPacket(
 			// FileInfoの作成
 			fileInfo := types.FileInfo{
 				MimeType:  fileMeta.MimeType,
-				FileSize:  fileMeta.Size_, // packet.proto: uint64 size = 2;
+				Size_:     fileMeta.Size_,
 				Fragments: storedFragments,
+				FileRoot:  fileMeta.FileRoot,
 			}
 
 			// マップに登録（上書き）
@@ -185,7 +200,7 @@ func (im IBCModule) OnRecvPacket(
 		}
 
 		// デバッグログ
-		fmt.Printf("\n[DEBUG] Manifest Saved: Project=%s, SiteRoot=%s\n", projectName, manifest.SiteRoot)
+		fmt.Printf("\n[DEBUG] Manifest Saved: Project=%s, RootProof=%s\n", projectName, manifest.RootProof)
 
 		return channeltypes.NewResultAcknowledgement([]byte{byte(1)})
 
@@ -244,15 +259,5 @@ func (im IBCModule) OnTimeoutPacket(
 	modulePacket channeltypes.Packet,
 	relayer sdk.AccAddress,
 ) error {
-	var modulePacketData types.MetastorePacketData
-	if err := modulePacketData.Unmarshal(modulePacket.GetData()); err != nil {
-		return errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal packet data: %s", err.Error())
-	}
-
-	// Dispatch packet
-	switch packet := modulePacketData.Packet.(type) {
-	default:
-		ctx.Logger().Error("Packet Timeout", "type", fmt.Sprintf("%T", packet))
-		return nil
-	}
+	return nil
 }

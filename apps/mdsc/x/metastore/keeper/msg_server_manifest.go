@@ -25,12 +25,12 @@ func (k msgServer) CreateManifest(ctx context.Context, msg *types.MsgCreateManif
 		return nil, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "index already set")
 	}
 
-	// 修正: Filesマップをポインタ型 (*types.FileInfo) で初期化
+	// Filesマップをポインタ型 (*types.FileInfo) で初期化
 	var manifest = types.Manifest{
-		Creator:     msg.Creator,
+		Owner:       msg.Creator,
 		ProjectName: msg.ProjectName,
 		Version:     msg.Version,
-		Files:       make(map[string]*types.FileInfo), // 👈 修正: ポインタ型 (*) で初期化
+		Files:       make(map[string]*types.FileInfo),
 	}
 
 	if err := k.Manifest.Set(ctx, manifest.ProjectName, manifest); err != nil {
@@ -55,18 +55,18 @@ func (k msgServer) AddFileToManifest(ctx context.Context, msg *types.MsgAddFileT
 		return nil, errorsmod.Wrap(sdkerrors.ErrLogic, err.Error())
 	}
 
-	// 認証チェック
-	if msg.Creator != val.Creator {
+	// 認証チェック（Creator -> Owner）
+	if msg.Creator != val.Owner {
 		return nil, errorsmod.Wrap(sdkerrors.ErrUnauthorized, "incorrect owner")
 	}
 
 	// ManifestのFilesマップが未初期化 (nil) の場合、ポインタ型で初期化する
 	if val.Files == nil {
-		val.Files = make(map[string]*types.FileInfo) // 👈 修正: ポインタ型 (*) で初期化
+		val.Files = make(map[string]*types.FileInfo)
 	}
 
 	// ファイル情報をマップに追加/更新 (値のアドレスをポインタとして使用)
-	val.Files[msg.FilePath] = &msg.FileInfo // 👈 修正: ポインタ (&) を使用
+	val.Files[msg.FilePath] = &msg.FileInfo
 
 	// Manifestを更新して保存
 	if err := k.Manifest.Set(ctx, val.ProjectName, val); err != nil {
@@ -92,16 +92,20 @@ func (k msgServer) UpdateManifest(ctx context.Context, msg *types.MsgUpdateManif
 	}
 
 	// Checks if the msg creator is the same as the current owner
-	if msg.Creator != val.Creator {
+	if msg.Creator != val.Owner {
 		return nil, errorsmod.Wrap(sdkerrors.ErrUnauthorized, "incorrect owner")
 	}
 
-	// 修正: 既存の Manifest (val) から Files マップを引き継ぐ
+	// 既存の Manifest (val) から Files マップを引き継ぐ
 	var manifest = types.Manifest{
-		Creator:     msg.Creator,
+		Owner:       val.Owner, // ownerは固定
 		ProjectName: msg.ProjectName,
 		Version:     msg.Version,
-		Files:       val.Files, // 👈 修正: 既存のファイル情報を引き継ぐ
+		Files:       val.Files,
+		// CSU fields (RootProof/SessionId/FragmentSize) は Create/Update では触らない（IBCで更新される想定）
+		RootProof:    val.RootProof,
+		SessionId:    val.SessionId,
+		FragmentSize: val.FragmentSize,
 	}
 
 	if err := k.Manifest.Set(ctx, manifest.ProjectName, manifest); err != nil {
@@ -127,7 +131,7 @@ func (k msgServer) DeleteManifest(ctx context.Context, msg *types.MsgDeleteManif
 	}
 
 	// Checks if the msg creator is the same as the current owner
-	if msg.Creator != val.Creator {
+	if msg.Creator != val.Owner {
 		return nil, errorsmod.Wrap(sdkerrors.ErrUnauthorized, "incorrect owner")
 	}
 

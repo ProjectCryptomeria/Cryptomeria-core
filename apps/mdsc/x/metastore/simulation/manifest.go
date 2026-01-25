@@ -77,7 +77,7 @@ func SimulateMsgUpdateManifest(
 		}
 
 		for _, obj := range allManifest {
-			acc, err := ak.AddressCodec().StringToBytes(obj.Creator)
+			acc, err := ak.AddressCodec().StringToBytes(obj.Owner)
 			if err != nil {
 				return simtypes.OperationMsg{}, nil, err
 			}
@@ -89,7 +89,7 @@ func SimulateMsgUpdateManifest(
 			}
 		}
 		if !found {
-			return simtypes.NoOpMsg(types.ModuleName, sdk.MsgTypeURL(msg), "manifest creator not found"), nil, nil
+			return simtypes.NoOpMsg(types.ModuleName, sdk.MsgTypeURL(msg), "manifest owner not found"), nil, nil
 		}
 		msg.Creator = simAccount.Address.String()
 		msg.ProjectName = manifest.ProjectName
@@ -136,7 +136,7 @@ func SimulateMsgDeleteManifest(
 		}
 
 		for _, obj := range allManifest {
-			acc, err := ak.AddressCodec().StringToBytes(obj.Creator)
+			acc, err := ak.AddressCodec().StringToBytes(obj.Owner)
 			if err != nil {
 				return simtypes.OperationMsg{}, nil, err
 			}
@@ -148,7 +148,7 @@ func SimulateMsgDeleteManifest(
 			}
 		}
 		if !found {
-			return simtypes.NoOpMsg(types.ModuleName, sdk.MsgTypeURL(msg), "manifest creator not found"), nil, nil
+			return simtypes.NoOpMsg(types.ModuleName, sdk.MsgTypeURL(msg), "manifest owner not found"), nil, nil
 		}
 		msg.Creator = simAccount.Address.String()
 		msg.ProjectName = manifest.ProjectName

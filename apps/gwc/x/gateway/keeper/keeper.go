@@ -48,6 +48,10 @@ type Keeper struct {
 	ibcKeeperFn   func() *ibckeeper.Keeper
 	bankKeeper    types.BankKeeper
 	accountKeeper types.AccountKeeper // 既存：後続Issueで整理（現Issueでは保持）
+
+	// Issue6/7/8
+	authzKeeper    types.AuthzKeeper
+	feegrantKeeper types.FeegrantKeeper
 }
 
 func NewKeeper(
@@ -58,6 +62,8 @@ func NewKeeper(
 	ibcKeeperFn func() *ibckeeper.Keeper,
 	bankKeeper types.BankKeeper,
 	accountKeeper types.AccountKeeper,
+	authzKeeper types.AuthzKeeper,
+	feegrantKeeper types.FeegrantKeeper,
 ) Keeper {
 	if _, err := addressCodec.BytesToString(authority); err != nil {
 		panic(fmt.Sprintf("invalid authority address %s: %s", authority, err))
@@ -74,6 +80,9 @@ func NewKeeper(
 		bankKeeper:    bankKeeper,
 		accountKeeper: accountKeeper,
 		ibcKeeperFn:   ibcKeeperFn,
+
+		authzKeeper:    authzKeeper,
+		feegrantKeeper: feegrantKeeper,
 
 		Port:   collections.NewItem(sb, types.PortKey, "port", collections.StringValue),
 		Params: collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"strconv"
 
 	"cosmossdk.io/collections"
 	errorsmod "cosmossdk.io/errors"
@@ -78,6 +77,7 @@ func (im IBCModule) OnChanOpenAck(
 	if counterpartyVersion != types.Version {
 		return errorsmod.Wrapf(types.ErrInvalidVersion, "invalid counterparty version: %s, expected %s", counterpartyVersion, types.Version)
 	}
+
 	return nil
 }
 
@@ -96,6 +96,7 @@ func (im IBCModule) OnChanCloseInit(
 	portID,
 	channelID string,
 ) error {
+	// Disallow user-initiated channel closing for channels
 	return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "user cannot close channel")
 }
 
@@ -126,7 +127,8 @@ func (im IBCModule) OnRecvPacket(
 	case *types.DatastorePacketData_FragmentPacket:
 		fragment := packet.FragmentPacket
 
-		fragmentIdStr := strconv.FormatUint(fragment.Id, 10)
+		// GWC送信の (session_id, path, index) から、FDSC保存用 fragment_id を決定
+		fragmentIdStr := types.MakeFragmentID(fragment.SessionId, fragment.Path, fragment.Index)
 
 		// 既に保存済みの場合はチェック
 		exists, err := im.keeper.Fragment.Has(ctx, fragmentIdStr)
@@ -152,16 +154,34 @@ func (im IBCModule) OnRecvPacket(
 		val := types.Fragment{
 			FragmentId: fragmentIdStr,
 			Data:       fragment.Data,
-			Creator:    "ibc-sender",      // TODO: PacketにCreatorフィールドがあれば使う
-			SiteRoot:   fragment.SiteRoot, // ▼ 追加: パケットから受け取ったSiteRootを保存
+			Creator:    "ibc-sender",
+
+			// CSU metadata
+			RootProof: fragment.RootProof,
+			SessionId: fragment.SessionId,
+			Path:      fragment.Path,
+			Index:     fragment.Index,
 		}
 
 		if err := im.keeper.Fragment.Set(ctx, fragmentIdStr, val); err != nil {
 			return channeltypes.NewErrorAcknowledgement(fmt.Errorf("failed to save fragment: %w", err))
 		}
 
-		ctx.Logger().Info("Fragment Saved", "id", fragmentIdStr, "site_root", fragment.SiteRoot)
+		ctx.Logger().Info("Fragment Saved",
+			"id", fragmentIdStr,
+			"session_id", fragment.SessionId,
+			"path", fragment.Path,
+			"index", fragment.Index,
+		)
 
+		return channeltypes.NewResultAcknowledgement([]byte{byte(1)})
+
+	case *types.DatastorePacketData_NoDataPacket:
+		return channeltypes.NewResultAcknowledgement([]byte{byte(1)})
+
+	case *types.DatastorePacketData_ManifestPacket:
+		// FDSC should not receive manifests; accept for forward-compat without persisting.
+		_ = packet.ManifestPacket
 		return channeltypes.NewResultAcknowledgement([]byte{byte(1)})
 
 	default:
@@ -219,13 +239,5 @@ func (im IBCModule) OnTimeoutPacket(
 	modulePacket channeltypes.Packet,
 	relayer sdk.AccAddress,
 ) error {
-	var modulePacketData types.DatastorePacketData
-	if err := modulePacketData.Unmarshal(modulePacket.GetData()); err != nil {
-		return errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal packet data: %s", err.Error())
-	}
-	switch packet := modulePacketData.Packet.(type) {
-	default:
-		ctx.Logger().Error("Packet Timeout", "type", fmt.Sprintf("%T", packet))
-		return nil
-	}
+	return nil
 }

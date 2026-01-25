@@ -3,21 +3,68 @@ package fdsc.datastore.v1;
 
 option go_package = "fdsc/x/datastore/types";
 
-// DatastorePacketData defines the Datastore data packet.
+// DatastorePacketData defines the packet data for the datastore module.
+//
+// IMPORTANT:
+// - This proto MUST be wire-compatible with `gwc.gateway.v1.GatewayPacketData`
+//   because GWC sends `GatewayPacketData` over IBC and FDSC unmarshals the bytes
+//   as `DatastorePacketData` on receive.
+// - Wire-compatibility means: same field numbers + same field types for all
+//   messages that are actually sent (FragmentPacket / ManifestPacket), and the
+//   same oneof field numbers (1/2/3).
 message DatastorePacketData {
   oneof packet {
-    NoData noData = 1;
-    FragmentPacket fragmentPacket = 2;
+    NoDataPacket   no_data_packet   = 1;
+    FragmentPacket fragment_packet  = 2;
+    ManifestPacket manifest_packet  = 3; // not used by FDSC, kept for compatibility
   }
 }
 
-// NoData defines an empty data packet.
-message NoData {}
+message NoDataPacket {}
 
-// FragmentPacket defines the data fragment received from GWC
+// FragmentPacket defines a single fragment of file data.
+// Wire-compatible with `gwc.gateway.v1.FragmentPacket`.
 message FragmentPacket {
-  uint64 id = 1;
-  bytes  data = 2;
-  // 追加: 検証用フィールド
-  string site_root = 3;
+  string session_id = 1;
+  // RootProof for verification reference
+  string root_proof = 2;
+  // identifies the fragment position
+  string path = 3;
+  uint64 index = 4;
+  bytes data = 5;
+}
+
+// PacketFragmentMapping defines the location of a fragment.
+// Wire-compatible with `gwc.gateway.v1.PacketFragmentMapping`.
+message PacketFragmentMapping {
+  string fdsc_id     = 1;
+  string fragment_id = 2;
+}
+
+// FileMetadata defines metadata for a single file within the project.
+// Wire-compatible with `gwc.gateway.v1.FileMetadata`.
+message FileMetadata {
+  string mime_type = 1;
+  uint64 size      = 2;
+  repeated PacketFragmentMapping fragments = 3;
+  // file_root is the Merkle root of fragments in this file
+  string file_root = 4;
+}
+
+// ManifestPacket defines the structure of the website/project.
+// Wire-compatible with `gwc.gateway.v1.ManifestPacket`.
+// NOTE: FDSC does not expect to receive this packet, but the definition is kept
+// to preserve the oneof layout and future-proof the wire format.
+message ManifestPacket {
+  string project_name = 1;
+  string version      = 2;
+  map<string, FileMetadata> files = 3;
+
+  // CSU verification fields
+  string root_proof = 4;
+  uint64 fragment_size = 5;
+
+  // identity fields
+  string owner = 6;
+  string session_id = 7;
 }
