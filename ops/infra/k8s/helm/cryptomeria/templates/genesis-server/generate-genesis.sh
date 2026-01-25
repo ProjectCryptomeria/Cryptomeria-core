@@ -38,35 +38,31 @@ generate_genesis() {
     # 3. Add Genesis Account (Local Admin)
     $BINARY genesis add-genesis-account $ADDR 1000000000000uatom --home $HOME_DIR
 
-    # ▼▼▼ 修正: Relayerアカウントの追加 (sedを使用してパスを生成) ▼▼▼
-    # Bash固有の置換 ${KEY_FILE/local-admin/relayer} は sh では使えないため sed を使用
+    # Relayerアカウントの追加
     local RELAYER_KEY_FILE=$(echo "$KEY_FILE" | sed 's/local-admin/relayer/')
-    
     if [ -f "$RELAYER_KEY_FILE" ]; then
         echo "   -> Adding Relayer account from $RELAYER_KEY_FILE"
-        # Relayerキーのインポート
         $BINARY keys add relayer --recover --keyring-backend=test --home $HOME_DIR < $RELAYER_KEY_FILE
         local RELAYER_ADDR=$($BINARY keys show relayer -a --keyring-backend=test --home $HOME_DIR)
-        
-        # 資金追加 (10億 uatom)
         $BINARY genesis add-genesis-account $RELAYER_ADDR 1000000000uatom --home $HOME_DIR
     else
         echo "⚠️ Relayer key file not found: $RELAYER_KEY_FILE"
     fi
-    # ▲▲▲ 修正ここまで ▲▲▲
+
+    # ▼▼▼ 修正: Gentxの前にパラメータ設定を行うように移動 ▼▼▼
+    # これにより、collect-gentxs が出力した結果を上書きしてしまう事故を防ぐ
+    if [ "$CHAIN_ID" = "gwc" ]; then
+        echo "🔧 Configuring gwc gateway.params.local_admin via custom command..."
+        $BINARY genesis set-local-admin "$ADDR" --home "$HOME_DIR"
+    fi
+    # ▲▲▲ 移動ここまで ▲▲▲
 
     # 4. Gentx
     $BINARY genesis gentx local-admin 10000000uatom --keyring-backend=test --chain-id $CHAIN_ID --home $HOME_DIR
 
     # 5. Collect Gentxs
+    # これが最後に実行され、gen_txsを含む最終的なgenesis.jsonが作られる
     $BINARY genesis collect-gentxs --home $HOME_DIR
-
-    # ▼▼▼ 追加: GWCチェーンの場合のみ、gatewayモジュールのパラメータ(local_admin)を設定 ▼▼▼
-    if [ "$CHAIN_ID" = "gwc" ]; then
-        echo "🔧 Configuring gwc gateway.params.local_admin via custom command..."
-        $BINARY genesis set-local-admin "$ADDR" --home "$HOME_DIR"
-    fi
-    # ▲▲▲ 追加ここまで ▲▲▲
 
     # 6. Export
     cp $HOME_DIR/config/genesis.json $OUTPUT_DIR/$CHAIN_ID.json
