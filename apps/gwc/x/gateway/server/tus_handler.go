@@ -1,9 +1,13 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"gwc/x/gateway/client/executor"
 	"gwc/x/gateway/keeper"
+	"gwc/x/gateway/types"
 	"net/http"
 	"os"
 	"strings"
@@ -13,9 +17,9 @@ import (
 	tusd "github.com/tus/tusd/v2/pkg/handler"
 )
 
-// NewTusHandler creates a new http.Handler for TUS protocol.
+// NewTusHandler はTUSプロトコルのための http.Handler を作成します
 func NewTusHandler(clientCtx client.Context, k keeper.Keeper, uploadDir string, basePath string) (http.Handler, error) {
-	// Create upload directory if not exists
+	// アップロードディレクトリの作成
 	if err := os.MkdirAll(uploadDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create upload directory: %w", err)
 	}
@@ -25,7 +29,6 @@ func NewTusHandler(clientCtx client.Context, k keeper.Keeper, uploadDir string, 
 	composer := tusd.NewStoreComposer()
 	composer.UseCore(store)
 	composer.UseTerminater(store)
-	//composer.UseFinisher(store) // Finisher is used to clean up, but we want to process the file first
 
 	config := tusd.Config{
 		BasePath:              basePath,
@@ -38,27 +41,25 @@ func NewTusHandler(clientCtx client.Context, k keeper.Keeper, uploadDir string, 
 		return nil, fmt.Errorf("failed to create tus handler: %w", err)
 	}
 
-	// Event Hook: On Upload Complete
+	// イベントフック: アップロード完了時
 	go func() {
 		for {
 			event := <-handler.CompleteUploads
 			fmt.Printf("Upload %s finished\n", event.Upload.ID)
 
-			// Trigger Executor Logic
-			// Note: This runs in a goroutine, so we need to handle errors independently
+			// Executor ロジックの実行
 			err := processCompletedUpload(clientCtx, k, event.Upload)
 			if err != nil {
 				fmt.Printf("Error processing upload %s: %v\n", event.Upload.ID, err)
-				// TODO: Handle failure (retry, cleanup, or mark session as failed)
 			}
 		}
 	}()
 
-	// Middleware for Authentication
+	// 認証ミドルウェアを含んだハンドラーを返却します
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 1. TUS/HTTP Method Check
-		// POST (Creation) requires valid session_upload_token
+		// POSTメソッド（アップロード作成）時のみトークンを検証します
 		if r.Method == http.MethodPost {
+			// 1. Authorization ヘッダーからトークンを取得
 			authHeader := r.Header.Get("Authorization")
 			token := strings.TrimPrefix(authHeader, "Bearer ")
 			if token == "" {
@@ -66,35 +67,78 @@ func NewTusHandler(clientCtx client.Context, k keeper.Keeper, uploadDir string, 
 				return
 			}
 
-			// Validate Token
-			// Since we are in HTTP handler (outside of block execution), we use Query mechanism or direct keeper check if strictly local.
-			// Ideally we use clientCtx.Query... but here we have the Keeper struct.
-			// Since GWC node *contains* the state, we can try to check verification.
-			// However, Keeper needs sdk.Context. We don't have it.
-			// Strategy: We must rely on the upload metadata containing session_id and verify it later, OR
-			// verify the token here if possible.
-			// For this implementation, we will perform a basic check if possible, or defer to the Executor phase for strict checks.
-			// BUT, to prevent DoS, we SHOULD check here.
+			// 2. Upload-Metadata ヘッダーから session_id を取得
+			// TUSのメタデータ形式: "key1 base64val1,key2 base64val2"
+			metadata := parseTusMetadata(r.Header.Get("Upload-Metadata"))
+			sessionID := metadata["session_id"]
+			if sessionID == "" {
+				http.Error(w, "Missing session_id in Upload-Metadata", http.StatusBadRequest)
+				return
+			}
 
-			// NOTE: In a real ABCI app, you cannot access state arbitrarily without a context.
-			// We will assume the Executor handles the strict "linkage" check.
-			// For a production system, we'd need a way to query the state here (via clientCtx).
+			// 3. オンチェーンの状態をクエリしてトークンハッシュを検証
+			queryClient := types.NewQueryClient(clientCtx)
+			res, err := queryClient.SessionUploadTokenHash(r.Context(), &types.QuerySessionUploadTokenHashRequest{
+				SessionId: sessionID,
+			})
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to query session: %v", err), http.StatusInternalServerError)
+				return
+			}
 
-			// Let's attach the token to metadata for later verification
-			// TUS client should send metadata: Upload-Metadata: session_id dXNlcg==, ...
-			// We can validate the token against the computed hash in the Executor phase.
+			// クライアントから送られたトークンのハッシュ値を計算
+			providedTokenHash := sha256.Sum256([]byte(token))
+			storedTokenHash, _ := hex.DecodeString(res.TokenHashHex)
+
+			if len(storedTokenHash) != 32 || !compareHashes(providedTokenHash[:], storedTokenHash) {
+				http.Error(w, "Invalid upload token", http.StatusUnauthorized)
+				return
+			}
 		}
 
 		handler.ServeHTTP(w, r)
 	}), nil
 }
 
-// processCompletedUpload is the bridge between TUS and Cosmos SDK Tx
+// parseTusMetadata はTUSプロトコルのメタデータヘッダーを解析します
+func parseTusMetadata(metadataHeader string) map[string]string {
+	metadata := make(map[string]string)
+	if metadataHeader == "" {
+		return metadata
+	}
+
+	parts := strings.Split(metadataHeader, ",")
+	for _, part := range parts {
+		kv := strings.Split(strings.TrimSpace(part), " ")
+		if len(kv) != 2 {
+			continue
+		}
+		key := kv[0]
+		valBytes, err := base64.StdEncoding.DecodeString(kv[1])
+		if err != nil {
+			continue
+		}
+		metadata[key] = string(valBytes)
+	}
+	return metadata
+}
+
+// compareHashes は2つのハッシュ値が一致するかを一定時間で比較します（タイミング攻撃対策）
+func compareHashes(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	var res byte
+	for i := 0; i < len(a); i++ {
+		res |= a[i] ^ b[i]
+	}
+	return res == 0
+}
+
+// processCompletedUpload はTUSとCosmos SDK Txの橋渡しを行います
 func processCompletedUpload(clientCtx client.Context, k keeper.Keeper, upload tusd.FileInfo) error {
-	// Extract metadata
 	meta := upload.MetaData
 	sessionID := meta["session_id"]
-	// token := meta["token"] // If we passed token in metadata
 
 	if sessionID == "" {
 		return fmt.Errorf("missing session_id in upload metadata")
@@ -102,19 +146,11 @@ func processCompletedUpload(clientCtx client.Context, k keeper.Keeper, upload tu
 
 	filePath := upload.Storage["Path"]
 	if filePath == "" {
-		// Fallback for filestore: ID + ".bin" usually, or ".info"
-		// tusd FileInfo doesn't always have full path. We constructed filestore with `uploadDir`.
-		// Let's assume standard filestore behavior or verify `upload.ID`.
-		// For filestore, the binary data is at:
 		return fmt.Errorf("unable to resolve file path for upload %s", upload.ID)
 	}
 
-	// In tusd filestore, the path is stored in upload.Storage["Path"] if accessible,
-	// otherwise we construct it.
-	// Actually, `upload.Storage` is a map[string]string. Filestore sets "Path".
-
 	fmt.Printf("Starting execution for session %s, file %s\n", sessionID, filePath)
 
-	// Call the Executor Logic
+	// Executor ロジックを呼び出します
 	return executor.ExecuteSessionUpload(clientCtx, sessionID, filePath)
 }

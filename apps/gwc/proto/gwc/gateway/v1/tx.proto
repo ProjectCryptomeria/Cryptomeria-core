@@ -14,27 +14,22 @@ option go_package = "gwc/x/gateway/types";
 // Msg defines the Msg service.
 service Msg {
   option (cosmos.msg.v1.service) = true;
-
   rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
 
   // --- CSU Session Flow ---
 
   // Step 1: Initialize a CSU session (creates session_id and returns session_upload_token for TUS/HTTP upload)
   rpc InitSession(MsgInitSession) returns (MsgInitSessionResponse);
-
   // Step 2: Commit RootProof (computed from the extracted zip contents)
   rpc CommitRootProof(MsgCommitRootProof) returns (MsgCommitRootProofResponse);
-
   // Step 3: Distribute fragments to FDSC (executor executes this via authz; signer is executor)
   rpc DistributeBatch(MsgDistributeBatch) returns (MsgDistributeBatchResponse);
-
   // Step 4: Upload manifest to MDSC and close session on MDSC ACK (success path)
   rpc FinalizeAndCloseSession(MsgFinalizeAndCloseSession) returns (MsgFinalizeAndCloseSessionResponse);
-
   // Abort session and close immediately (failure path)
   rpc AbortAndCloseSession(MsgAbortAndCloseSession) returns (MsgAbortAndCloseSessionResponse);
 
-  // Storage登録 (既存維持)
+  // Storage登録 (管理者のみ実行可能)
   rpc RegisterStorage(MsgRegisterStorage) returns (MsgRegisterStorageResponse);
 }
 
@@ -48,8 +43,9 @@ message MsgUpdateParams {
 message MsgUpdateParamsResponse {}
 
 message MsgRegisterStorage {
-  option (cosmos.msg.v1.signer) = "creator";
-  string creator = 1;
+  // 署名者を authority (Governance) に変更して権限を制限します
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
   repeated StorageInfo storage_infos = 2;
 }
 message MsgRegisterStorageResponse {}

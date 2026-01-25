@@ -6,7 +6,6 @@ import "cosmos/base/query/v1beta1/pagination.proto";
 import "gogoproto/gogo.proto";
 import "google/api/annotations.proto";
 import "gwc/gateway/v1/params.proto";
-// Import types
 import "gwc/gateway/v1/types.proto";
 
 option go_package = "gwc/x/gateway/types";
@@ -32,26 +31,26 @@ service Query {
   rpc SessionsByOwner(QuerySessionsByOwnerRequest) returns (QuerySessionsByOwnerResponse) {
     option (google.api.http).get = "/gwc/gateway/v1/sessions/by_owner/{owner}";
   }
+
+  // SessionUploadTokenHash は TUS ハンドラーがトークンを検証するために使用します。
+  rpc SessionUploadTokenHash(QuerySessionUploadTokenHashRequest) returns (QuerySessionUploadTokenHashResponse) {
+    option (google.api.http).get = "/gwc/gateway/v1/session_token_hash/{session_id}";
+  }
 }
 
-// QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
 
-// QueryParamsResponse is response type for the Query/Params RPC method.
 message QueryParamsResponse {
-  // params holds all the parameters of this module.
   Params params = 1 [
     (gogoproto.nullable) = false,
     (amino.dont_omitempty) = true
   ];
 }
 
-// QueryStorageEndpointsRequest is request type for the Query/StorageEndpoints RPC method.
 message QueryStorageEndpointsRequest {
   cosmos.base.query.v1beta1.PageRequest pagination = 1;
 }
 
-// QueryStorageEndpointsResponse is response type for the Query/StorageEndpoints RPC method.
 message QueryStorageEndpointsResponse {
   repeated StorageInfo storage_infos = 1;
   cosmos.base.query.v1beta1.PageResponse pagination = 2;
@@ -73,4 +72,13 @@ message QuerySessionsByOwnerRequest {
 message QuerySessionsByOwnerResponse {
   repeated Session sessions = 1 [(gogoproto.nullable) = false];
   cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+// 新しく追加されたメッセージ型
+message QuerySessionUploadTokenHashRequest {
+  string session_id = 1;
+}
+
+message QuerySessionUploadTokenHashResponse {
+  string token_hash_hex = 1;
 }

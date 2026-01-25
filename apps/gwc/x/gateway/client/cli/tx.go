@@ -301,7 +301,7 @@ func CmdRegisterStorage() *cobra.Command {
 			}
 
 			msg := types.MsgRegisterStorage{
-				Creator:      clientCtx.GetFromAddress().String(),
+				Authority:    clientCtx.GetFromAddress().String(),
 				StorageInfos: []*types.StorageInfo{&info},
 			}
 

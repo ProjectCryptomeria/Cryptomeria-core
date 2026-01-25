@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"encoding/hex"
 
 	"gwc/x/gateway/types"
 
@@ -14,7 +15,7 @@ type queryServer struct {
 	Keeper
 }
 
-// NewQueryServerImpl returns an implementation of the QueryServer interface for the provided Keeper.
+// NewQueryServerImpl は QueryServer インターフェースの実装を返します。
 func NewQueryServerImpl(k Keeper) types.QueryServer {
 	return queryServer{Keeper: k}
 }
@@ -58,7 +59,6 @@ func (k queryServer) StorageEndpoints(goCtx context.Context, req *types.QuerySto
 	return &types.QueryStorageEndpointsResponse{StorageInfos: storageInfos}, nil
 }
 
-// Session returns a session by id.
 func (k queryServer) Session(goCtx context.Context, req *types.QuerySessionRequest) (*types.QuerySessionResponse, error) {
 	if req == nil || req.SessionId == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id required")
@@ -72,8 +72,6 @@ func (k queryServer) Session(goCtx context.Context, req *types.QuerySessionReque
 	return &types.QuerySessionResponse{Session: sess}, nil
 }
 
-// SessionsByOwner returns sessions filtered by owner.
-// NOTE: This is O(n) scan unless you add an index (Issue later).
 func (k queryServer) SessionsByOwner(goCtx context.Context, req *types.QuerySessionsByOwnerRequest) (*types.QuerySessionsByOwnerResponse, error) {
 	if req == nil || req.Owner == "" {
 		return nil, status.Error(codes.InvalidArgument, "owner required")
@@ -92,4 +90,21 @@ func (k queryServer) SessionsByOwner(goCtx context.Context, req *types.QuerySess
 	}
 
 	return &types.QuerySessionsByOwnerResponse{Sessions: out}, nil
+}
+
+// SessionUploadTokenHash は HTTP サーバーがトークンのハッシュを確認するために使用します。
+func (k queryServer) SessionUploadTokenHash(goCtx context.Context, req *types.QuerySessionUploadTokenHashRequest) (*types.QuerySessionUploadTokenHashResponse, error) {
+	if req == nil || req.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id required")
+	}
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	hash, err := k.Keeper.GetUploadTokenHash(ctx, req.SessionId)
+	if err != nil {
+		return nil, status.Error(codes.NotFound, "upload token hash not found")
+	}
+
+	return &types.QuerySessionUploadTokenHashResponse{
+		TokenHashHex: hex.EncodeToString(hash),
+	}, nil
 }

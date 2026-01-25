@@ -33,19 +33,18 @@ func RegisterCustomHTTPRoutes(clientCtx client.Context, r *mux.Router, k keeper.
 		handleRender(clientCtx, k, w, req, config)
 	}).Methods("GET")
 
-	// 2. TUS アップロードルート (/upload/tus-stream/)
-	// TUSプロトコルは /files/ などのベースパス以下の様々なメソッド(POST, HEAD, PATCH, OPTIONS)を使用するため
-	// PathPrefix でサブーティングする。
+	// 2. TUS アップロードルート
 	if config.UploadDir == "" {
-		config.UploadDir = "./tmp/uploads" // デフォルト値
+		config.UploadDir = "./tmp/uploads"
 	}
 
-	tusHandler, err := NewTusHandler(clientCtx, k, config.UploadDir, "/upload/tus-stream/")
+	// 修正: StripPrefix を使用する場合、ハンドラー内部の相対ベースパスは "/" である必要があります。
+	// これにより tusd が "POST /" を新規アップロードとして正しく受け取れます。
+	tusHandler, err := NewTusHandler(clientCtx, k, config.UploadDir, "/")
 	if err != nil {
-		// 初期化失敗時はログに出してルート登録をスキップするか、panicさせる
 		fmt.Printf("Failed to initialize TUS handler: %v\n", err)
 	} else {
-		// StripPrefix でハンドラに渡すパスを調整する
+		// 外部向けのパスPrefixを指定し、ハンドラーに渡す前にストリップします。
 		r.PathPrefix("/upload/tus-stream/").Handler(http.StripPrefix("/upload/tus-stream", tusHandler))
 	}
 }

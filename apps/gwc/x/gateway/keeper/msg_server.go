@@ -6,7 +6,9 @@ import (
 
 	"gwc/x/gateway/types"
 
+	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	clienttypes "github.com/cosmos/ibc-go/v10/modules/core/02-client/types"
 	ibckeeper "github.com/cosmos/ibc-go/v10/modules/core/keeper"
 )
@@ -21,16 +23,42 @@ func NewMsgServerImpl(keeper Keeper) types.MsgServer {
 
 var _ types.MsgServer = msgServer{}
 
+// RegisterStorage は管理者がストレージエンドポイント（API URL）をオンチェーンに登録・更新するために使用します。
 func (k msgServer) RegisterStorage(goCtx context.Context, msg *types.MsgRegisterStorage) (*types.MsgRegisterStorageResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
+	// 1. ガバナンス権限（authority）の検証
+	if msg.Authority != sdk.AccAddress(k.Keeper.authority).String() {
+		return nil, errorsmod.Wrapf(sdkerrors.ErrUnauthorized, "invalid authority; expected %s, got %s", sdk.AccAddress(k.Keeper.authority).String(), msg.Authority)
+	}
+
+	// 2. ストレージ情報の更新
 	for _, info := range msg.StorageInfos {
 		if info.ChannelId == "" {
-			return nil, fmt.Errorf("channel_id required")
+			return nil, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "channel_id is required")
 		}
+
+		// 既存の情報を取得（IBCで登録済みの ChainId 等を保持するため）
+		existing, err := k.Keeper.StorageInfos.Get(ctx, info.ChannelId)
+		if err == nil {
+			// ApiEndpoint 等、提供されたフィールドのみを上書き更新します
+			if info.ApiEndpoint != "" {
+				existing.ApiEndpoint = info.ApiEndpoint
+			}
+			if info.ChainId != "" {
+				existing.ChainId = info.ChainId
+			}
+			if info.ConnectionType != "" {
+				existing.ConnectionType = info.ConnectionType
+			}
+			info = &existing
+		}
+
 		if err := k.Keeper.StorageInfos.Set(ctx, info.ChannelId, *info); err != nil {
 			return nil, err
 		}
+
+		ctx.Logger().Info("Storage endpoint registered", "channel_id", info.ChannelId, "endpoint", info.ApiEndpoint)
 	}
 
 	return &types.MsgRegisterStorageResponse{}, nil

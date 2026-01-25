@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"sort" // ソートのために追加
 	"strings"
 )
 
@@ -21,10 +22,7 @@ type ProcessedFile struct {
 }
 
 // ProcessZipAndSplit はZIPデータを展開し、正規化・検証を行った上で断片化します。
-//
-// NOTE:
-// - CalculateSiteRoot は後方互換なし方針で廃止されました。
-// - root_proof はクライアント側で計算し、オンチェーンでは VerifyFragment により検証されます。
+// 決定論的な順序を保証するため、ファイルパスでソートを行います。
 func ProcessZipAndSplit(zipData []byte, chunkSize int) ([]ProcessedFile, error) {
 	if chunkSize <= 0 {
 		return nil, fmt.Errorf("chunk size must be greater than 0")
@@ -37,9 +35,6 @@ func ProcessZipAndSplit(zipData []byte, chunkSize int) ([]ProcessedFile, error) 
 
 	var processedFiles []ProcessedFile
 	var totalDecompressedSize int64
-
-	// ファイルパスでソートして決定論的な順序を保証するのが望ましいですが、
-	// zipReader.Fileの順序に依存せず、後続のMerkle構築時にパス順でソートします。
 
 	for _, file := range zipReader.File {
 		if file.FileInfo().IsDir() {
@@ -59,7 +54,7 @@ func ProcessZipAndSplit(zipData []byte, chunkSize int) ([]ProcessedFile, error) 
 		cleanPath = strings.TrimPrefix(cleanPath, "/")
 		cleanPath = strings.TrimPrefix(cleanPath, "./")
 
-		// 解凍サイズ制限の事前チェック（圧縮ヘッダのみのチェックなので不完全だが目安）
+		// 解凍サイズ制限の事前チェック
 		if totalDecompressedSize+file.FileInfo().Size() > DecompressionLimit {
 			return nil, fmt.Errorf("decompression limit exceeded")
 		}
@@ -97,11 +92,15 @@ func ProcessZipAndSplit(zipData []byte, chunkSize int) ([]ProcessedFile, error) 
 		})
 	}
 
+	// 決定論的な順序を保証するため、パスで昇順ソートを実行します
+	sort.Slice(processedFiles, func(i, j int) bool {
+		return processedFiles[i].Path < processedFiles[j].Path
+	})
+
 	return processedFiles, nil
 }
 
-// SplitDataIntoFragments splits the provided byte slice into chunks of specific size.
-// Returns an error if chunkSize is not positive.
+// SplitDataIntoFragments は指定されたバイトスライスを特定のサイズで分割します。
 func SplitDataIntoFragments(data []byte, chunkSize int) ([][]byte, error) {
 	if chunkSize <= 0 {
 		return nil, fmt.Errorf("chunk size must be positive, got %d", chunkSize)
@@ -125,7 +124,7 @@ func SplitDataIntoFragments(data []byte, chunkSize int) ([][]byte, error) {
 			end = dataLen
 		}
 
-		// Create a copy of the slice to ensure independence
+		// 独立性を保証するためスライスのコピーを作成します
 		chunk := make([]byte, end-start)
 		copy(chunk, data[start:end])
 		chunks = append(chunks, chunk)

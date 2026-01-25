@@ -23,33 +23,20 @@ type Keeper struct {
 	Params collections.Item[types.Params]
 	Port   collections.Item[string]
 
-	// チャネル管理用
 	MetastoreChannel  collections.Item[string]
 	DatastoreChannels collections.KeySet[string]
 	StorageInfos      collections.Map[string, types.StorageInfo]
 
-	// --- CSU Session management (upload_id 完全削除 / 後方互換なし) ---
-
-	// Sessions: Key=session_id, Value=types.Session
-	Sessions collections.Map[string, types.Session]
-
-	// SessionFragmentSeen: Key=frag_key (session_id\x00path\x00%020d(index))
-	SessionFragmentSeen collections.KeySet[string]
-
-	// FragmentSeqToFragmentKey: Key=seq_key (%020d), Value=frag_key
+	Sessions                 collections.Map[string, types.Session]
+	SessionFragmentSeen      collections.KeySet[string]
 	FragmentSeqToFragmentKey collections.Map[string, string]
-
-	// ManifestSeqToSessionID: Key=seq_key (%020d), Value=session_id
-	ManifestSeqToSessionID collections.Map[string, string]
-
-	// SessionUploadTokenHash: Key=session_id, Value=sha256(token) etc.
-	SessionUploadTokenHash collections.Map[string, []byte]
+	ManifestSeqToSessionID   collections.Map[string, string]
+	SessionUploadTokenHash   collections.Map[string, []byte]
 
 	ibcKeeperFn   func() *ibckeeper.Keeper
 	bankKeeper    types.BankKeeper
-	accountKeeper types.AccountKeeper // 既存：後続Issueで整理（現Issueでは保持）
+	accountKeeper types.AccountKeeper
 
-	// Issue6/7/8
 	authzKeeper    types.AuthzKeeper
 	feegrantKeeper types.FeegrantKeeper
 }
@@ -72,15 +59,13 @@ func NewKeeper(
 	sb := collections.NewSchemaBuilder(storeService)
 
 	k := Keeper{
-		storeService: storeService,
-		cdc:          cdc,
-		addressCodec: addressCodec,
-		authority:    authority,
-
-		bankKeeper:    bankKeeper,
-		accountKeeper: accountKeeper,
-		ibcKeeperFn:   ibcKeeperFn,
-
+		storeService:   storeService,
+		cdc:            cdc,
+		addressCodec:   addressCodec,
+		authority:      authority,
+		bankKeeper:     bankKeeper,
+		accountKeeper:  accountKeeper,
+		ibcKeeperFn:    ibcKeeperFn,
 		authzKeeper:    authzKeeper,
 		feegrantKeeper: feegrantKeeper,
 
@@ -91,44 +76,11 @@ func NewKeeper(
 		DatastoreChannels: collections.NewKeySet(sb, types.DatastoreChannelKey, "datastore_channels", collections.StringKey),
 		StorageInfos:      collections.NewMap(sb, types.StorageEndpointKey, "storage_infos", collections.StringKey, codec.CollValue[types.StorageInfo](cdc)),
 
-		Sessions: collections.NewMap(
-			sb,
-			types.SessionKey,
-			"sessions",
-			collections.StringKey,
-			codec.CollValue[types.Session](cdc),
-		),
-
-		SessionFragmentSeen: collections.NewKeySet(
-			sb,
-			types.SessionFragmentSeenKey,
-			"session_fragment_seen",
-			collections.StringKey,
-		),
-
-		FragmentSeqToFragmentKey: collections.NewMap(
-			sb,
-			types.FragmentSeqToFragmentKey,
-			"fragment_seq_to_fragment_key",
-			collections.StringKey,
-			collections.StringValue,
-		),
-
-		ManifestSeqToSessionID: collections.NewMap(
-			sb,
-			types.ManifestSeqToSessionKey,
-			"manifest_seq_to_session_id",
-			collections.StringKey,
-			collections.StringValue,
-		),
-
-		SessionUploadTokenHash: collections.NewMap(
-			sb,
-			types.SessionUploadTokenHashKey,
-			"session_upload_token_hash",
-			collections.StringKey,
-			collections.BytesValue,
-		),
+		Sessions:                 collections.NewMap(sb, types.SessionKey, "sessions", collections.StringKey, codec.CollValue[types.Session](cdc)),
+		SessionFragmentSeen:      collections.NewKeySet(sb, types.SessionFragmentSeenKey, "session_fragment_seen", collections.StringKey),
+		FragmentSeqToFragmentKey: collections.NewMap(sb, types.FragmentSeqToFragmentKey, "fragment_seq_to_fragment_key", collections.StringKey, collections.StringValue),
+		ManifestSeqToSessionID:   collections.NewMap(sb, types.ManifestSeqToSessionKey, "manifest_seq_to_session_id", collections.StringKey, collections.StringValue),
+		SessionUploadTokenHash:   collections.NewMap(sb, types.SessionUploadTokenHashKey, "session_upload_token_hash", collections.StringKey, collections.BytesValue),
 	}
 
 	schema, err := sb.Build()
@@ -138,6 +90,37 @@ func NewKeeper(
 	k.Schema = schema
 
 	return k
+}
+
+// HandleExpiredSessions は期限を過ぎたセッションを安全にクローズし、権限を剥奪します。
+func (k Keeper) HandleExpiredSessions(ctx sdk.Context) error {
+	currentTime := ctx.BlockTime().Unix()
+	var expiredIDs []string
+
+	err := k.Sessions.Walk(ctx, nil, func(id string, sess types.Session) (bool, error) {
+		if sess.State != types.SessionState_SESSION_STATE_CLOSED_SUCCESS &&
+			sess.State != types.SessionState_SESSION_STATE_CLOSED_FAILED &&
+			sess.DeadlineUnix < currentTime {
+			expiredIDs = append(expiredIDs, id)
+		}
+		return false, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, id := range expiredIDs {
+		sess, _ := k.Sessions.Get(ctx, id)
+		sess.State = types.SessionState_SESSION_STATE_CLOSED_FAILED
+		sess.CloseReason = "EXPIRED"
+		k.SetSession(ctx, sess)
+
+		// 権限の物理的撤去
+		k.RevokeCSUGrants(ctx, sess.Owner)
+
+		ctx.Logger().Info("Session expired and closed", "session_id", id)
+	}
+	return nil
 }
 
 func (k Keeper) GetAuthority() []byte {
@@ -150,20 +133,15 @@ func (k Keeper) RegisterChannel(ctx sdk.Context, portID, channelID string) error
 		return fmt.Errorf("channel not found: %s", channelID)
 	}
 	counterpartyPort := channel.Counterparty.PortId
-	ctx.Logger().Info("🔗 Detecting IBC Channel Connection", "channel_id", channelID, "counterparty_port", counterpartyPort)
 
 	var connectionType string
 	switch counterpartyPort {
 	case "metastore":
 		connectionType = "mdsc"
-		if err := k.MetastoreChannel.Set(ctx, channelID); err != nil {
-			return err
-		}
+		k.MetastoreChannel.Set(ctx, channelID)
 	case "datastore":
 		connectionType = "fdsc"
-		if err := k.DatastoreChannels.Set(ctx, channelID); err != nil {
-			return err
-		}
+		k.DatastoreChannels.Set(ctx, channelID)
 	default:
 		return nil
 	}
@@ -172,8 +150,6 @@ func (k Keeper) RegisterChannel(ctx sdk.Context, portID, channelID string) error
 		ChannelId:      channelID,
 		ConnectionType: connectionType,
 	}
-	if err := k.StorageInfos.Set(ctx, channelID, info); err != nil {
-		return fmt.Errorf("failed to initialize storage info: %w", err)
-	}
+	k.StorageInfos.Set(ctx, channelID, info)
 	return nil
 }
