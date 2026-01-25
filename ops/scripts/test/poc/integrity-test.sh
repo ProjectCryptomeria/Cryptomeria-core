@@ -309,7 +309,7 @@ tus_upload() {
   local metadata="session_id ${meta_session}"
 
   # 1. POST: Creation (Upload-Length, Metadata, Token)
-  log "  -> Creating Upload..."
+  log "   -> Creating Upload..."
   local post_response
   post_response=$(curl -i -X POST "${upload_url}" \
     -H "Tus-Resumable: 1.0.0" \
@@ -331,10 +331,10 @@ tus_upload() {
     location="${API_URL}${location}"
   fi
   
-  log "  -> Upload Location: ${location}"
+  log "   -> Upload Location: ${location}"
 
   # 2. PATCH: Data Transfer (Binary Body)
-  log "  -> Uploading Data..."
+  log "   -> Uploading Data..."
   local patch_response
   patch_response=$(curl -i -X PATCH "${location}" \
     -H "Tus-Resumable: 1.0.0" \
@@ -345,7 +345,7 @@ tus_upload() {
     
   # 204 No Content が返れば成功
   if echo "${patch_response}" | grep -q "204 No Content"; then
-    log "  -> Upload Completed Successfully!"
+    log "   -> Upload Completed Successfully!"
   else
     fail "TUS Upload Failed. Response:\n${patch_response}"
   fi
@@ -354,7 +354,7 @@ tus_upload() {
 # Step 7: Wait for Executor (Async)
 wait_for_completion() {
   log "【System】Executorによる自動処理を待機中..."
-  log "  (Decrypt -> Unzip -> Fragment -> Distribute -> Finalize)"
+  log "   (Decrypt -> Unzip -> Fragment -> Distribute -> Finalize)"
   
   local max_retries=60 # 60秒待機
   local count=0
@@ -364,7 +364,7 @@ wait_for_completion() {
     # ステート確認
     state=$("${BINARY}" q gateway session "${SESSION_ID}" --node "${NODE_URL}" -o json | jq -r '.session.state')
     
-    log "  Session State: ${state} (${count}s)"
+    log "   Session State: ${state} (${count}s)"
     
     if [[ "${state}" == "SESSION_STATE_CLOSED_SUCCESS" ]]; then
       log "SUCCESS: セッションが正常に完了しました！"
@@ -385,26 +385,26 @@ verify_result() {
   log "【Verify】事後検証を行います..."
   
   # 1. Authz Revoke check (DistributeBatch権限が剥奪されているか)
-  log "  -> Checking Authz Revocation..."
+  log "   -> Checking Authz Revocation..."
   local grants
   grants=$("${BINARY}" q authz grants "${EXECUTOR_ADDR}" "${OWNER_ADDR}" --msg-type "/gwc.gateway.v1.MsgDistributeBatch" --node "${NODE_URL}" -o json 2>/dev/null || echo "{}")
   local count=$(echo "${grants}" | jq '.grants | length')
   
   if [[ "${count}" == "0" || "${count}" == "null" ]]; then
-    log "  OK: Authz grant revoked."
+    log "   OK: Authz grant revoked."
   else
-    log "  WARNING: Authz grant still exists. (Implementation pending?)"
+    log "   WARNING: Authz grant still exists. (Implementation pending?)"
   fi
   
   # 2. File Availability Check (Gateway経由でダウンロードできるか)
-  log "  -> Checking File Download..."
+  log "   -> Checking File Download..."
   local download_url="${API_URL}/render/${PROJECT_NAME}/${PROJECT_VERSION}/index.html"
   local http_code=$(curl -o /dev/null -s -w "%{http_code}\n" "${download_url}")
   
   if [[ "${http_code}" == "200" ]]; then
-    log "  OK: File is downloadable (Status 200)."
+    log "   OK: File is downloadable (Status 200)."
   else
-    log "  WARNING: File download check failed (Status ${http_code})."
+    log "   WARNING: File download check failed (Status ${http_code})."
   fi
 }
 

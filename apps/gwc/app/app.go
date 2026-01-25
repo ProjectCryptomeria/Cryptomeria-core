@@ -46,7 +46,8 @@ import (
 	ibckeeper "github.com/cosmos/ibc-go/v10/modules/core/keeper"
 
 	"gwc/docs"
-	gatewaymodulekeeper "gwc/x/gateway/keeper"
+	gatewaykeeper "gwc/x/gateway/keeper"
+	gatewayserver "gwc/x/gateway/server"
 )
 
 const (
@@ -101,7 +102,7 @@ type App struct {
 
 	// simulation manager
 	sm            *module.SimulationManager
-	GatewayKeeper gatewaymodulekeeper.Keeper
+	GatewayKeeper gatewaykeeper.Keeper
 }
 
 func init() {
@@ -292,12 +293,12 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 		}
 	}
 
-	gatewayConfig := gatewaymodulekeeper.GatewayConfig{
+	gatewayConfig := gatewayserver.GatewayConfig{
 		MDSCEndpoint:  mdscEndpoint,
 		FDSCEndpoints: fdscEndpoints,
 	}
 
-	gatewaymodulekeeper.RegisterCustomHTTPRoutes(apiSvr.ClientCtx, apiSvr.Router, app.GatewayKeeper, gatewayConfig)
+	gatewayserver.RegisterCustomHTTPRoutes(apiSvr.ClientCtx, apiSvr.Router, app.GatewayKeeper, gatewayConfig)
 }
 
 // GetMaccPerms returns a copy of the module account permissions

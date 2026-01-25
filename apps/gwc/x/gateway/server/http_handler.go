@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"gwc/x/gateway/keeper"
 	"gwc/x/gateway/types"
 
 	"github.com/cosmos/cosmos-sdk/client"
@@ -26,7 +27,7 @@ type GatewayConfig struct {
 }
 
 // RegisterCustomHTTPRoutes はGateway ChainのカスタムHTTPルートを登録します
-func RegisterCustomHTTPRoutes(clientCtx client.Context, r *mux.Router, k Keeper, config GatewayConfig) {
+func RegisterCustomHTTPRoutes(clientCtx client.Context, r *mux.Router, k keeper.Keeper, config GatewayConfig) {
 	// 1. レンダリング用 (ダウンロード) ルート
 	r.HandleFunc("/render/{project}/{version}/{path:.*}", func(w http.ResponseWriter, req *http.Request) {
 		handleRender(clientCtx, k, w, req, config)
@@ -38,7 +39,7 @@ func RegisterCustomHTTPRoutes(clientCtx client.Context, r *mux.Router, k Keeper,
 	if config.UploadDir == "" {
 		config.UploadDir = "./tmp/uploads" // デフォルト値
 	}
-	
+
 	tusHandler, err := NewTusHandler(clientCtx, k, config.UploadDir, "/upload/tus-stream/")
 	if err != nil {
 		// 初期化失敗時はログに出してルート登録をスキップするか、panicさせる
@@ -50,7 +51,7 @@ func RegisterCustomHTTPRoutes(clientCtx client.Context, r *mux.Router, k Keeper,
 }
 
 // handleRender は指定されたプロジェクト・バージョンのファイルを解決・復元して返却します
-func handleRender(clientCtx client.Context, k Keeper, w http.ResponseWriter, req *http.Request, config GatewayConfig) {
+func handleRender(clientCtx client.Context, k keeper.Keeper, w http.ResponseWriter, req *http.Request, config GatewayConfig) {
 	// 1. パス変数の解析
 	vars := mux.Vars(req)
 	projectName := vars["project"]

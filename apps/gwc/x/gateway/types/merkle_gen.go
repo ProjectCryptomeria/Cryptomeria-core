@@ -5,19 +5,15 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
-
-	"gwc/x/gateway/types"
 )
 
-// CSUFragmentProofData は1つの断片に関する証明データの集合です。
-// MsgDistributeBatchの作成に使用されます。
 type CSUFragmentProofData struct {
 	Path          string
 	Index         uint64
 	FragmentBytes []byte
-	FragmentProof *types.MerkleProof
+	FragmentProof *MerkleProof // types. を削除
 	FileSize      uint64
-	FileProof     *types.MerkleProof
+	FileProof     *MerkleProof // types. を削除
 }
 
 // CSUSessionProofData はセッション全体の証明データです。
@@ -73,7 +69,7 @@ func BuildCSUProofs(files []ProcessedFile) (*CSUSessionProofData, error) {
 			// Leaf計算: SHA256("FRAG:{path}:{index}:{hex(SHA256(fragment_bytes))}")
 			chunkHash := sha256.Sum256(chunk)
 			chunkHashHex := hex.EncodeToString(chunkHash[:])
-			
+
 			rawLeaf := fmt.Sprintf("FRAG:%s:%d:%s", f.Path, index, chunkHashHex)
 			leafHash := sha256.Sum256([]byte(rawLeaf))
 			leafHex := hex.EncodeToString(leafHash[:])
@@ -97,7 +93,7 @@ func BuildCSUProofs(files []ProcessedFile) (*CSUSessionProofData, error) {
 		rawFileLeaf := fmt.Sprintf("FILE:%s:%d:%s", f.Path, info.fileSize, info.fileRoot)
 		fileLeafHash := sha256.Sum256([]byte(rawFileLeaf))
 		fileLeafHex := hex.EncodeToString(fileLeafHash[:])
-		
+
 		fileLeaves = append(fileLeaves, fileLeafHex)
 	}
 
@@ -116,7 +112,7 @@ func BuildCSUProofs(files []ProcessedFile) (*CSUSessionProofData, error) {
 	for fileIdx, f := range files {
 		info, ok := fileInfos[f.Path]
 		if !ok {
-			continue 
+			continue
 		}
 
 		// このファイルの FileProof (Root Treeに対する証明)
@@ -196,13 +192,13 @@ func (m *MerkleTree) Root() string {
 }
 
 // GenerateProof は指定されたインデックスの葉に対するMerkle Proofを生成します
-func (m *MerkleTree) GenerateProof(index int) (*types.MerkleProof, error) {
+func (m *MerkleTree) GenerateProof(index int) (*MerkleProof, error) {
 	if index < 0 || index >= len(m.Leaves) {
 		return nil, fmt.Errorf("index out of range")
 	}
 
-	proof := &types.MerkleProof{
-		Steps: []*types.MerkleStep{},
+	proof := &MerkleProof{
+		Steps: []*MerkleStep{},
 	}
 
 	currentIndex := index
@@ -232,7 +228,7 @@ func (m *MerkleTree) GenerateProof(index int) (*types.MerkleProof, error) {
 			siblingIsLeft = false
 		}
 
-		proof.Steps = append(proof.Steps, &types.MerkleStep{
+		proof.Steps = append(proof.Steps, &MerkleStep{
 			SiblingHex:    siblingHex,
 			SiblingIsLeft: siblingIsLeft,
 		})

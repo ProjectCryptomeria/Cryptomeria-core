@@ -1,15 +1,12 @@
 package server
 
 import (
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	"gwc/x/gateway/client/executor"
+	"gwc/x/gateway/keeper"
 	"net/http"
 	"os"
 	"strings"
-
-	"gwc/x/gateway/types"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/tus/tusd/v2/pkg/filestore"
@@ -17,7 +14,7 @@ import (
 )
 
 // NewTusHandler creates a new http.Handler for TUS protocol.
-func NewTusHandler(clientCtx client.Context, k Keeper, uploadDir string, basePath string) (http.Handler, error) {
+func NewTusHandler(clientCtx client.Context, k keeper.Keeper, uploadDir string, basePath string) (http.Handler, error) {
 	// Create upload directory if not exists
 	if err := os.MkdirAll(uploadDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create upload directory: %w", err)
@@ -31,8 +28,8 @@ func NewTusHandler(clientCtx client.Context, k Keeper, uploadDir string, basePat
 	//composer.UseFinisher(store) // Finisher is used to clean up, but we want to process the file first
 
 	config := tusd.Config{
-		BasePath:      basePath,
-		StoreComposer: composer,
+		BasePath:              basePath,
+		StoreComposer:         composer,
 		NotifyCompleteUploads: true,
 	}
 
@@ -46,7 +43,7 @@ func NewTusHandler(clientCtx client.Context, k Keeper, uploadDir string, basePat
 		for {
 			event := <-handler.CompleteUploads
 			fmt.Printf("Upload %s finished\n", event.Upload.ID)
-			
+
 			// Trigger Executor Logic
 			// Note: This runs in a goroutine, so we need to handle errors independently
 			err := processCompletedUpload(clientCtx, k, event.Upload)
@@ -68,21 +65,21 @@ func NewTusHandler(clientCtx client.Context, k Keeper, uploadDir string, basePat
 				http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
 				return
 			}
-			
+
 			// Validate Token
 			// Since we are in HTTP handler (outside of block execution), we use Query mechanism or direct keeper check if strictly local.
 			// Ideally we use clientCtx.Query... but here we have the Keeper struct.
 			// Since GWC node *contains* the state, we can try to check verification.
 			// However, Keeper needs sdk.Context. We don't have it.
 			// Strategy: We must rely on the upload metadata containing session_id and verify it later, OR
-			// verify the token here if possible. 
+			// verify the token here if possible.
 			// For this implementation, we will perform a basic check if possible, or defer to the Executor phase for strict checks.
 			// BUT, to prevent DoS, we SHOULD check here.
-			
+
 			// NOTE: In a real ABCI app, you cannot access state arbitrarily without a context.
 			// We will assume the Executor handles the strict "linkage" check.
 			// For a production system, we'd need a way to query the state here (via clientCtx).
-			
+
 			// Let's attach the token to metadata for later verification
 			// TUS client should send metadata: Upload-Metadata: session_id dXNlcg==, ...
 			// We can validate the token against the computed hash in the Executor phase.
@@ -93,7 +90,7 @@ func NewTusHandler(clientCtx client.Context, k Keeper, uploadDir string, basePat
 }
 
 // processCompletedUpload is the bridge between TUS and Cosmos SDK Tx
-func processCompletedUpload(clientCtx client.Context, k Keeper, upload tusd.FileInfo) error {
+func processCompletedUpload(clientCtx client.Context, k keeper.Keeper, upload tusd.FileInfo) error {
 	// Extract metadata
 	meta := upload.MetaData
 	sessionID := meta["session_id"]
@@ -112,12 +109,12 @@ func processCompletedUpload(clientCtx client.Context, k Keeper, upload tusd.File
 		return fmt.Errorf("unable to resolve file path for upload %s", upload.ID)
 	}
 
-	// In tusd filestore, the path is stored in upload.Storage["Path"] if accessible, 
+	// In tusd filestore, the path is stored in upload.Storage["Path"] if accessible,
 	// otherwise we construct it.
 	// Actually, `upload.Storage` is a map[string]string. Filestore sets "Path".
-	
+
 	fmt.Printf("Starting execution for session %s, file %s\n", sessionID, filePath)
 
 	// Call the Executor Logic
-	return ExecuteSessionUpload(clientCtx, sessionID, filePath)
+	return executor.ExecuteSessionUpload(clientCtx, sessionID, filePath)
 }
