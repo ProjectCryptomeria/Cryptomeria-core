@@ -53,7 +53,7 @@ generate_genesis() {
     # これにより、collect-gentxs が出力した結果を上書きしてしまう事故を防ぐ
     if [ "$CHAIN_ID" = "gwc" ]; then
         echo "🔧 Configuring gwc gateway.params.local_admin via custom command..."
-        $BINARY genesis set-local-admin "$ADDR" --home "$HOME_DIR"
+        $BINARY genesis set-admin "$ADDR" --home "$HOME_DIR"
     fi
     # ▲▲▲ 移動ここまで ▲▲▲
 
