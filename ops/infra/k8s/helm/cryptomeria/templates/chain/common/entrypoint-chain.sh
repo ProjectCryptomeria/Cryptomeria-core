@@ -46,7 +46,7 @@ if [ ! -f "$INIT_FLAG" ]; then
             if curl -s -f -o "$CHAIN_HOME/config/genesis.json" "$GENESIS_URL"; then
                 echo "✅ Genesis downloaded."
                 
-                # ▼▼▼ 追加: バリデータ鍵のダウンロードと配置 ▼▼▼
+                # バリデータ鍵のダウンロードと配置
                 KEY_URL="http://cryptomeria-genesis-server/${CHAIN_ID}-priv_validator_key.json"
                 echo "--> Downloading Validator Key from $KEY_URL..."
                 if curl -s -f -o "$CHAIN_HOME/config/priv_validator_key.json" "$KEY_URL"; then
@@ -55,7 +55,6 @@ if [ ! -f "$INIT_FLAG" ]; then
                     echo "❌ Failed to download validator key."
                     exit 1
                 fi
-                # ▲▲▲ 追加ここまで ▲▲▲
                 
                 break
             fi
@@ -74,27 +73,39 @@ if [ ! -f "$INIT_FLAG" ]; then
 fi
 
 # local-admin 鍵の自動インポート (Dev用) 
-# ニーモニックファイルが存在する場合のみインポートを実行
-# ファイル名の命名規則: gwc.local-admin.mnemonic, fdsc-0.local-admin.mnemonic
 MNEMONIC_FILE="/etc/mnemonics/${CHAIN_ID}.local-admin.mnemonic"
 
 if [ -f "$MNEMONIC_FILE" ]; then
     log_step "Importing local-admin key from $MNEMONIC_FILE..."
-    # 既に存在する場合のエラーを回避するため、一度削除するか、|| true で無視する
-    # ここでは既存チェックを省き、エラー無視で追記を試みる
+    # 鍵のインポートを実行
     $CHAIN_BINARY keys add local-admin --recover --keyring-backend test --home $CHAIN_HOME < $MNEMONIC_FILE >/dev/null 2>&1 || true
 
-    # ▼▼▼ 修正: local-adminのアドレスを取得し、Authority用の環境変数をセット ▼▼▼
+    # ▼▼▼ 追加: local-adminをGenesisのパラメータに設定する処理 ▼▼▼
     if [ "$CHAIN_BINARY" == "gwcd" ]; then
+        log_step "Configuring gateway local-admin in genesis.json..."
+        
+        # インポートした鍵のアドレスを取得
         ADMIN_ADDR=$($CHAIN_BINARY keys show local-admin -a --keyring-backend test --home $CHAIN_HOME)
-        export GWC_GATEWAY_AUTHORITY="$ADMIN_ADDR"
-        echo "🔧 [Env Override] GWC_GATEWAY_AUTHORITY set to local-admin: $GWC_GATEWAY_AUTHORITY"
+        
+        if [ -n "$ADMIN_ADDR" ]; then
+            # さきほど実装した SetLocalAdminCmd を実行して genesis.json を更新
+            $CHAIN_BINARY genesis set-local-admin "$ADMIN_ADDR" --home "$CHAIN_HOME"
+            
+            # 実行権限などの環境変数もセット
+            export GWC_GATEWAY_AUTHORITY="$ADMIN_ADDR"
+            echo "🔧 [Genesis Update] local_admin set to: $ADMIN_ADDR"
+            echo "🔧 [Env Override] GWC_GATEWAY_AUTHORITY set to: $GWC_GATEWAY_AUTHORITY"
+        else
+            echo "❌ Failed to retrieve local-admin address."
+            exit 1
+        fi
     fi
+    # ▲▲▲ 追加ここまで ▲▲▲
 else
-    log_step "No mnemonic found at $MNEMONIC_FILE. Skipping import."
+    log_step "No mnemonic found at $MNEMONIC_FILE. Skipping key import and admin configuration."
 fi
 
-# --- 修正後: Hot Reload対応ループ ---
+# --- Hot Reload対応ループ ---
 echo "--- Starting node loop for $CHAIN_ID (Port: 26657/1317/9090) ---"
 
 # シグナルハンドリング（コンテナ停止時は正しく終了させる）
