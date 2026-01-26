@@ -8,13 +8,20 @@ ENV DEBIAN_FRONTEND=noninteractive
 # ここで最低限の curl や git は入れておく必要があります。
 # 修正: テストスクリプト等で使用するため python3 を明示的に追加 (jsonモジュール等の欠損防止)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-	bash make curl git ca-certificates gnupg lsb-release python3 \
-	&& apt-get clean && rm -rf /var/lib/apt/lists/*
+    bash make curl git ca-certificates gnupg lsb-release python3 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # --- Just (Command Runner) ---
 # 公式インストールスクリプトを使用
 RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | \
-	bash -s -- --to /usr/local/bin
+    bash -s -- --to /usr/local/bin
+
+# --- Kind (Kubernetes in Docker) ---
+# アーキテクチャを自動判別して適切なバイナリをインストールします
+RUN arch=$(dpkg --print-architecture) && \
+    curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-${arch} && \
+    chmod +x ./kind && \
+    mv ./kind /usr/local/bin/kind
 
 # --- Ignite CLI (Featureがないため手動インストール) ---
 RUN curl -sSfL https://get.ignite.com/cli! | bash
