@@ -12,6 +12,7 @@ USER_HOME="/home/$CHAIN_APP_NAME"
 CHAIN_HOME="$USER_HOME/.$CHAIN_APP_NAME"
 CHAIN_BINARY="${CHAIN_APP_NAME}d"
 INIT_FLAG="$CHAIN_HOME/init_complete_v5"
+EXECUTOR_NAME="local-admin"
 GENESIS_URL="http://cryptomeria-genesis-server/${CHAIN_ID}.json"
 
 log_step() { echo "--> $1"; }
@@ -72,20 +73,20 @@ if [ ! -f "$INIT_FLAG" ]; then
     fi
 fi
 
-# local-admin 鍵の自動インポート (Dev用) 
-MNEMONIC_FILE="/etc/mnemonics/${CHAIN_ID}.local-admin.mnemonic"
+# executor鍵の自動インポート (Dev用) 
+MNEMONIC_FILE="/etc/mnemonics/${CHAIN_ID}.${EXECUTOR_NAME}.mnemonic"
 
 if [ -f "$MNEMONIC_FILE" ]; then
-    log_step "Importing local-admin key from $MNEMONIC_FILE..."
+    log_step "Importing executor key from $MNEMONIC_FILE..."
     # 鍵のインポートを実行
-    $CHAIN_BINARY keys add local-admin --recover --keyring-backend test --home $CHAIN_HOME < $MNEMONIC_FILE >/dev/null 2>&1 || true
+    $CHAIN_BINARY keys add $EXECUTOR_NAME --recover --keyring-backend test --home $CHAIN_HOME < $MNEMONIC_FILE >/dev/null 2>&1 || true
 
-    # ▼▼▼ 追加: local-adminをGenesisのパラメータに設定する処理 ▼▼▼
+    # ▼▼▼ 追加: executorをGenesisのパラメータに設定する処理 ▼▼▼
     if [ "$CHAIN_BINARY" == "gwcd" ]; then
-        log_step "Configuring gateway local-admin in genesis.json..."
+        log_step "Configuring gateway executor in genesis.json..."
         
         # インポートした鍵のアドレスを取得
-        ADMIN_ADDR=$($CHAIN_BINARY keys show local-admin -a --keyring-backend test --home $CHAIN_HOME)
+        ADMIN_ADDR=$($CHAIN_BINARY keys show $EXECUTOR_NAME -a --keyring-backend test --home $CHAIN_HOME)
         
         if [ -n "$ADMIN_ADDR" ]; then
             # さきほど実装した SetLocalAdminCmd を実行して genesis.json を更新
@@ -93,10 +94,10 @@ if [ -f "$MNEMONIC_FILE" ]; then
             
             # 実行権限などの環境変数もセット
             export GWC_GATEWAY_AUTHORITY="$ADMIN_ADDR"
-            echo "🔧 [Genesis Update] local_admin set to: $ADMIN_ADDR"
+            echo "🔧 [Genesis Update] executor set to: $ADMIN_ADDR"
             echo "🔧 [Env Override] GWC_GATEWAY_AUTHORITY set to: $GWC_GATEWAY_AUTHORITY"
         else
-            echo "❌ Failed to retrieve local-admin address."
+            echo "❌ Failed to retrieve executor address."
             exit 1
         fi
     fi
