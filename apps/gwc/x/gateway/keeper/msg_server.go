@@ -1,3 +1,5 @@
+// projectcryptomeria/cryptomeria-core/Cryptomeria-core-4-dev/apps/gwc/x/gateway/keeper/msg_server.go
+
 package keeper
 
 import (
@@ -27,10 +29,18 @@ var _ types.MsgServer = msgServer{}
 func (k msgServer) RegisterStorage(goCtx context.Context, msg *types.MsgRegisterStorage) (*types.MsgRegisterStorageResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// 1. ガバナンス権限（authority）の検証
-	if msg.Authority != sdk.AccAddress(k.Keeper.authority).String() {
-		return nil, errorsmod.Wrapf(sdkerrors.ErrUnauthorized, "invalid authority; expected %s, got %s", sdk.AccAddress(k.Keeper.authority).String(), msg.Authority)
+	// --- 修正箇所：権限の検証ロジック ---
+	// ガバナンス権限 (k.Keeper.authority) ではなく、Params に保存されている LocalAdmin を取得します。
+	params, err := k.Params.Get(ctx)
+	if err != nil {
+		return nil, err
 	}
+
+	// メッセージの Authority が、設定された LocalAdmin と一致するか確認します。
+	if msg.Authority != params.LocalAdmin {
+		return nil, errorsmod.Wrapf(sdkerrors.ErrUnauthorized, "invalid authority; expected %s (LocalAdmin), got %s", params.LocalAdmin, msg.Authority)
+	}
+	// -------------------------------
 
 	// 2. ストレージ情報の更新
 	for _, info := range msg.StorageInfos {
