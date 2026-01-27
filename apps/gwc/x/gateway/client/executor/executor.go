@@ -141,85 +141,67 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	return nil
 }
 
-// broadcastWithRetry は Tx の署名とブロードキャストを行い、結果を返します。
-// ここでは「ガスを固定値にせず、simulate で動的に見積もる」版の例を示します。
-func broadcastWithRetry(clientCtx client.Context, txf tx.Factory, msg sdk.Msg) (*sdk.TxResponse, error) {
-	// 1) まずはガス見積もり（simulate）
-	//    CLI の --gas=auto 相当：Tx を組み立てて simulate し、必要 gas を算出する。
-	estimatedGas, err := simulateGas(clientCtx, txf, msg)
+// prepareFactory は、指定された bech32 形式のアカウントアドレスから
+// 署名・ブロードキャスト用の tx.Factory を構築します。
+//
+// 修正ポイント:
+// 1) chain-id が未設定の場合に、RPC の /status から chain-id を補完する（保険）
+// 2) WithFromName に「アドレス」を渡さず、Keyring から「キー名（例: local-admin）」を逆引きして渡す
+func prepareFactory(clientCtx client.Context, fromAddr string) (tx.Factory, error) {
+	// 0) 入力アドレスの妥当性チェック（bech32 → AccAddress）
+	fromAcc, err := sdk.AccAddressFromBech32(fromAddr)
 	if err != nil {
-		return nil, fmt.Errorf("ガス見積もり(simulate)に失敗しました: %w", err)
+		return tx.Factory{}, err
 	}
 
-	// 2) 見積もった gas に安全係数(GasAdjustment)を掛けて上限を設定する
-	//    例：gas_used が 100000 なら 1.5 倍して 150000 を上限にする。
-	adjusted := uint64(float64(estimatedGas) * txf.GasAdjustment())
-	if adjusted == 0 {
-		// 念のため 0 は避ける
-		adjusted = 1
+	// 1) chain-id の保証
+	// client.toml の chain-id が空の環境があるため、空なら RPC の status から拾って補完する
+	if clientCtx.ChainID == "" && clientCtx.Client != nil {
+		status, err := clientCtx.Client.Status(context.Background())
+		if err == nil && status.NodeInfo.Network != "" {
+			clientCtx = clientCtx.WithChainID(status.NodeInfo.Network)
+		}
 	}
-	txf = txf.WithGas(adjusted)
 
-	// 3) 通常通り Tx を構築→署名→ブロードキャスト
-	txBuilder, err := txf.BuildUnsignedTx(msg)
+	// それでも chain-id が空なら、この時点でブロードキャストは不可能なのでエラーにする
+	if clientCtx.ChainID == "" {
+		return tx.Factory{}, fmt.Errorf("chain ID required but not specified")
+	}
+
+	// 2) 署名者（FromName）を Keyring から解決する
+	// Cosmos SDK の tx.Factory は「キー名」で署名するため、アドレスをそのまま WithFromName に渡すと
+	// key not found になり得る。そこで、アドレス→キー名を Keyring から逆引きする。
+	krRec, err := clientCtx.Keyring.KeyByAddress(fromAcc)
 	if err != nil {
-		return nil, err
+		return tx.Factory{}, fmt.Errorf("キー名の解決に失敗しました (address=%s): %w", fromAddr, err)
 	}
+	fromName := krRec.Name
 
-	if err := tx.Sign(context.Background(), txf, txf.FromName(), txBuilder, true); err != nil {
-		return nil, err
-	}
-
-	txBytes, err := clientCtx.TxConfig.TxEncoder()(txBuilder.GetTx())
+	// 3) tx.Factory の構築
+	// pflag.FlagSet は空で渡し、必要な設定は WithXXX で上書きする
+	txf, err := tx.NewFactoryCLI(clientCtx, &pflag.FlagSet{})
 	if err != nil {
-		return nil, err
+		return tx.Factory{}, err
 	}
 
-	res, err := clientCtx.BroadcastTxSync(txBytes)
+	// ここでチェーンID・ガス・署名モード・署名鍵などを設定する
+	txf = txf.
+		WithChainID(clientCtx.ChainID).
+		WithGas(2000000).
+		WithGasAdjustment(1.5).
+		WithKeybase(clientCtx.Keyring).
+		WithFromName(fromName).
+		WithSignMode(signing.SignMode_SIGN_MODE_DIRECT)
+
+	// 4) AccountNumber / Sequence の取得と設定
+	// ここがズレると "account sequence mismatch" になるため、毎回最新を取得する
+	num, seq, err := clientCtx.AccountRetriever.GetAccountNumberSequence(clientCtx, fromAcc)
 	if err != nil {
-		return nil, err
+		return tx.Factory{}, err
 	}
 
-	if res.Code != 0 {
-		return nil, fmt.Errorf("tx failed with code %d: %s", res.Code, res.RawLog)
-	}
-
-	return res, nil
+	return txf.WithAccountNumber(num).WithSequence(seq), nil
 }
-
-// simulateGas は msg から Tx を組み立て、simulate で必要 gas を見積もって返します。
-// ここは Cosmos SDK の simulate 機構を使います。
-// ※ SDK の版や接続方式によって実装が多少変わるので、まずはこの形で導入して調整するのが安全です。
-func simulateGas(clientCtx client.Context, txf tx.Factory, msg sdk.Msg) (uint64, error) {
-	// simulate では「ダミー署名付き Tx」が必要になることが多いので、
-	// いったん unsigned を作って署名関数を通します（CLI でも同様の手順）。
-	txBuilder, err := txf.BuildUnsignedTx(msg)
-	if err != nil {
-		return 0, err
-	}
-
-	// overwrite=true にして署名を必ず上書きする（simulate 用）
-	if err := tx.Sign(context.Background(), txf, txf.FromName(), txBuilder, true); err != nil {
-		return 0, err
-	}
-
-	txBytes, err := clientCtx.TxConfig.TxEncoder()(txBuilder.GetTx())
-	if err != nil {
-		return 0, err
-	}
-
-	// Cosmos SDK の Simulate は gRPC (cosmos.tx.v1beta1.Service/Simulate) を使います。
-	// clientCtx には gRPC 接続が入っている想定です。
-	simRes, err := clientCtx.Simulate(txBytes)
-	if err != nil {
-		return 0, err
-	}
-
-	// GasUsed を返す
-	return uint64(simRes.GasInfo.GasUsed), nil
-}
-
-
 
 // broadcastWithRetry はTxの署名とブロードキャストを行い、結果を返します
 func broadcastWithRetry(clientCtx client.Context, txf tx.Factory, msg sdk.Msg) (*sdk.TxResponse, error) {
