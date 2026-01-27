@@ -2,8 +2,10 @@ package executor
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"mime"
 	"os"
 	"path/filepath"
 	"time"
@@ -111,6 +113,41 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		txf = txf.WithSequence(txf.Sequence() + 1)
 	}
 
+	// =========================================================================
+	// マニフェストファイル情報の構築
+	// =========================================================================
+
+	// Proto定義では map<string, FileMetadata> は map[string]*FileMetadata となる
+	manifestFiles := make(map[string]*types.FileMetadata)
+
+	// 断片情報をパスごとに整理 (PacketFragmentMappingのポインタ配列)
+	fragmentsByPath := make(map[string][]*types.PacketFragmentMapping)
+
+	for _, frag := range proofData.Fragments {
+		mapping := &types.PacketFragmentMapping{
+			FdscId:     "fdsc",
+			FragmentId: fmt.Sprintf("%s-%d", frag.Path, frag.Index),
+		}
+		fragmentsByPath[frag.Path] = append(fragmentsByPath[frag.Path], mapping)
+	}
+
+	for _, file := range files {
+		mimeType := mime.TypeByExtension(filepath.Ext(file.Filename))
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+
+		// FileRootの再計算
+		fileRoot := calculateFileRoot(file.Path, file.Chunks)
+
+		manifestFiles[file.Path] = &types.FileMetadata{
+			MimeType:  mimeType,
+			FileSize:  uint64(len(file.Content)), // 修正: Size -> FileSize
+			Fragments: fragmentsByPath[file.Path],
+			FileRoot:  fileRoot,
+		}
+	}
+
 	projectName := types.GetProjectNameFromZipFilename(filepath.Base(zipFilePath))
 	finalizeMsg := &types.MsgFinalizeAndCloseSession{
 		Executor:  executorAddr,
@@ -122,6 +159,7 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 			FragmentSize: session.FragmentSize,
 			Owner:        session.Owner,
 			SessionId:    sessionID,
+			Files:        manifestFiles,
 		},
 	}
 
@@ -136,13 +174,34 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	return nil
 }
 
+// calculateFileRoot は types.BuildCSUProofs と同じロジックでFileRootを計算します
+func calculateFileRoot(path string, chunks [][]byte) string {
+	if len(chunks) == 0 {
+		return ""
+	}
+	var leaves []string
+	for i, chunk := range chunks {
+		// FRAG:{path}:{index}:{hex(SHA256(bytes))}
+		chunkHash := sha256.Sum256(chunk)
+		chunkHashHex := hex.EncodeToString(chunkHash[:])
+
+		rawLeaf := fmt.Sprintf("FRAG:%s:%d:%s", path, i, chunkHashHex)
+		leafHash := sha256.Sum256([]byte(rawLeaf))
+		leafHex := hex.EncodeToString(leafHash[:])
+
+		leaves = append(leaves, leafHex)
+	}
+	// typesパッケージのMerkleTree実装を利用
+	return types.NewMerkleTree(leaves).Root()
+}
+
 func prepareFactory(clientCtx client.Context, fromAddr string) (tx.Factory, error) {
 	fromAcc, err := sdk.AccAddressFromBech32(fromAddr)
 	if err != nil {
 		return tx.Factory{}, err
 	}
 
-	// 'test' キーリング・バックエンドへのフォールバック（間に合わせ修正）
+	// 'test' キーリング・バックエンドへのフォールバック
 	krRec, err := clientCtx.Keyring.KeyByAddress(fromAcc)
 	if err != nil {
 		homeDir := clientCtx.HomeDir

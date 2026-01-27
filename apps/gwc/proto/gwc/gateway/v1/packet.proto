@@ -34,7 +34,7 @@ message PacketFragmentMapping {
 // FileMetadata defines metadata for a single file within the project
 message FileMetadata {
   string mime_type = 1;
-  uint64 size      = 2;
+  uint64 file_size = 2; // manifestと同じようにsize→file_sizeに変更
   repeated PacketFragmentMapping fragments = 3;
   // file_root is the Merkle root of fragments in this file
   string file_root = 4;
