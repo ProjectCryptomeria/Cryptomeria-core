@@ -162,6 +162,7 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 			Files:        manifestFiles,
 		},
 	}
+	fmt.Printf("[Executor] Manifest: %+v\n", finalizeMsg.Manifest)
 
 	fmt.Printf("[Executor] Finalizing session...\n")
 	_, err = broadcastAndConfirm(clientCtx, txf, finalizeMsg)
