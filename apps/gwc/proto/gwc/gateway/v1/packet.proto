@@ -3,6 +3,9 @@ package gwc.gateway.v1;
 
 option go_package = "gwc/x/gateway/types";
 
+// 追加: gogoprotoをインポートして、Map Entryのコード生成をCosmos SDK互換にする
+import "gogoproto/gogo.proto";
+
 // GatewayPacketData defines the packet data for the gateway module
 message GatewayPacketData {
   oneof packet {
@@ -45,11 +48,9 @@ message ManifestPacket {
   string project_name = 1;
   string version      = 2;
   map<string, FileMetadata> files = 3;
-
   // CSU verification fields
   string root_proof = 4;
   uint64 fragment_size = 5;
-
   // identity fields
   string owner = 6;
   string session_id = 7;
