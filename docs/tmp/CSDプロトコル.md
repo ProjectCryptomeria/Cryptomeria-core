@@ -1,356 +1,284 @@
-# Cryptomeria Secure Download (CSD) プロトコル定義書 v1.0
+# Cryptomeria Secure Download (CSD) プロトコル定義書 v1.3
 
 本書は、Cryptomeria における **安全かつ分散可能なダウンロード**を実現するための **CSD (Cryptomeria Secure Download) プロトコル**を定義する。  
 CSD は「巨大データは HTTP で取得し、正しさは暗号学的検証によって担保する」ことを原則とし、ダウンロードのたびにブロックチェーン履歴が増える方式（巨大データのオンチェーン保存、またはダウンロードごとのオンチェーン書き込み）を禁止する。
+
+v1.3 の前提は以下である。
+
+- クライアントは ZIP をアップロードするが、システムは ZIP を保存しない。
+- CSU の通り、アップロード時に ZIP を解凍し **Entry（ファイル）単位**に分解し、
+  - `filepath` 昇順で取り扱い、
+  - **ファイル本体（bytes）だけ**を保存する。
+- よって、ダウンロード時に ZIP 圧縮・ZIP 復元は不要であり、`/render` は指定 `filepath` のファイル bytes を返す。
 
 ---
 
 ## 1. 用語と登場人物（主体 / 客体）
 
-本プロトコルは、複数の主体（Actor）が相互に通信し、ある主体が提供するデータ（客体 / Object）を別主体が取得・検証することによって成立する。
-
 ### 1.1 Actor（主体）
 
 - **Client（クライアント）**
-  - ユーザーの端末またはライブラリ。
-  - 本プロトコルにおける **最終的な検証主体**（trust anchor を参照し検証を行う）。
-  - GWC / MDSC / FDSC のいずれも信用しない。
+  - ブラウザまたは SDK。
+  - 本プロトコルにおける **最終的な検証主体**（データ採用の最終判断者）。
+  - GWC-GW / MDSC / FDSC のいずれも信用しない。
 
-- **GWC Node（GWC）**
-  - Cryptomeria の中核チェーン（以下 GWC Chain）に接続するノード。
-  - オンチェーンの参照（query）を提供する。
-  - 追加で HTTP プロキシ（任意機能）を提供しうるが、**Client は GWC HTTP 応答を信用しない**。
+- **GWC HTTP Gateway（GWC-GW）**
+  - HTTP エンドポイント `/render/...` を提供するゲートウェイ。
+  - 内部で MDSC/FDSC からファイル断片を取得し、目的 `filepath` のファイル bytes を復元して応答する。
+  - **悪意があり得る主体**として扱い、Client は応答を暗号学的に検証する。
 
 - **MDSC Node（MDSC）**
-  - Manifest を HTTP で提供するストレージ系ノード。
+  - メタデータ（manifest 等）を HTTP で提供するノード。
+  - **悪意があり得る主体**。
 
 - **FDSC Node（FDSC）**
-  - Fragment（巨大データの断片）を HTTP で提供するストレージ系ノード。
+  - 断片データ（fragment）を HTTP で提供するノード。
+  - **悪意があり得る主体**。
 
 - **GWC Chain（チェーン）**
   - 合意された状態（State）を持つ台帳。
-  - CSD で扱うオンチェーン情報は **小さいデータ（セッション/コミットメント/ノード情報等）に限定**する。
+  - CSD で扱うオンチェーン情報は **小さいデータ（コミットメント、証明、ノード情報等）に限定**する。
 
 ### 1.2 Object（客体）
 
+- **File（ファイル）**
+  - 保存単位。`(project, version, filepath)` により一意に識別される。
+  - Client が `/render` で取得する対象。
+
 - **Release Record（公開コミット）**
-  - 「この project/version の正はこれである」という **検証アンカー**。
-  - オンチェーンに保存される（小データ）。
+  - `project/version` に対する「正」を固定する検証アンカー（小データ、オンチェーン）。
+
+- **File Commitment（ファイルコミットメント）**
+  - 特定 `filepath` の内容（バイト列）を一意に確定するコミット（小データ）。
+  - 例: `file_hash = H(file_bytes)`
+
+- **File Inclusion Proof（包含証明）**
+  - `filepath` の File Commitment が Release Record の `root_commitment` に含まれることを示す証明（小データ）。
+
+- **Chain State Proof（チェーン状態証明）**
+  - Release Record がチェーン状態に実在することを示す証明（小データ）。
+  - Client が追加通信なしで検証できる形で `/render` 応答に同梱される。
+
 - **Endpoint Registry（ノード到達情報レジストリ）**
-  - MDSC/FDSC の到達先（API endpoint 等）集合をオンチェーンで共有する（小データ）。
-- **Manifest（メタデータ）**
-  - ファイル/ページを構成する断片情報（fragment_id 等）と検証情報（chunk_hash 等）を含む。
-  - HTTP で取得する（中サイズ）。
-- **Fragment（断片データ）**
-  - ページ/ファイルの実体データ断片。巨大データ。
-  - HTTP で取得する（巨大データ）。
-- **Rendered File / Page（復元結果）**
-  - Fragment を結合して得られる最終バイト列（巨大データ）。
+  - MDSC/FDSC の到達先集合をオンチェーンで共有する（小データ）。
+
+- **Rendered File Payload（レンダー結果）**
+  - `/render/...` 応答ボディとして返る、要求対象ファイルのバイト列（巨大データになり得る）。
+
+- **CSD Envelope（検証封筒）**
+  - Rendered File Payload を検証するためのコミットメント・証明を束ねた構造体（小〜中）。
+  - **同一 HTTP 応答**で Client に渡される（追加リクエスト不要）。
 
 ---
 
 ## 2. 優先度（設計原則）
 
-CSD は、設計上の衝突が起きた場合、以下の優先度で採否を決める。
+### P0: 巨大データはオンチェーン禁止（HTTP/Query以外で運ばない）
+- 禁止: fragment/ファイル本体、巨大メタデータのオンチェーン保存
+- 許可: 参照（query）と HTTP による取得
 
-### P0: ダウンロードは IBC を使用しない（HTTP で取得する）
-- ダウンロードデータ取得は HTTP のみとする。
-- ダウンロードのたびにオンチェーン履歴を増やす方式は不採用。
-- オンチェーンは **参照（query）** のみ使用し、ダウンロード要求に伴う Tx は行わない。
+### P1: クライアント操作は「単一の GET /render/...」のみ
+- Client が行うネットワーク処理は必ず次の 1 回のみ:
+  - `GET /render/<project_name>/<version>/<filepath>`
+- Client にチェーンRPC、MDSC/FDSC直叩き、複数回 fetch を要求しない。
 
-### P1: ゼロトラスト（Client が GWC/MDSC/FDSC を一切信用しない）
-- Client は、GWC/MDSC/FDSC の応答が悪意により改ざんされ得る前提で動作する。
-- Client は暗号学的検証により、取得データの採否を決める。
+### P2: ゼロトラスト（Client は GWC-GW/MDSC/FDSC を一切信用しない）
+- `/render` 応答は改ざんされ得る前提。
+- Client は暗号学的検証により採否を決める。
 
-### P2: 固定 IP / SPOF と裏技運用の禁止
-- 特定ノード固定でリクエストが集中する仕組みを禁止する。
-- リレイヤーや起動スクリプト等による「外部注入」で到達先を固定する方式を禁止する。
+### P3: 固定 IP / SPOF と裏技運用の禁止
+- 特定ノード固定で集中する仕組みを禁止。
+- 起動時スクリプト注入等で到達先を固定する方式を禁止。
 
-### P3: ノード情報共有は（新規 P2P 基盤を作らず）チェーンを用いる
-- ノード到達情報の共有はオンチェーンの Endpoint Registry を正とする。
-- 頻繁な変更は TTL/heartbeat で吸収する。
+### P4: ノード情報共有は（新規 P2P 基盤を作らず）チェーンを用いる
+- 到達先共有は Endpoint Registry を正とし、TTL/heartbeat で吸収。
 
-### P4: オンチェーン書き込みは「小さい Tx」のみ許可
-- 許可: endpoint 登録/更新、release 記録、セッション/証明等の小データ
-- 禁止: fragment 本体、ファイル本体、巨大メタデータのオンチェーン保存
-
----
-
-## 3. セキュリティモデル
-
-### 3.1 信頼しないもの
-Client は以下を信頼しない。
-- GWC/MDSC/FDSC の HTTP 応答内容
-- 単一ノードの提供する endpoint 情報
-- ネットワーク上の中間者
-
-### 3.2 信頼アンカー
-- Client は **GWC Chain の合意状態**を信頼アンカーとする。
-  - 実装形態（light client / state proof / 信頼されたRPC等）は実装依存。
-  - 本プロトコルは「チェーン状態に固定されたコミットメント」を検証基準として要求する。
-
-### 3.3 攻撃に対する要件
-- 悪意ある MDSC が偽 manifest を返しても Client が採用しないこと。
-- 悪意ある FDSC が偽 fragment を返しても Client が採用しないこと。
-- いずれかのノードが停止/劣化しても、Client が別ノードへフォールバックできること。
+### P5: オンチェーン書き込みは「小さい Tx」のみ許可
+- 許可: endpoint 更新、release 記録、証明/コミットメント
+- 禁止: ダウンロード要求ごとのTx、巨大データ保存
 
 ---
 
-## 4. オンチェーン状態（小 Tx のみ）
+## 3. セキュリティモデル（P1制約下での成立条件）
 
-本節の状態は GWC Chain に存在し、Client は query で参照する。  
-ダウンロード要求に伴う Tx は行わない。
+### 3.1 問題設定
+P1 により Client は `/render` しか叩けない。  
+よって、悪意ある GWC-GW が `filepath` に対して **改ざん済みファイル bytes**を返すリスクがある。
 
-### 4.1 Release Registry（ReleaseRecord）
+### 3.2 解決方針（v1.3）
+- `/render` 応答は **Rendered File Payload**（ファイル実体）と **CSD Envelope**（検証情報）を同一応答で返す。
+- Client は追加通信なしに以下を検証する:
+
+**(A) ファイル整合性**  
+- `H(Rendered File Payload) == file_hash`
+
+**(B) リリース整合性（包含証明）**  
+- `file_hash`（および file_size/file_path）が `project/version` の `root_commitment` に含まれること
+
+**(C) チェーン整合性**  
+- `root_commitment` を含む Release Record がチェーン状態に実在すること（Chain State Proof）
+
+### 3.3 信頼アンカー
+- Client はチェーン検証のためにアウトオブバンドな trust anchor を持つ必要がある。
+- `/render` 応答に含まれる情報を trust anchor として採用してはならない。
+
+---
+
+## 4. オンチェーン状態（小 Tx）
+
+### 4.1 Release Registry（Release Record）
 
 #### 目的
-- `(project, version)` に対して **正しい公開物のコミットメント**を固定し、Client が検証基準として参照できるようにする。
+- `project/version` に対して **ファイル集合（filepath昇順）**の正を固定する。
 
 #### 概念スキーマ（抽象）
 - `project: ProjectID`
 - `version: VersionID`
-- `session_id: SessionID`
-- `root_proof: RootProof`  
-  - CSU RootProof v1（または互換版）に準拠する
-- `manifest_digest: Digest`  
-  - manifest の正規化表現に対するハッシュ
-- `fragment_size: uint`  
+- `root_commitment: Digest`
+  - Release 内ファイル集合のコミットメント（5章参照）
+- `commitment_scheme: SchemeID`
+  - 例: `CSD-FILEHASH-MERKLE-v1`
 - `status: active | revoked`
 - `created_at: height/time`
 - `owner: address`（任意）
 
 #### 生成主体 / 客体
-- 主体: GWC（アップロード finalize 時）
-- 客体: ReleaseRecord（小 Tx）
-
-#### 制約
-- 1つの `(project, version)` に対し、有効な ReleaseRecord は高々1つ（active）。
-- revoked はクライアントが拒否する。
+- 主体: GWC（アップロード finalize 時等）
+- 客体: Release Record（小 Tx）
 
 ---
 
-### 4.2 Endpoint Registry v2（EndpointRecord）
-
-#### 目的
-- 固定IPを排し、MDSC/FDSC の複数 endpoint をチェーン上で共有する。
-
-#### 概念スキーマ（抽象）
-- `role: "mdsc" | "fdsc"`
-- `storage_id: StorageID`  
-  - 例: fdsc_id / mdsc_id など（システムで一意）
-- `node_id: NodeID`
-- `api_endpoint: URL`
-- `weight: uint`（任意）
-- `expires_at: height/time`（TTL）
-- `last_seen: height/time`（任意）
-
-#### 登録主体 / 客体
-- 主体: MDSC/FDSC（自己 heartbeat により更新）  
-  - （拡張）GWC が観測した endpoint を「証明付きで」登録する方式も許容
-- 客体: EndpointRecord（小 Tx）
-
-#### 制約
-- TTL を持ち、期限切れ endpoint は無効扱い。
-- 役割ごとに許可された node_id / owner により更新権限を制御できる（実装依存）。
+### 4.2 Endpoint Registry v2（Endpoint Record）
+（v1.1 と同じ。Client の単一GET要件とは独立）
 
 ---
 
-## 5. オフチェーン取得（HTTP）と検証オブジェクト
+## 5. コミットメント・スキーム（CSD-FILEHASH-MERKLE-v1）
 
-### 5.1 CSD Manifest v1
+v1.3 は `/render` が単一ファイル bytes を返すため、**ファイルバイト列へのコミット**を必須とする。  
+これにより、Client は「指定ファイルが正であること」を単一GETで検証できる。
 
-#### 目的
-- file/page を復元するための断片情報を提供し、Client が改ざん検知できるようにする。
+### 5.1 FilePath 正規化（規範）
+`filepath` はコミットと検証の双方で同一でなければならない。  
+正規化規則は以下を満たすこと:
 
-#### 必須要件
-manifest は少なくとも以下を含む（抽象）。
-- `project, version, session_id, fragment_size`
-- `root_proof`（ReleaseRecord と一致すること）
-- `files[path]`:
-  - `size`
-  - `mime_type`（任意）
-  - `file_root`（Merkle root 等）
-  - `fragments[]`:
-    - `fdsc_id: StorageID`
-    - `fragment_id: FragmentID`
-    - `chunk_hash: Digest`  
-      - fragment バイト列のハッシュ（改ざん検出のため必須）
+- 区切りは `/`（スラッシュ）に統一
+- 先頭 `/` を禁止（常に相対パス）
+- `..` セグメントを禁止
+- 空セグメント（`//`）を禁止
+- 文字列エンコーディングは UTF-8 とし、必要なら NFC 正規化（実装依存だが同一化されること）
 
-#### 生成主体 / 客体
-- 主体: MDSC（HTTPで提供）
-- 客体: Manifest
+### 5.2 File Commitment（必須）
+- `file_bytes` は `/render` が返すのと同一のバイト列とする。
+- `file_hash = H(file_bytes)`（例: SHA-256）
+- `file_size = len(file_bytes)`
 
----
+**File Leaf（抽象）**
+- `file_leaf = H( "FILE" || filepath || file_size || file_hash )`
 
-### 5.2 Fragment
+### 5.3 Release Root Commitment（必須）
+- 全 `file_leaf` を `filepath` の所定順序（例: 辞書順）で並べて構成する Merkle Root を `root_commitment` とする。
 
-#### 目的
-- file/page の実体断片を提供する。
-
-#### 形式
-- `fragment_bytes`（巨大データ）
-- 付随情報（任意）: session_id/path/index 等
-
-#### 生成主体 / 客体
-- 主体: FDSC（HTTPで提供）
-- 客体: Fragment
+### 5.4 File Inclusion Proof（必須）
+- `file_leaf` が `root_commitment` に含まれることを示す証明。
+- 証明サイズは `O(log N)` を目標とし、`/render` 応答に同梱可能であること。
 
 ---
 
-## 6. プロトコル・フロー（抽象）
+## 6. /render インターフェース（唯一のクライアント操作）
 
-本節では「主体が誰で、誰に対して、何を要求し、何を検証し、採用するか」を定義する。  
-具体APIパス、protoフィールド、エラーコード等は実装依存とする。
+### 6.1 リクエスト
+- 主体: Client
+- 客体: GWC-GW HTTP
+- 操作: `GET /render/<project_name>/<version>/<filepath>`
+- 意味: Release 内の `filepath` に対応するファイル bytes を返す。
 
----
+### 6.2 レスポンス（規範）
+レスポンスは同一 HTTP 応答で以下を提供しなければならない。
 
-### 6.1 Node Discovery（到達先の発見）
+- **Rendered File Payload（必須）**
+  - 応答ボディとして返るファイルのバイト列（`file_bytes`）
 
-#### 目的
-- Client が固定IPに依存せず、複数の MDSC/FDSC endpoint を得る。
+- **CSD Envelope（必須）**
+  - 追加通信なしで検証できる情報を同梱
 
-#### フロー
-1. **Client（主体）→ GWC Chain（客体）**: Endpoint Registry を query
-2. Client は `role=mdsc` および `role=fdsc` の有効 endpoint（TTL内）集合を得る
-3. Client は endpoint 集合から取得先を選択する（選択戦略は 7章）
+#### CSD Envelope 最小要素（抽象）
+- `project, version, filepath`（正規化後）
+- `file_hash, file_size`
+- `file_inclusion_proof`（file_leaf → root_commitment）
+- `root_commitment`
+- `release_record_ref`（Release Record 識別子）
+- `chain_state_proof`（Release Record がチェーン状態に実在する証明）
 
-#### 成功条件
-- 単一 endpoint 固定に依存せず、複数候補が得られること
+### 6.3 CSD Envelope の搬送方式（同一応答内）
+以下のいずれか（または両方）を準拠とする。
 
----
+- **方式A: HTTP Trailer 搬送（推奨）**
+  - ボディは純粋なファイル bytes（ブラウザ互換性が高い）
+  - Trailer に `CSD-Envelope: <encoded>` を格納
 
-### 6.2 Release Anchor Fetch（検証アンカーの取得）
-
-#### 目的
-- Client が `project/version` の正を確定し、以後の HTTP 応答を検証できるようにする。
-
-#### フロー
-1. **Client（主体）→ GWC Chain（客体）**: ReleaseRecord(project, version) を query
-2. Client は `root_proof, manifest_digest, session_id, fragment_size, status` を得る
-3. `status != active` の場合、Client はダウンロードを拒否する
-
-#### 成功条件
-- Client が検証に必要なアンカーを確定できること
-
----
-
-### 6.3 Manifest Fetch & Verify（manifest の取得と検証）
-
-#### 目的
-- MDSC が悪意でも偽 manifest を採用しない。
-
-#### フロー
-1. **Client（主体）→ MDSC endpoint（客体）**: manifest を HTTP 取得
-2. Client は manifest を正規化表現（canonical）に変換し `digest = H(canonical_manifest)` を計算
-3. Client は `digest == ReleaseRecord.manifest_digest` を検証する
-4. 不一致なら、その MDSC 応答を破棄し、別 MDSC にフォールバックする
-5. 一致なら、manifest を採用し次へ進む
-
-#### 成功条件
-- 単一 MDSC の応答で改ざんが通らないこと（必ず digest 不一致で検知される）
+- **方式B: バンドル Content-Type 搬送**
+  - `Content-Type: application/csd+bundle`
+  - ボディが `{ file_bytes, csd_envelope }` を含む単一構造
 
 ---
 
-### 6.4 Fragment Fetch & Verify（fragment の取得と検証）
+## 7. クライアント検証フロー（単一GET・ゼロトラストの両立）
 
-#### 目的
-- FDSC が悪意でも偽 fragment を採用しない。
+### 7.1 検証手順（規範）
+Client は `/render` 応答を受け取ったら、追加通信なしに次を実施する。
 
-#### フロー（各 fragment について）
-1. **Client（主体）→ FDSC endpoint（客体）**: fragment_id を指定して HTTP 取得
-2. Client は `calc = H(fragment_bytes)` を計算
-3. Client は `calc == manifest.fragments[i].chunk_hash` を検証する
-4. 不一致なら、その FDSC 応答を破棄し、別 FDSC endpoint にフォールバックする
-5. 一致なら、その fragment を採用し、復元バッファに格納する
+1. **File Hash 検証**
+   - 入力: Rendered File Payload（ボディ）, `file_hash`（Envelope）
+   - 検証: `H(body) == file_hash`
+   - 不一致なら **即拒否**
 
-#### 成功条件
-- 単一 FDSC の応答で改ざんが通らないこと（chunk_hash 不一致で検知される）
+2. **File Inclusion 検証**
+   - 入力: `filepath, file_size, file_hash, file_inclusion_proof, root_commitment`
+   - 手順:
+     - `file_leaf = H("FILE" || filepath || file_size || file_hash)`
+     - `VerifyInclusion(file_leaf, file_inclusion_proof, root_commitment) == true`
+   - 不一致なら **拒否**
 
----
+3. **Chain State 検証**
+   - 入力: `chain_state_proof`（Envelope）, trust anchor（アウトオブバンド）
+   - 検証: Release Record の `root_commitment` が合意されたチェーン状態に含まれること
+   - 不一致なら **拒否**
 
-### 6.5 Reconstruct & End-to-End Verify（復元とE2E検証）
+4. **採用**
+   - 1〜3 がすべて真なら、Client はボディを正として採用する。
 
-#### 目的
-- 断片が揃っても「復元結果が正」であることを最終的に保証する。
-
-#### フロー（path について）
-1. Client は fragments を順に結合して `file_bytes` を復元する
-2. Client は manifest 内の `file_root` を再計算し一致を検証する  
-   - `file_root == manifest.files[path].file_root`
-3. Client は `root_proof`（CSU RootProof v1 等）を再計算し一致を検証する  
-   - `computed_root_proof == ReleaseRecord.root_proof`
-4. いずれか不一致なら復元結果を破棄し、必要に応じて別ノードで再取得する
-5. 一致なら Client は `file_bytes` を最終結果として採用する
-
-#### 成功条件
-- どのノードが悪意でも、E2E検証が通らない限り Client が誤ったバイト列を採用しないこと
+### 7.2 セキュリティ結論（規範）
+- GWC-GW が悪意でも、Client が 7.1 を実施する限り改ざんファイルは採用されない。
+- Client は `/render` の単一 GET のみで検証を完結できる。
 
 ---
 
-## 7. Endpoint 選択戦略（分散とSPOF回避）
+## 8. ノード間要件（SPOF回避・裏技排除）
 
-### 7.1 要件
-- 全 Client / 全 GWC が同一 endpoint を叩く固定集中を避ける。
-- 取得失敗時のフェイルオーバーが可能であること。
-
-### 7.2 推奨戦略（例）
-- **Rendezvous Hash（推奨）**
-  - `target = argmax_endpoint H(key, endpoint_id)`  
-  - `key` は `manifest_digest` や `fragment_id` 等を利用
-  - 特徴: 分散が自然で、候補集合が変わっても影響が局所的
-- ランダム（seed = session_id 等）
-- 重み付き選択（weight がある場合）
-
-### 7.3 フェイルオーバー
-- 選択した endpoint が失敗/不一致を返した場合、次順位の endpoint に切り替える。
-- “不一致”は改ざん/故障両方を含み、同様に扱ってよい。
+- GWC-GW は MDSC/FDSC 到達先を固定せず、Endpoint Registry の有効集合から選ぶこと。
+- endpoint 更新は TTL/heartbeat による正規手段とし、外部スクリプト注入を禁止する。
+- 分散選択戦略（Rendezvous Hash 等）は実装依存だが、固定集中を生まないこと。
 
 ---
 
-## 8. ハッシュ／検証関数（抽象）
+## 9. 禁止事項（Prohibitions）
 
-### 8.1 Digest 関数
-- `H(x)` は暗号学的ハッシュ関数（例: SHA-256）を表す。
-- `Digest` は固定長バイト列（表示は hex 等）とする。
-
-### 8.2 Canonical Manifest
-- manifest_digest は「manifest の正規化表現」に対するハッシュである。
-- 正規化方法（proto deterministic marshal 等）は実装により定めるが、  
-  **全 Client が同一入力から同一 digest を得る**ことを必須とする。
-
-### 8.3 RootProof / Merkle
-- `root_proof` は CSU RootProof v1（または互換）の計算規則に従う。
-- CSD は `root_proof` の値そのものを検証アンカーとして利用し、  
-  実装において同一規則で再計算できることを要求する。
-
----
-
-## 9. 禁止事項（Non-Goals / Prohibitions）
-
-- ダウンロードの都度、オンチェーンにデータを書き込む（Tx）こと
-- fragment 本体や file 本体をオンチェーンに保存すること
-- MDSC/FDSC の単一固定 endpoint に依存すること
+- Client に `/render` 以外のネットワーク処理を要求すること
+- ダウンロードの都度オンチェーンに書き込むこと（Tx）
+- fragment/ファイル本体をオンチェーンへ保存すること
+- 固定 endpoint（node-0 等）に依存すること
 - 外部スクリプト注入により endpoint を固定すること
-- HTTP 応答を検証なしで採用すること（manifest / fragment / 復元結果のいずれも）
+- CSD Envelope なしに `/render` 応答を正として扱うこと
 
 ---
 
-## 10. 相互運用性・拡張（非規範）
+## 10. 達成基準（Definition of Done）
 
-- Client がチェーン状態の正当性をより強く担保するために、state proof / light client を導入してよい。
-- Endpoint 登録を「第三者観測で共有」したい場合、署名付きアテステーション方式を追加してよい。
-- GWC が HTTP プロキシ（/render 等）を提供する場合でも、Client 側の検証フローは省略してはならない。
-
----
-
-## 11. 達成基準（Definition of Done）
-
-CSD の実装が成功したとみなす最低条件は以下である。
-
-1. Client は ReleaseRecord を参照し、manifest_digest / root_proof によって改ざんを検出できる
-2. Client は chunk_hash によって fragment 改ざんを検出できる
-3. endpoint が複数存在し、固定集中せずフェイルオーバー可能である
-4. ダウンロード処理がオンチェーン履歴を増やさない（参照のみ）
-5. 外部スクリプト注入を不要とし、ノード自身の正規手段で endpoint が更新される（TTL/heartbeat）
+1. Client は **単一の `GET /render/...`** のみでファイルを取得できる
+2. `/render` 応答に **File Payload + CSD Envelope** が同梱される
+3. Client が 7章の検証で、悪意ある GWC-GW の改ざんを必ず拒否できる
+4. endpoint 固定がなく、TTL/heartbeat による複数到達先運用が可能
+5. ダウンロード処理がオンチェーン履歴を増やさない（参照のみ）
 
 ---
