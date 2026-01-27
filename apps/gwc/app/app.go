@@ -275,7 +275,11 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 
 	// 1. TUSハンドラーの初期化
 	uploadDir := "./tmp/uploads"
-	tusHandler, err := gatewayserver.NewTusHandler(apiSvr.ClientCtx, app.GatewayKeeper, uploadDir, "/")
+
+	// 【修正ポイント】baseURLを "/upload/tus-stream/" に指定します。
+	// これにより、作成されるLocationヘッダーが http://host/upload/tus-stream/UUID となり、
+	// 続くPATCHリクエストも正しくミドルウェアのプレフィックス判定(/upload/tus-stream)に引っかかるようになります。
+	tusHandler, err := gatewayserver.NewTusHandler(apiSvr.ClientCtx, app.GatewayKeeper, uploadDir, "/upload/tus-stream/")
 	if err != nil {
 		panic(fmt.Sprintf("Failed to init TUS: %v", err))
 	}
@@ -297,6 +301,7 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 				w.Header().Set("X-Handler-Source", "Hijack-Middleware")
 
 				// TUSハンドラーへ委譲
+				// プレフィックスを削除して渡す: /upload/tus-stream/UUID -> /UUID
 				http.StripPrefix("/upload/tus-stream", tusHandler).ServeHTTP(w, req)
 				return // 【重要】next.ServeHTTPを呼ばずにここでチェーンを切る
 			}

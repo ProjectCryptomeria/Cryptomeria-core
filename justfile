@@ -64,6 +64,7 @@ all-in-one chains=DEFAULT_CHAINS:
     @just dev::build-all
     @just deploy {{chains}}
     @echo "⏳ Waiting for Pod objects to be created..."
+    @just start-system
     @echo "✅ All-in-one process complete! System was deployed."
 
 deploy-clean chains=DEFAULT_CHAINS:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -euox pipefail
 
 # ==============================================================================
 # 🛡️ CSU (Cryptomeria Secure Upload) 統合整合性テスト
