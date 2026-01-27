@@ -48,8 +48,17 @@ PIDS=()
 for forward in "${FORWARDS[@]}"; do
     IFS=':' read -r service local_port target_port <<< "$forward"
     
-    echo "  → ${service}: localhost:${local_port} → ${target_port}"
-    kubectl port-forward -n "${NAMESPACE}" "svc/${service}" "${local_port}:${target_port}" &>/dev/null &
+    # 【修正】Service名からPod名を推測するロジックを追加
+    # StatefulSetの場合、通常は "サービス名-0" となる (例: cryptomeria-gwc-0)
+    # もしDeploymentでランダムなハッシュがつく場合は、kubectl get pods で動的に取得する必要があるが、
+    # 今回の構成(StatefulSet)であればこれで固定できるはずです。
+    
+    POD_NAME="${service}-0" 
+
+    echo "  → ${service} (pod/${POD_NAME}): localhost:${local_port} → ${target_port}"
+    
+    # "svc/${service}" を "pod/${POD_NAME}" に変更
+    kubectl port-forward -n "${NAMESPACE}" "pod/${POD_NAME}" "${local_port}:${target_port}" &>/dev/null &
     PIDS+=($!)
 done
 

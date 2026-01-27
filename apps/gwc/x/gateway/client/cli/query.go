@@ -25,6 +25,10 @@ func GetQueryCmd(queryRoute string) *cobra.Command {
 	// 追加: 標準的なクエリコマンド
 	cmd.AddCommand(CmdParams())
 	cmd.AddCommand(CmdEndpoints())
+	
+	// 【追加】セッション関連のクエリコマンド
+	cmd.AddCommand(CmdSession())
+	cmd.AddCommand(CmdSessionsByOwner())
 
 	// 追加: ダウンロードコマンド
 	cmd.AddCommand(CmdDownload())
@@ -93,5 +97,74 @@ func CmdEndpoints() *cobra.Command {
 	flags.AddQueryFlagsToCmd(cmd)
 	flags.AddPaginationFlagsToCmd(cmd, "endpoints")
 
+	return cmd
+}
+
+// 【新規追加】指定したIDのセッション情報を取得するコマンド
+func CmdSession() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "session [session-id]",
+		Short: "query a specific session by ID",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			clientCtx, err := client.GetClientQueryContext(cmd)
+			if err != nil {
+				return err
+			}
+
+			queryClient := types.NewQueryClient(clientCtx)
+
+			params := &types.QuerySessionRequest{
+				SessionId: args[0],
+			}
+
+			res, err := queryClient.Session(cmd.Context(), params)
+			if err != nil {
+				return err
+			}
+
+			return clientCtx.PrintProto(res)
+		},
+	}
+
+	flags.AddQueryFlagsToCmd(cmd)
+	return cmd
+}
+
+// 【新規追加】特定の所有者のセッション一覧を取得するコマンド
+func CmdSessionsByOwner() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "list-sessions [owner-address]",
+		Short: "query sessions owned by a specific address",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			clientCtx, err := client.GetClientQueryContext(cmd)
+			if err != nil {
+				return err
+			}
+
+			queryClient := types.NewQueryClient(clientCtx)
+
+			pageReq, err := client.ReadPageRequest(cmd.Flags())
+			if err != nil {
+				return err
+			}
+
+			params := &types.QuerySessionsByOwnerRequest{
+				Owner:      args[0],
+				Pagination: pageReq,
+			}
+
+			res, err := queryClient.SessionsByOwner(cmd.Context(), params)
+			if err != nil {
+				return err
+			}
+
+			return clientCtx.PrintProto(res)
+		},
+	}
+
+	flags.AddQueryFlagsToCmd(cmd)
+	flags.AddPaginationFlagsToCmd(cmd, "sessions")
 	return cmd
 }
