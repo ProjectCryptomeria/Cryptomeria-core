@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,15 +12,14 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/tx"
+	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	"github.com/spf13/pflag"
 )
 
-// MaxFragmentsPerBatch は1つのTxに含める断片の最大数です。
 const MaxFragmentsPerBatch = 50
 
-// ExecuteSessionUpload はTUSでアップロードされたファイルを処理し、オンチェーン配布を行います。
 func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePath string) error {
 	fmt.Printf("[Executor] Starting process for session %s\n", sessionID)
 
@@ -33,7 +33,6 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	}
 	session := res.Session
 
-	// セッション状態のチェック
 	if session.State == types.SessionState_SESSION_STATE_CLOSED_SUCCESS || session.State == types.SessionState_SESSION_STATE_CLOSED_FAILED {
 		return fmt.Errorf("session %s is already closed", sessionID)
 	}
@@ -48,22 +47,18 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		fragmentSize = 1024 * 1024
 	}
 
-	// ZIPの展開と分割（フェーズ1で実装したソート済みロジックを使用）
 	fmt.Printf("[Executor] Processing ZIP... fragment_size=%d\n", fragmentSize)
 	files, err := types.ProcessZipAndSplit(zipBytes, fragmentSize)
 	if err != nil {
-		fmt.Printf("[Executor] ZIP processing failed: %v\n", err)
 		return abortSession(clientCtx, &session, "INVALID_ZIP_CONTENT")
 	}
 
-	// Merkle Proof の生成
 	fmt.Printf("[Executor] Building Merkle Tree...\n")
 	proofData, err := types.BuildCSUProofs(files)
 	if err != nil {
 		return abortSession(clientCtx, &session, "PROOF_GENERATION_FAILED")
 	}
 
-	// オンチェーンの RootProof との照合
 	if proofData.RootProofHex != session.RootProofHex {
 		fmt.Printf("[Executor] RootProof mismatch! OnChain=%s, Computed=%s\n", session.RootProofHex, proofData.RootProofHex)
 		return abortSession(clientCtx, &session, "ROOT_PROOF_MISMATCH")
@@ -73,13 +68,13 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	totalItems := len(proofData.Fragments)
 	fmt.Printf("[Executor] Total fragments to distribute: %d\n", totalItems)
 
-	// Txシーケンスの取得とバッチ送信の準備
+	ownerAddr, _ := sdk.AccAddressFromBech32(session.Owner)
 	txf, err := prepareFactory(clientCtx, executorAddr)
 	if err != nil {
 		return err
 	}
+	txf = txf.WithFeeGranter(ownerAddr)
 
-	// 各バッチの送信
 	for i := 0; i < totalItems; i += MaxFragmentsPerBatch {
 		end := i + MaxFragmentsPerBatch
 		if end > totalItems {
@@ -106,18 +101,16 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		}
 
 		fmt.Printf("[Executor] Broadcasting Batch %d-%d...\n", i, end)
-		_, err := broadcastWithRetry(clientCtx, txf, msg)
+		txRes, err := broadcastAndConfirm(clientCtx, txf, msg)
 		if err != nil {
-			fmt.Printf("[Executor] Failed to broadcast batch: %v\n", err)
+			fmt.Printf("[Executor] Failed to confirm batch Tx: %v\n", err)
 			return abortSession(clientCtx, &session, "DISTRIBUTE_TX_FAILED")
 		}
+		fmt.Printf("[Executor] Batch confirmed successfully. TxHash: %s\n", txRes.TxHash)
 
-		// シーケンスを手動でインクリメントして連続送信を可能にします
-		// TxResponse (res) には AccountNumber/Sequence が含まれないため、txf の値を直接更新します
 		txf = txf.WithSequence(txf.Sequence() + 1)
 	}
 
-	// プロジェクト名の抽出とセッションの確定
 	projectName := types.GetProjectNameFromZipFilename(filepath.Base(zipFilePath))
 	finalizeMsg := &types.MsgFinalizeAndCloseSession{
 		Executor:  executorAddr,
@@ -133,78 +126,64 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	}
 
 	fmt.Printf("[Executor] Finalizing session...\n")
-	_, err = broadcastWithRetry(clientCtx, txf, finalizeMsg)
+	_, err = broadcastAndConfirm(clientCtx, txf, finalizeMsg)
 	if err != nil {
-		return fmt.Errorf("finalize failed: %w", err)
+		fmt.Printf("[Executor] Finalize Tx failed: %v\n", err)
+		return err
 	}
+	fmt.Printf("[Executor] Session %s finalized successfully.\n", sessionID)
 
 	return nil
 }
 
-// prepareFactory は、指定された bech32 形式のアカウントアドレスから
-// 署名・ブロードキャスト用の tx.Factory を構築します。
-//
-// 修正ポイント:
-// 1) chain-id が未設定の場合に、RPC の /status から chain-id を補完する（保険）
-// 2) WithFromName に「アドレス」を渡さず、Keyring から「キー名（例: local-admin）」を逆引きして渡す
 func prepareFactory(clientCtx client.Context, fromAddr string) (tx.Factory, error) {
-	// 0) 入力アドレスの妥当性チェック（bech32 → AccAddress）
 	fromAcc, err := sdk.AccAddressFromBech32(fromAddr)
 	if err != nil {
 		return tx.Factory{}, err
 	}
 
-	// 1) chain-id の保証
-	// client.toml の chain-id が空の環境があるため、空なら RPC の status から拾って補完する
-	if clientCtx.ChainID == "" && clientCtx.Client != nil {
-		status, err := clientCtx.Client.Status(context.Background())
-		if err == nil && status.NodeInfo.Network != "" {
-			clientCtx = clientCtx.WithChainID(status.NodeInfo.Network)
-		}
-	}
-
-	// それでも chain-id が空なら、この時点でブロードキャストは不可能なのでエラーにする
-	if clientCtx.ChainID == "" {
-		return tx.Factory{}, fmt.Errorf("chain ID required but not specified")
-	}
-
-	// 2) 署名者（FromName）を Keyring から解決する
-	// Cosmos SDK の tx.Factory は「キー名」で署名するため、アドレスをそのまま WithFromName に渡すと
-	// key not found になり得る。そこで、アドレス→キー名を Keyring から逆引きする。
+	// 'test' キーリング・バックエンドへのフォールバック（間に合わせ修正）
 	krRec, err := clientCtx.Keyring.KeyByAddress(fromAcc)
 	if err != nil {
-		return tx.Factory{}, fmt.Errorf("キー名の解決に失敗しました (address=%s): %w", fromAddr, err)
+		homeDir := clientCtx.HomeDir
+		if homeDir == "" {
+			homeDir = os.ExpandEnv("$HOME/.gwc")
+		}
+		kb, errK := keyring.New(sdk.KeyringServiceName(), keyring.BackendTest, homeDir, nil, clientCtx.Codec)
+		if errK == nil {
+			if rec, errRec := kb.KeyByAddress(fromAcc); errRec == nil {
+				krRec = rec
+				err = nil
+				clientCtx.Keyring = kb
+			}
+		}
 	}
-	fromName := krRec.Name
+	if err != nil {
+		return tx.Factory{}, fmt.Errorf("key resolution failed: %w", err)
+	}
 
-	// 3) tx.Factory の構築
-	// pflag.FlagSet は空で渡し、必要な設定は WithXXX で上書きする
 	txf, err := tx.NewFactoryCLI(clientCtx, &pflag.FlagSet{})
 	if err != nil {
 		return tx.Factory{}, err
 	}
 
-	// ここでチェーンID・ガス・署名モード・署名鍵などを設定する
-	txf = txf.
-		WithChainID(clientCtx.ChainID).
-		WithGas(2000000).
-		WithGasAdjustment(1.5).
-		WithKeybase(clientCtx.Keyring).
-		WithFromName(fromName).
-		WithSignMode(signing.SignMode_SIGN_MODE_DIRECT)
-
-	// 4) AccountNumber / Sequence の取得と設定
-	// ここがズレると "account sequence mismatch" になるため、毎回最新を取得する
 	num, seq, err := clientCtx.AccountRetriever.GetAccountNumberSequence(clientCtx, fromAcc)
 	if err != nil {
 		return tx.Factory{}, err
 	}
 
-	return txf.WithAccountNumber(num).WithSequence(seq), nil
+	return txf.
+		WithChainID(clientCtx.ChainID).
+		WithGas(4000000).
+		WithGasAdjustment(1.5).
+		WithKeybase(clientCtx.Keyring).
+		WithFromName(krRec.Name).
+		WithSignMode(signing.SignMode_SIGN_MODE_DIRECT).
+		WithAccountNumber(num).
+		WithSequence(seq), nil
 }
 
-// broadcastWithRetry はTxの署名とブロードキャストを行い、結果を返します
-func broadcastWithRetry(clientCtx client.Context, txf tx.Factory, msg sdk.Msg) (*sdk.TxResponse, error) {
+func broadcastAndConfirm(clientCtx client.Context, txf tx.Factory, msg sdk.Msg) (*sdk.TxResponse, error) {
 	txBuilder, err := txf.BuildUnsignedTx(msg)
 	if err != nil {
 		return nil, err
@@ -225,10 +204,24 @@ func broadcastWithRetry(clientCtx client.Context, txf tx.Factory, msg sdk.Msg) (
 	}
 
 	if res.Code != 0 {
-		return nil, fmt.Errorf("tx failed with code %d: %s", res.Code, res.RawLog)
+		return res, fmt.Errorf("tx sync failed (code %d): %s", res.Code, res.RawLog)
 	}
 
-	return res, nil
+	// ブロックに含まれるのを待機（最大60秒）
+	txHash, _ := hex.DecodeString(res.TxHash)
+	for i := 0; i < 20; i++ {
+		time.Sleep(3 * time.Second)
+		txRes, err := clientCtx.Client.Tx(context.Background(), txHash, false)
+		if err == nil {
+			if txRes.TxResult.Code != 0 {
+				return &sdk.TxResponse{TxHash: res.TxHash, Code: txRes.TxResult.Code, RawLog: txRes.TxResult.Log},
+					fmt.Errorf("tx execution failed (code %d): %s", txRes.TxResult.Code, txRes.TxResult.Log)
+			}
+			return &sdk.TxResponse{TxHash: res.TxHash, Code: 0}, nil
+		}
+	}
+
+	return res, fmt.Errorf("tx confirmation timeout: %s", res.TxHash)
 }
 
 func abortSession(clientCtx client.Context, session *types.Session, reason string) error {
@@ -237,12 +230,10 @@ func abortSession(clientCtx client.Context, session *types.Session, reason strin
 		SessionId: session.SessionId,
 		Reason:    reason,
 	}
-	// Abort Tx は個別に準備して送信
-	// ChainIDの補完が必要なため、修正した prepareFactory を利用
 	txf, err := prepareFactory(clientCtx, session.Executor)
 	if err != nil {
 		return err
 	}
-	_, err = broadcastWithRetry(clientCtx, txf, msg)
+	_, err = broadcastAndConfirm(clientCtx, txf, msg)
 	return err
 }

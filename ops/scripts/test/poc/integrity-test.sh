@@ -45,19 +45,15 @@ log_info() { echo -e "\033[1;32m[INFO]\033[0m $1"; }
 log_err()  { echo -e "\033[1;31m[ERROR]\033[0m $1" >&2; }
 fail()     { log_err "$1"; exit 1; }
 
-# 💡 ログ混じりの出力から純粋なJSONのみを抽出する関数
 safe_jq() {
   local input="$1"
   local query="$2"
-  # 先頭の '{' から最後までを抽出してパース
   echo "${input}" | sed -n '/{/,$p' | jq -r "${query}" 2>/dev/null || echo ""
 }
 
-# トランザクション実行と確定待機
 execute_tx() {
   local cmd="$1"
   local tx_res
-  # ログレベルを error に絞り、標準出力の汚れを防ぐ
   tx_res=$(eval "${cmd} -o json --log_level error" || true)
   
   local txhash
@@ -76,7 +72,6 @@ execute_tx() {
 # 3. 実行フェーズ
 # ------------------------------------------------------------------------------
 
-# 🏗️ インフラ: ストレージの登録
 phase_infra() {
   local GWC_API="${API_URL}"
   local MDSC_API="${MDSC_API_URL:-http://localhost:30013}"
@@ -88,12 +83,10 @@ phase_infra() {
 
   log_info "ストレージノードを登録中..."
   local common="--from ${OWNER_KEY} ${KEYRING} --chain-id ${CHAIN_ID} --node ${NODE_URL} -y"
-  # 引数は [channel-id] [chain-id] [api-endpoint] [connection-type] の4つ
   execute_tx "${BINARY} tx gateway register-storage channel-0 fdsc ${FDSC_API} fdsc ${common}" >/dev/null
   execute_tx "${BINARY} tx gateway register-storage channel-1 mdsc ${MDSC_API} mdsc ${common}" >/dev/null
 }
 
-# 📝 コンテンツ: ZIP作成
 phase_content() {
   log_step "Step 2: コンテンツ準備"
   echo "<h1>CSU Integrity Test</h1><p>Time: $(date)</p>" > "${TEST_DIR}/index.html"
@@ -101,18 +94,14 @@ phase_content() {
   log_info "ZIP作成完了: ${ZIP_FILE}"
 }
 
-# 🚀 セッション: 開始と権限委譲
 phase_session() {
   log_step "Step 3: セッション開始 & 権限付与"
   local tx_res
-  # init-session は引数2つ: [fragment-size] [deadline]
   tx_res=$(execute_tx "${BINARY} tx gateway init-session ${FRAGMENT_SIZE} 0 --from ${OWNER_KEY} ${KEYRING} --chain-id ${CHAIN_ID} --node ${NODE_URL} -y")
 
-  # イベントからSession IDとExecutorを抽出
   SESSION_ID=$(safe_jq "${tx_res}" '.events[] | select(.type=="csu_init_session") | .attributes[] | select(.key=="session_id") | .value')
   EXECUTOR_ADDR=$(safe_jq "${tx_res}" '.events[] | select(.type=="csu_init_session") | .attributes[] | select(.key=="executor") | .value')
   
-  # トークンの計算: sha256("upload_token:" + sessionID)
   UPLOAD_TOKEN=$(echo -n "upload_token:${SESSION_ID}" | sha256sum | awk '{print $1}')
 
   log_info "Session ID: ${SESSION_ID}"
@@ -121,11 +110,12 @@ phase_session() {
   log_info "権限(Authz/Feegrant)を委譲中..."
   local common="--from ${OWNER_KEY} ${KEYRING} --chain-id ${CHAIN_ID} --node ${NODE_URL} -y"
   execute_tx "${BINARY} tx feegrant grant ${OWNER_ADDR} ${EXECUTOR_ADDR} ${common}" >/dev/null
+  
+  # Executorが配布と確定のTxを投げられるように権限を付与
   execute_tx "${BINARY} tx authz grant ${EXECUTOR_ADDR} generic --msg-type /gwc.gateway.v1.MsgDistributeBatch ${common}" >/dev/null
   execute_tx "${BINARY} tx authz grant ${EXECUTOR_ADDR} generic --msg-type /gwc.gateway.v1.MsgFinalizeAndCloseSession ${common}" >/dev/null
 }
 
-# 🌳 証明: マークルルート計算
 phase_merkle() {
   log_step "Step 4: Merkle Root コミット"
   export TEST_DIR FRAGMENT_SIZE ROOT_PROOF_FILE
@@ -139,7 +129,7 @@ def merkle(leaves):
     level = list(leaves)
     while len(level) > 1:
         if len(level) % 2: level.append(level[-1])
-        level = [parent(level[i], level[i+1]) for i in range(0, len(level), 2)]
+        level = [parent(level[i], level[i+1]) for i in range(0, level, 2)]
     return level[0] if level else b""
 files = []
 for dp, _, fns in os.walk(os.environ["TEST_DIR"]):
@@ -160,7 +150,6 @@ with open(os.environ["ROOT_PROOF_FILE"], "w") as f: f.write(root.hex())
   execute_tx "${BINARY} tx gateway commit-root-proof ${SESSION_ID} ${root_hex} --from ${OWNER_KEY} ${KEYRING} --chain-id ${CHAIN_ID} --node ${NODE_URL} -y" >/dev/null
 }
 
-# 📤 通信: TUSアップロード
 phase_upload() {
   log_step "Step 5: TUSアップロード"
   local base_url="${API_URL%/}/upload/tus-stream/"
@@ -176,7 +165,6 @@ phase_upload() {
   local location=$(echo "${post_resp}" | grep -i "Location:" | awk '{print $2}' | tr -d '\r')
   [[ -z "${location}" ]] && { echo "${post_resp}" >&2; fail "Locationヘッダーがありません。"; }
 
-  # URL補完ロジック (StripPrefix対策)
   local final_url="${location}"
   if [[ "${final_url}" == /* ]] && [[ "${final_url}" != /upload/tus-stream/* ]]; then
     final_url="/upload/tus-stream${final_url}"
@@ -191,11 +179,9 @@ phase_upload() {
     --data-binary "@${ZIP_FILE}" | grep -q "204 No Content" || fail "PATCHアップロード失敗"
 }
 
-# ✅ 検証: セッション完了とレンダリング
 phase_verify() {
   log_step "Step 6: 最終検証"
   for i in {1..20}; do
-    # セッション状態のクエリ
     local state=$("${BINARY}" q gateway session "${SESSION_ID}" --node "${NODE_URL}" -o json | jq -r '.session.state')
     log_info "   Current State: ${state}"
     [[ "${state}" == "SESSION_STATE_CLOSED_SUCCESS" ]] && break
@@ -209,9 +195,6 @@ phase_verify() {
   [[ "${code}" == "200" ]] && log_info "✅ テスト成功！" || fail "レンダリング失敗 (Status: ${code})"
 }
 
-# ------------------------------------------------------------------------------
-# メイン処理
-# ------------------------------------------------------------------------------
 main() {
   phase_infra
   phase_content
