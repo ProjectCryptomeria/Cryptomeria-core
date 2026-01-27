@@ -109,11 +109,14 @@ phase_session() {
 
   log_info "権限(Authz/Feegrant)を委譲中..."
   local common="--from ${OWNER_KEY} ${KEYRING} --chain-id ${CHAIN_ID} --node ${NODE_URL} -y"
-  execute_tx "${BINARY} tx feegrant grant ${OWNER_ADDR} ${EXECUTOR_ADDR} ${common}" >/dev/null
   
-  # Executorが配布と確定のTxを投げられるように権限を付与
+  # Feegrantの付与
+  execute_tx "${BINARY} tx feegrant grant ${OWNER_ADDR} ${EXECUTOR_ADDR} ${common}" >/dev/null
+
+  # Authzの付与 (配布、完了、および異常終了時のためのAbort権限も追加)
   execute_tx "${BINARY} tx authz grant ${EXECUTOR_ADDR} generic --msg-type /gwc.gateway.v1.MsgDistributeBatch ${common}" >/dev/null
   execute_tx "${BINARY} tx authz grant ${EXECUTOR_ADDR} generic --msg-type /gwc.gateway.v1.MsgFinalizeAndCloseSession ${common}" >/dev/null
+  execute_tx "${BINARY} tx authz grant ${EXECUTOR_ADDR} generic --msg-type /gwc.gateway.v1.MsgAbortAndCloseSession ${common}" >/dev/null
 }
 
 phase_merkle() {

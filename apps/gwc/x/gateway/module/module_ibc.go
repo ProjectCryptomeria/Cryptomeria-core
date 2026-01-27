@@ -74,8 +74,15 @@ func splitFragKey(fragKey string) (sessionID string, ok bool) {
 
 func (im IBCModule) OnAcknowledgementPacket(ctx sdk.Context, channelVersion string, modulePacket channeltypes.Packet, acknowledgement []byte, relayer sdk.AccAddress) error {
 	var ack channeltypes.Acknowledgement
-	if err := ack.Unmarshal(acknowledgement); err != nil {
-		return errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal acknowledgement: %v", err)
+
+	// 修正: 直接 Unmarshal するのではなく、Codecを使用してデコードを試みる
+	// ネットワーク上のパケット形式に合わせて UnmarshalJSON か Unmarshal を選択します。
+	// ここでは、受信側の実装と合わせるために JSON デコードを試行し、失敗したら ProtoBuf を試す構成が安全です。
+	if err := im.cdc.UnmarshalJSON(acknowledgement, &ack); err != nil {
+		// JSONで失敗した場合は ProtoBuf を試行
+		if err := ack.Unmarshal(acknowledgement); err != nil {
+			return errorsmod.Wrapf(sdkerrors.ErrUnknownRequest, "cannot unmarshal acknowledgement: %v", err)
+		}
 	}
 
 	var modulePacketData types.GatewayPacketData

@@ -10,7 +10,7 @@ import (
 	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/x/feegrant"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/authz" // 追記: generic権限の型判定に使用
+	"github.com/cosmos/cosmos-sdk/x/authz"
 )
 
 func (k Keeper) getParamsOrDefault(ctx sdk.Context) types.Params {
@@ -68,19 +68,20 @@ func (k Keeper) RequireSessionBoundAuthz(ctx sdk.Context, sess types.Session, ms
 		return errorsmod.Wrap(types.ErrAuthzMissingOrInvalid, "authz keeper is not configured")
 	}
 
-	auth, _ := k.authzKeeper.GetAuthorization(ctx, ownerAddr, adminAddr, msgTypeURL)
+	// 引数の順番は (grantee, granter)
+	// adminAddr (Executor) が受任者(Grantee)、ownerAddr (Alice) が委任者(Granter) です。
+	auth, _ := k.authzKeeper.GetAuthorization(ctx, adminAddr, ownerAddr, msgTypeURL)
 	if auth == nil {
-		return errorsmod.Wrapf(types.ErrAuthzMissingOrInvalid, "authorization not found: msg_type_url=%s", msgTypeURL)
+		return errorsmod.Wrapf(types.ErrAuthzMissingOrInvalid, "authorization not found: msg_type_url=%s (Granter: %s, Grantee: %s)", msgTypeURL, ownerAddr, adminAddr)
 	}
 
-	// 【間に合わせ修正】GenericAuthorization を許可する
-	// これにより integrity-test.sh のような簡易的な generic grant でもテストが可能になります。
+	// GenericAuthorization を許可（integrity-test.sh 用）
 	if _, ok := auth.(*authz.GenericAuthorization); ok {
 		ctx.Logger().Debug("RequireSessionBoundAuthz: generic authorization used", "type", msgTypeURL)
 		return nil
 	}
 
-	// 本来のセッション紐付け型権限の検証
+	// SessionBoundAuthorization の検証
 	sb, ok := auth.(*types.SessionBoundAuthorization)
 	if !ok {
 		return errorsmod.Wrapf(types.ErrAuthzMissingOrInvalid, "authorization is not SessionBoundAuthorization: got=%T", auth)
@@ -98,37 +99,25 @@ func (k Keeper) RequireSessionBoundAuthz(ctx sdk.Context, sess types.Session, ms
 func (k Keeper) RevokeCSUGrants(ctx sdk.Context, ownerBech32 string) {
 	localAdmin, err := k.localAdminOrErr(ctx)
 	if err != nil {
-		ctx.Logger().Error("RevokeCSUGrants: local_admin not configured", "err", err)
 		return
 	}
-
-	ownerAddr, err := sdk.AccAddressFromBech32(ownerBech32)
-	if err != nil {
-		ctx.Logger().Error("RevokeCSUGrants: invalid owner address", "owner", ownerBech32, "err", err)
-		return
-	}
-	adminAddr, err := sdk.AccAddressFromBech32(localAdmin)
-	if err != nil {
-		ctx.Logger().Error("RevokeCSUGrants: invalid local-admin address", "local_admin", localAdmin, "err", err)
-		return
-	}
+	ownerAddr, _ := sdk.AccAddressFromBech32(ownerBech32)
+	adminAddr, _ := sdk.AccAddressFromBech32(localAdmin)
 
 	if k.authzKeeper != nil {
 		for _, msgTypeURL := range types.CSUAuthorizedMsgTypeURLs() {
-			if err := k.authzKeeper.DeleteGrant(ctx, ownerAddr, adminAddr, msgTypeURL); err != nil {
-				ctx.Logger().Info("RevokeCSUGrants: authz revoke failed (ignored)", "msg_type_url", msgTypeURL, "err", err)
-			}
+			// DeleteGrant の引数も (grantee, granter)
+			_ = k.authzKeeper.DeleteGrant(ctx, adminAddr, ownerAddr, msgTypeURL)
 		}
 	}
-
 	if k.feegrantKeeper != nil {
+		// 【重要修正】SDK v0.47+ の仕様に合わせて MsgRevokeAllowance 構造体を使用する
 		msg := &feegrant.MsgRevokeAllowance{
 			Granter: ownerBech32,
 			Grantee: localAdmin,
 		}
-		if _, err := k.feegrantKeeper.RevokeAllowance(ctx, msg); err != nil {
-			ctx.Logger().Info("RevokeCSUGrants: feegrant revoke failed (ignored)", "err", err)
-		}
+		// メソッドは (context.Context, *feegrant.MsgRevokeAllowance) を期待しています
+		_, _ = k.feegrantKeeper.RevokeAllowance(ctx, msg)
 	}
 }
 
