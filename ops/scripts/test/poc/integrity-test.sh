@@ -78,6 +78,10 @@ execute_tx() {
 
 # 🏗️ インフラ: ストレージの登録
 phase_infra() {
+  local GWC_API="${API_URL}"
+  local MDSC_API="${MDSC_API_URL:-http://localhost:30013}"
+  local FDSC_API="${FDSC_API_URL:-http://localhost:30023}"
+
   log_step "Step 1: インフラ設定"
   OWNER_ADDR=$("${BINARY}" keys show "${OWNER_KEY}" -a ${KEYRING} 2>/dev/null)
   [[ -z "${OWNER_ADDR}" ]] && fail "Key '${OWNER_KEY}' が見つかりません。"
@@ -85,8 +89,8 @@ phase_infra() {
   log_info "ストレージノードを登録中..."
   local common="--from ${OWNER_KEY} ${KEYRING} --chain-id ${CHAIN_ID} --node ${NODE_URL} -y"
   # 引数は [channel-id] [chain-id] [api-endpoint] [connection-type] の4つ
-  execute_tx "${BINARY} tx gateway register-storage channel-0 fdsc ${API_URL} fdsc ${common}" >/dev/null
-  execute_tx "${BINARY} tx gateway register-storage channel-1 mdsc ${API_URL} mdsc ${common}" >/dev/null
+  execute_tx "${BINARY} tx gateway register-storage channel-0 fdsc ${FDSC_API} fdsc ${common}" >/dev/null
+  execute_tx "${BINARY} tx gateway register-storage channel-1 mdsc ${MDSC_API} mdsc ${common}" >/dev/null
 }
 
 # 📝 コンテンツ: ZIP作成
@@ -159,10 +163,9 @@ with open(os.environ["ROOT_PROOF_FILE"], "w") as f: f.write(root.hex())
 # 📤 通信: TUSアップロード
 phase_upload() {
   log_step "Step 5: TUSアップロード"
-  local base_url="${API_URL%/}/upload/tus-stream"
+  local base_url="${API_URL%/}/upload/tus-stream/"
   local metadata="session_id $(echo -n "${SESSION_ID}" | base64 | tr -d '\n')"
   
-  # 【修正】ログ出力とcurlコマンドから末尾のスラッシュを削除
   log_info "POST: ${base_url}"
   local post_resp=$(curl -i -s -X POST "${base_url}" \
     -H "Tus-Resumable: 1.0.0" \
