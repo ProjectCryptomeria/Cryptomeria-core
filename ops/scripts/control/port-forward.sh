@@ -32,10 +32,10 @@ FORWARDS=(
     "cryptomeria-gwc:26657:26657"  # RPC
     "cryptomeria-gwc:9090:9090"   # gRPC
     
-    # fdsc-0 chain
-    "cryptomeria-fdsc-0:1317:1317"
-    "cryptomeria-fdsc-0:26657:26657"
-    "cryptomeria-fdsc-0:9090:9090"
+    # fdsc-chain
+    "cryptomeria-fdsc:1317:1317"
+    "cryptomeria-fdsc:26657:26657"
+    "cryptomeria-fdsc:9090:9090"
     
     # mdsc chain
     "cryptomeria-mdsc:1317:1317"
