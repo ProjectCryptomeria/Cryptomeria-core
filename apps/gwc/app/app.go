@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	clienthelpers "cosmossdk.io/client/v2/helpers"
 	"cosmossdk.io/core/appmodule"
@@ -20,7 +21,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/runtime"
-	"github.com/cosmos/cosmos-sdk/server"
 	"github.com/cosmos/cosmos-sdk/server/api"
 	"github.com/cosmos/cosmos-sdk/server/config"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
@@ -46,9 +46,7 @@ import (
 	icahostkeeper "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/host/keeper"
 	ibctransferkeeper "github.com/cosmos/ibc-go/v10/modules/apps/transfer/keeper"
 	ibckeeper "github.com/cosmos/ibc-go/v10/modules/core/keeper"
-	"github.com/gorilla/mux"
 
-	"gwc/docs"
 	gatewaykeeper "gwc/x/gateway/keeper"
 	gatewayserver "gwc/x/gateway/server"
 )
@@ -273,71 +271,73 @@ func (app *App) SimulationManager() *module.SimulationManager {
 
 // RegisterAPIRoutes は、APIサーバーにすべてのアプリケーションモジュールのルートを登録します。
 func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig) {
-	// 【追加】リクエスト監視ミドルウェア
-	// これで「どのようなパスとしてサーバーに届いているか」が完全に分かります
+	fmt.Println("DEBUG: RegisterAPIRoutes - Starting Injection on EXISTING Router")
+
+	// 1. TUSハンドラーの初期化
+	uploadDir := "./tmp/uploads"
+	tusHandler, err := gatewayserver.NewTusHandler(apiSvr.ClientCtx, app.GatewayKeeper, uploadDir, "/")
+	if err != nil {
+		panic(fmt.Sprintf("Failed to init TUS: %v", err))
+	}
+
+	// =========================================================================
+	// 2. 【絶対確実な修正】既存ルーターへのミドルウェア注入
+	// =========================================================================
+	// ルーター自体を交換せず、既存のルーターに「検問」を設置します。
+	// このミドルウェアはすべてのリクエストに対して「最初に」実行されます。
 	apiSvr.Router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			fmt.Printf("DEBUG: MUX Incoming Request - Method: %s, URL: %s, Path: %s\n", req.Method, req.URL.String(), req.URL.Path)
+			// デバッグ: どんなリクエストが来ているか全表示
+			// fmt.Printf("DEBUG: Incoming Request: %s %s\n", req.Method, req.URL.Path)
+
+			// A. TUS Upload Check
+			// "/upload/tus-stream" で始まるものはここで強制処理して終了
+			if strings.HasPrefix(req.URL.Path, "/upload/tus-stream") {
+				fmt.Printf("DEBUG: Hijack Middleware HIT TUS: %s\n", req.URL.Path)
+				w.Header().Set("X-Handler-Source", "Hijack-Middleware")
+
+				// TUSハンドラーへ委譲
+				http.StripPrefix("/upload/tus-stream", tusHandler).ServeHTTP(w, req)
+				return // 【重要】next.ServeHTTPを呼ばずにここでチェーンを切る
+			}
+
+			// B. Ping Check
+			if req.URL.Path == "/ping" {
+				fmt.Println("DEBUG: Hijack Middleware HIT /ping")
+				w.Header().Set("Content-Type", "text/plain")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("pong"))
+				return // 【重要】チェーンを切る
+			}
+
+			// C. それ以外は標準フローへ
 			next.ServeHTTP(w, req)
 		})
 	})
 
-	// 【修正1】URLパスのクリーニング（/ping/ -> /ping への自動変換など）を無効化し、
-	//  登録したパス通りに厳密にマッチさせる（予期せぬリダイレクトや不一致を防ぐ）
-	apiSvr.Router.SkipClean(true)
-
-	// 1. AppOptionsからGateway設定を読み込み
+	// 3. Renderハンドラー (GETのみ)
+	// これは競合しないので標準的な方法で登録
 	mdscEndpoint, _ := app.appOpts.Get("gwc.mdsc_endpoint").(string)
 	fdscEndpointsRaw, _ := app.appOpts.Get("gwc.fdsc_endpoints").(map[string]interface{})
-
 	fdscEndpoints := make(map[string]string)
 	for k, v := range fdscEndpointsRaw {
 		if strVal, ok := v.(string); ok {
 			fdscEndpoints[k] = strVal
 		}
 	}
-
 	gatewayConfig := gatewayserver.GatewayConfig{
 		MDSCEndpoint:  mdscEndpoint,
 		FDSCEndpoints: fdscEndpoints,
+		UploadDir:     uploadDir,
 	}
-
-	// 2. カスタムHTTPハンドラ（TUSアップロード/レンダリング）の登録
-	// ここで /ping や /upload/tus-stream が登録される
 	gatewayserver.RegisterCustomHTTPRoutes(apiSvr.ClientCtx, apiSvr.Router, app.GatewayKeeper, gatewayConfig)
 
-	// 3. Swagger / OpenAPI の登録
-	if err := server.RegisterSwaggerAPI(apiSvr.ClientCtx, apiSvr.Router, apiConfig.Swagger); err != nil {
-		panic(err)
-	}
-	docs.RegisterOpenAPIService(Name, apiSvr.Router)
-
 	// 4. 標準APIルート（gRPC Gateway）の登録
-	// ここで "/" (Catch-all) が登録されるはず
+	// これにより "/" キャッチオール等が登録されますが、
+	// 上記ミドルウェア(手順2)が先に割り込むため、TUS/Pingは守られます。
 	app.App.RegisterAPIRoutes(apiSvr, apiConfig)
 
-	// 【修正2】ダンプ処理をここに移動（すべて登録し終わった後の状態を確認する）
-	fmt.Println("DEBUG: === FINAL Registered Routes Dump START ===")
-	err := apiSvr.Router.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
-		tpl, err := route.GetPathTemplate()
-		if err != nil {
-			return nil
-		}
-		methods, _ := route.GetMethods()
-		// パスが空の場合は "/" の可能性が高い（PrefixMatcherなど）
-		if tpl == "" {
-			// PathPrefixの場合などはTemplateが空になることがあるため、Regexpを確認
-			pathRegexp, _ := route.GetPathRegexp()
-			fmt.Printf("DEBUG: Route (Regex): %s (Methods: %v)\n", pathRegexp, methods)
-		} else {
-			fmt.Printf("DEBUG: Route: %s (Methods: %v)\n", tpl, methods)
-		}
-		return nil
-	})
-	if err != nil {
-		fmt.Printf("DEBUG: Failed to walk routes: %v\n", err)
-	}
-	fmt.Println("DEBUG: === FINAL Registered Routes Dump END ===")
+	fmt.Println("DEBUG: RegisterAPIRoutes - Injection Complete")
 }
 
 // GetMaccPerms はモジュールアカウントの権限のコピーを返します。

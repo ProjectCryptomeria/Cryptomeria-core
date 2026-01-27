@@ -28,76 +28,17 @@ type GatewayConfig struct {
 
 // RegisterCustomHTTPRoutes はGateway ChainのカスタムHTTPルートを登録します
 func RegisterCustomHTTPRoutes(clientCtx client.Context, r *mux.Router, k keeper.Keeper, config GatewayConfig) {
-	fmt.Println("DEBUG: RegisterCustomHTTPRoutes called")
+	fmt.Println("DEBUG: RegisterCustomHTTPRoutes (Render Only) called")
 
-	// 1. レンダリング用 (ダウンロード) ルート
+	// レンダリング用 (ダウンロード) ルート
+	// GETメソッドのみ。競合しにくいのでここで登録してOK
 	r.HandleFunc("/render/{project}/{version}/{path:.*}", func(w http.ResponseWriter, req *http.Request) {
 		handleRender(clientCtx, k, w, req, config)
 	}).Methods("GET")
-
-	// 2. TUS アップロードルート
-	if config.UploadDir == "" {
-		config.UploadDir = "./tmp/uploads"
-	}
-
-	// TUSハンドラーの初期化 (ベースパスは "/" として初期化)
-	tusHandler, err := NewTusHandler(clientCtx, k, config.UploadDir, "/")
-	if err != nil {
-		panic(fmt.Sprintf("CRITICAL ERROR: Failed to initialize TUS handler: %v", err))
-	}
-
-	fmt.Println("DEBUG: TUS Handler initialized. Registering routes...")
-
-	// 【重要】デバッグ用ラッパー
-	debugWrapper := func(path string, h http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			fmt.Printf("DEBUG: TUS Route HIT! Request Path: %s (Matched: %s)\n", req.URL.Path, path)
-			h.ServeHTTP(w, req)
-		})
-	}
-
-	// 【重要】2つのパターンを明示的に登録して、マッチング漏れを完全に防ぐ
-
-	// パターンA: スラッシュなし ("/upload/tus-stream")
-	// リクエストが "/upload/tus-stream" の場合 -> StripPrefixで "" になり、tusdは "/" 相当として処理
-	pathNoSlash := "/upload/tus-stream"
-	handlerNoSlash := http.StripPrefix(pathNoSlash, tusHandler)
-	r.PathPrefix(pathNoSlash).Handler(debugWrapper(pathNoSlash, handlerNoSlash))
-
-	// パターンB: スラッシュあり ("/upload/tus-stream/")
-	// リクエストが "/upload/tus-stream/" の場合 -> StripPrefixで "/" になり、tusdは "/" として処理
-	pathSlash := "/upload/tus-stream/"
-	handlerSlash := http.StripPrefix(pathSlash, tusHandler)
-	r.PathPrefix(pathSlash).Handler(debugWrapper(pathSlash, handlerSlash))
-	fmt.Println("DEBUG: TUS Handler yeaaaaaaaaaaaaa...")
-
-	// 【追加 1】 極限まで単純なテスト用ルート (TUS関係なく繋がるか確認)
-	r.HandleFunc("/ping", func(w http.ResponseWriter, req *http.Request) {
-		fmt.Println("DEBUG: /ping endpoint hit!")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("pong"))
-	}).Methods("GET")
-
-	// 【追加 2】 ルーターが認識している全ルートを起動時にダンプする
-	fmt.Println("DEBUG: === Registered Routes Dump START ===")
-	r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
-		tpl, err := route.GetPathTemplate()
-		if err != nil {
-			return nil
-		}
-		methods, _ := route.GetMethods()
-		fmt.Printf("DEBUG: Route: %s (Methods: %v)\n", tpl, methods)
-		return nil
-	})
-	if err != nil {
-		fmt.Printf("DEBUG: Failed to walk routes: %v\n", err)
-	}
-	fmt.Println("DEBUG: === Registered Routes Dump END ===")
 }
 
 // handleRender は指定されたプロジェクト・バージョンのファイルを解決・復元して返却します
 func handleRender(clientCtx client.Context, k keeper.Keeper, w http.ResponseWriter, req *http.Request, config GatewayConfig) {
-	// 1. パス変数の解析
 	vars := mux.Vars(req)
 	projectName := vars["project"]
 	version := vars["version"]
@@ -108,7 +49,7 @@ func handleRender(clientCtx client.Context, k keeper.Keeper, w http.ResponseWrit
 		return
 	}
 	if filePath == "" {
-		filePath = "index.html" // パスが空の場合はデフォルトで index.html
+		filePath = "index.html"
 	}
 
 	// 0. ステートからの動的なストレージトポロジー取得
@@ -124,7 +65,6 @@ func handleRender(clientCtx client.Context, k keeper.Keeper, w http.ResponseWrit
 		if info.ApiEndpoint == "" {
 			continue
 		}
-		// エンドポイントの正規化 (末尾スラッシュ削除)
 		endpoint := strings.TrimSuffix(info.ApiEndpoint, "/")
 
 		if info.ChainId == "mdsc" {
@@ -145,7 +85,7 @@ func handleRender(clientCtx client.Context, k keeper.Keeper, w http.ResponseWrit
 		return
 	}
 
-	// 2. MDSCからマニフェストを解決 (バージョン対応)
+	// 2. MDSCからマニフェストを解決
 	manifestURL := fmt.Sprintf("%s/mdsc/metastore/v1/manifest/%s?version=%s",
 		config.MDSCEndpoint,
 		url.PathEscape(projectName),
@@ -210,7 +150,6 @@ func handleRender(clientCtx client.Context, k keeper.Keeper, w http.ResponseWrit
 				return
 			}
 
-			// パスセーフにFragmentIDを埋め込み
 			fragURL := fmt.Sprintf("%s/fdsc/datastore/v1/fragment/%s", endpoint, url.PathEscape(fragID))
 			data, err := fetchFragmentWithRetry(req.Context(), httpClient, fragURL, maxRetries)
 			if err != nil {
@@ -277,6 +216,5 @@ func fetchFragmentOnce(ctx context.Context, client *http.Client, url string) ([]
 	if err := json.NewDecoder(resp.Body).Decode(&fragResp); err != nil {
 		return nil, err
 	}
-	// FDSCはバイナリデータをBase64エンコードして返却するため、デコードが必要
 	return base64.StdEncoding.DecodeString(fragResp.Fragment.Data)
 }
