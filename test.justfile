@@ -39,6 +39,18 @@ poc name:
         echo "❌ Test script for {{name}} not found."; \
         exit 1; \
     fi
+
+# [debug] 特定のプロセステストを実行（旧 test コマンド相当）
+debug name:
+    @echo "--> 🧪 Running {{name}}-test process..."
+    @# ここで具体的なスクリプトを呼ぶか、引数に応じて分岐
+    @if [ -f "./ops/scripts/test/debug/{{name}}.sh" ]; then \
+        ./ops/scripts/test/debug/{{name}}.sh; \
+    else \
+        echo "❌ Test script for {{name}} not found."; \
+        exit 1; \
+    fi
+
 # =============================================================================
 # 🚀 Performance Tests
 # =============================================================================

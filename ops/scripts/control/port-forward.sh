@@ -18,6 +18,7 @@ echo ""
 cleanup() {
     echo ""
     echo "🛑 Stopping port-forward..."
+    pkill -f "kubectl port-forward" 2>/dev/null || true
     pkill -P $$ 2>/dev/null || true
     wait 2>/dev/null || true
     echo "✅ Port-forward stopped."
@@ -27,22 +28,21 @@ trap cleanup EXIT INT TERM
 # チェーンごとのポートフォワード設定
 # 形式: サービス名:ローカルポート:ターゲットポート
 FORWARDS=(
-    # gwc chain
-    "cryptomeria-gwc:1317:1317"   # REST API
-    "cryptomeria-gwc:26657:26657"  # RPC
-    "cryptomeria-gwc:9090:9090"   # gRPC
+    # gwc chain (3000x系)
+    "cryptomeria-gwc:30003:1317"    # Local 30003 -> GWC 1317
+    "cryptomeria-gwc:30007:26657"   # Local 30007 -> GWC 26657
+    "cryptomeria-gwc:30000:9090"    # Local 30000 -> GWC 9090
     
-    # fdsc-chain
-    "cryptomeria-fdsc:1317:1317"
-    "cryptomeria-fdsc:26657:26657"
-    "cryptomeria-fdsc:9090:9090"
+    # fdsc-chain (3002x系)
+    "cryptomeria-fdsc:30023:1317"   # Local 30023 -> FDSC 1317
+    "cryptomeria-fdsc:30027:26657"  # Local 30027 -> FDSC 26657
+    "cryptomeria-fdsc:30020:9090"   # Local 30020 -> FDSC 9090
     
-    # mdsc chain
-    "cryptomeria-mdsc:1317:1317"
-    "cryptomeria-mdsc:26657:26657"
-    "cryptomeria-mdsc:9090:9090"
+    # mdsc chain (3001x系)
+    "cryptomeria-mdsc:30013:1317"   # Local 30013 -> MDSC 1317
+    "cryptomeria-mdsc:30017:26657"  # Local 30017 -> MDSC 26657
+    "cryptomeria-mdsc:30010:9090"   # Local 30010 -> MDSC 9090
 )
-
 PIDS=()
 
 for forward in "${FORWARDS[@]}"; do

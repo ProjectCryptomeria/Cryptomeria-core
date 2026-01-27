@@ -141,27 +141,85 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	return nil
 }
 
-// prepareFactory は送信者の情報を元に Tx Factory を初期化します
-func prepareFactory(clientCtx client.Context, fromAddr string) (tx.Factory, error) {
-	txf, err := tx.NewFactoryCLI(clientCtx, &pflag.FlagSet{})
+// broadcastWithRetry は Tx の署名とブロードキャストを行い、結果を返します。
+// ここでは「ガスを固定値にせず、simulate で動的に見積もる」版の例を示します。
+func broadcastWithRetry(clientCtx client.Context, txf tx.Factory, msg sdk.Msg) (*sdk.TxResponse, error) {
+	// 1) まずはガス見積もり（simulate）
+	//    CLI の --gas=auto 相当：Tx を組み立てて simulate し、必要 gas を算出する。
+	estimatedGas, err := simulateGas(clientCtx, txf, msg)
 	if err != nil {
-		return txf, err
+		return nil, fmt.Errorf("ガス見積もり(simulate)に失敗しました: %w", err)
 	}
 
-	txf = txf.WithChainID(clientCtx.ChainID).
-		WithGas(2000000).
-		WithGasAdjustment(1.5).
-		WithKeybase(clientCtx.Keyring).
-		WithFromName(fromAddr).
-		WithSignMode(signing.SignMode_SIGN_MODE_DIRECT)
-
-	// 最新のシーケンス番号を取得してセットします
-	num, seq, err := clientCtx.AccountRetriever.GetAccountNumberSequence(clientCtx, sdk.MustAccAddressFromBech32(fromAddr))
-	if err != nil {
-		return txf, err
+	// 2) 見積もった gas に安全係数(GasAdjustment)を掛けて上限を設定する
+	//    例：gas_used が 100000 なら 1.5 倍して 150000 を上限にする。
+	adjusted := uint64(float64(estimatedGas) * txf.GasAdjustment())
+	if adjusted == 0 {
+		// 念のため 0 は避ける
+		adjusted = 1
 	}
-	return txf.WithAccountNumber(num).WithSequence(seq), nil
+	txf = txf.WithGas(adjusted)
+
+	// 3) 通常通り Tx を構築→署名→ブロードキャスト
+	txBuilder, err := txf.BuildUnsignedTx(msg)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Sign(context.Background(), txf, txf.FromName(), txBuilder, true); err != nil {
+		return nil, err
+	}
+
+	txBytes, err := clientCtx.TxConfig.TxEncoder()(txBuilder.GetTx())
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := clientCtx.BroadcastTxSync(txBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	if res.Code != 0 {
+		return nil, fmt.Errorf("tx failed with code %d: %s", res.Code, res.RawLog)
+	}
+
+	return res, nil
 }
+
+// simulateGas は msg から Tx を組み立て、simulate で必要 gas を見積もって返します。
+// ここは Cosmos SDK の simulate 機構を使います。
+// ※ SDK の版や接続方式によって実装が多少変わるので、まずはこの形で導入して調整するのが安全です。
+func simulateGas(clientCtx client.Context, txf tx.Factory, msg sdk.Msg) (uint64, error) {
+	// simulate では「ダミー署名付き Tx」が必要になることが多いので、
+	// いったん unsigned を作って署名関数を通します（CLI でも同様の手順）。
+	txBuilder, err := txf.BuildUnsignedTx(msg)
+	if err != nil {
+		return 0, err
+	}
+
+	// overwrite=true にして署名を必ず上書きする（simulate 用）
+	if err := tx.Sign(context.Background(), txf, txf.FromName(), txBuilder, true); err != nil {
+		return 0, err
+	}
+
+	txBytes, err := clientCtx.TxConfig.TxEncoder()(txBuilder.GetTx())
+	if err != nil {
+		return 0, err
+	}
+
+	// Cosmos SDK の Simulate は gRPC (cosmos.tx.v1beta1.Service/Simulate) を使います。
+	// clientCtx には gRPC 接続が入っている想定です。
+	simRes, err := clientCtx.Simulate(txBytes)
+	if err != nil {
+		return 0, err
+	}
+
+	// GasUsed を返す
+	return uint64(simRes.GasInfo.GasUsed), nil
+}
+
+
 
 // broadcastWithRetry はTxの署名とブロードキャストを行い、結果を返します
 func broadcastWithRetry(clientCtx client.Context, txf tx.Factory, msg sdk.Msg) (*sdk.TxResponse, error) {
@@ -198,6 +256,7 @@ func abortSession(clientCtx client.Context, session *types.Session, reason strin
 		Reason:    reason,
 	}
 	// Abort Tx は個別に準備して送信
+	// ChainIDの補完が必要なため、修正した prepareFactory を利用
 	txf, err := prepareFactory(clientCtx, session.Executor)
 	if err != nil {
 		return err

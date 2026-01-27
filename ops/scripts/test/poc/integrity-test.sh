@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euox pipefail
+set -euo pipefail
 
 # ==============================================================================
 # 🛡️ CSU (Cryptomeria Secure Upload) 統合整合性テスト
@@ -14,8 +14,8 @@ source "${ROOT_DIR}/ops/scripts/lib/common.sh"
 
 # 環境変数
 BINARY="${BINARY:-${ROOT_DIR}/apps/gwc/dist/gwcd}"
-NODE_URL="${NODE_URL:-tcp://localhost:26657}"
-API_URL="${API_URL:-http://localhost:1317}"
+NODE_URL="${NODE_URL:-tcp://localhost:30007}"
+API_URL="${API_URL:-http://localhost:30003}"
 CHAIN_ID="${CHAIN_ID:-gwc}"
 OWNER_KEY="${OWNER_KEY:-alice}"
 KEYRING="--keyring-backend test"

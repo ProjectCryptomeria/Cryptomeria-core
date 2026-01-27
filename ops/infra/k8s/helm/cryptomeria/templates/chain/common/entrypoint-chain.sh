@@ -74,6 +74,13 @@ if [ ! -f "$INIT_FLAG" ]; then
     fi
 fi
 
+# chain-id をclient.tomlに書き込む
+CLIENT_TOML="$CHAIN_HOME/config/client.toml"
+if [ -f "$CLIENT_TOML" ]; then
+  # chain-id を確実にセット
+  sed -i "s/^chain-id *=.*/chain-id = \"$CHAIN_ID\"/" "$CLIENT_TOML"
+fi
+
 # executor鍵の自動インポート (Dev環境でのCLI操作利便性のため保持) 
 MNEMONIC_FILE="/etc/mnemonics/${CHAIN_ID}.${EXECUTOR_NAME}.mnemonic"
 
