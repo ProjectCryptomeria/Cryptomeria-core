@@ -1,7 +1,9 @@
 package app
 
 import (
+	"fmt"
 	"io"
+	"net/http"
 
 	clienthelpers "cosmossdk.io/client/v2/helpers"
 	"cosmossdk.io/core/appmodule"
@@ -44,6 +46,7 @@ import (
 	icahostkeeper "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/host/keeper"
 	ibctransferkeeper "github.com/cosmos/ibc-go/v10/modules/apps/transfer/keeper"
 	ibckeeper "github.com/cosmos/ibc-go/v10/modules/core/keeper"
+	"github.com/gorilla/mux"
 
 	"gwc/docs"
 	gatewaykeeper "gwc/x/gateway/keeper"
@@ -270,10 +273,18 @@ func (app *App) SimulationManager() *module.SimulationManager {
 
 // RegisterAPIRoutes は、APIサーバーにすべてのアプリケーションモジュールのルートを登録します。
 func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig) {
-	// 【重要】カスタムHTTPルートの登録を最初に行います。
-	// ベース実装(app.App.RegisterAPIRoutes)は、gRPC-Gatewayのキャッチオールハンドラ("/")を
-	// 登録するため、それよりも前に登録しないとリクエストが到達しません。
-	// gorilla/muxは登録された順序でマッチングを行います。
+	// 【追加】リクエスト監視ミドルウェア
+	// これで「どのようなパスとしてサーバーに届いているか」が完全に分かります
+	apiSvr.Router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			fmt.Printf("DEBUG: MUX Incoming Request - Method: %s, URL: %s, Path: %s\n", req.Method, req.URL.String(), req.URL.Path)
+			next.ServeHTTP(w, req)
+		})
+	})
+
+	// 【修正1】URLパスのクリーニング（/ping/ -> /ping への自動変換など）を無効化し、
+	//  登録したパス通りに厳密にマッチさせる（予期せぬリダイレクトや不一致を防ぐ）
+	apiSvr.Router.SkipClean(true)
 
 	// 1. AppOptionsからGateway設定を読み込み
 	mdscEndpoint, _ := app.appOpts.Get("gwc.mdsc_endpoint").(string)
@@ -292,20 +303,41 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 	}
 
 	// 2. カスタムHTTPハンドラ（TUSアップロード/レンダリング）の登録
+	// ここで /ping や /upload/tus-stream が登録される
 	gatewayserver.RegisterCustomHTTPRoutes(apiSvr.ClientCtx, apiSvr.Router, app.GatewayKeeper, gatewayConfig)
 
-	// 3. Swagger / OpenAPI の登録（これらも特定のプレフィックスを持つため、キャッチオールより前に登録推奨）
-	// 他のアプリケーションが容易にオーバーライドできるように、swagger API を app.go で登録します。
+	// 3. Swagger / OpenAPI の登録
 	if err := server.RegisterSwaggerAPI(apiSvr.ClientCtx, apiSvr.Router, apiConfig.Swagger); err != nil {
 		panic(err)
 	}
-
-	// アプリの OpenAPI ルートを登録します。
 	docs.RegisterOpenAPIService(Name, apiSvr.Router)
 
 	// 4. 標準APIルート（gRPC Gateway）の登録
-	// ここで "/" へのキャッチオールハンドラが登録されます。
+	// ここで "/" (Catch-all) が登録されるはず
 	app.App.RegisterAPIRoutes(apiSvr, apiConfig)
+
+	// 【修正2】ダンプ処理をここに移動（すべて登録し終わった後の状態を確認する）
+	fmt.Println("DEBUG: === FINAL Registered Routes Dump START ===")
+	err := apiSvr.Router.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+		tpl, err := route.GetPathTemplate()
+		if err != nil {
+			return nil
+		}
+		methods, _ := route.GetMethods()
+		// パスが空の場合は "/" の可能性が高い（PrefixMatcherなど）
+		if tpl == "" {
+			// PathPrefixの場合などはTemplateが空になることがあるため、Regexpを確認
+			pathRegexp, _ := route.GetPathRegexp()
+			fmt.Printf("DEBUG: Route (Regex): %s (Methods: %v)\n", pathRegexp, methods)
+		} else {
+			fmt.Printf("DEBUG: Route: %s (Methods: %v)\n", tpl, methods)
+		}
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("DEBUG: Failed to walk routes: %v\n", err)
+	}
+	fmt.Println("DEBUG: === FINAL Registered Routes Dump END ===")
 }
 
 // GetMaccPerms はモジュールアカウントの権限のコピーを返します。

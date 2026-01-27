@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -euox pipefail
 
 # ==============================================================================
 # 🛡️ CSU (Cryptomeria Secure Upload) 統合整合性テスト
@@ -162,8 +162,9 @@ phase_upload() {
   local base_url="${API_URL%/}/upload/tus-stream"
   local metadata="session_id $(echo -n "${SESSION_ID}" | base64 | tr -d '\n')"
   
-  log_info "POST: ${base_url}/"
-  local post_resp=$(curl -i -s -X POST "${base_url}/" \
+  # 【修正】ログ出力とcurlコマンドから末尾のスラッシュを削除
+  log_info "POST: ${base_url}"
+  local post_resp=$(curl -i -s -X POST "${base_url}" \
     -H "Tus-Resumable: 1.0.0" \
     -H "Upload-Length: $(stat -c%s "${ZIP_FILE}")" \
     -H "Upload-Metadata: ${metadata}" \

@@ -28,6 +28,8 @@ type GatewayConfig struct {
 
 // RegisterCustomHTTPRoutes はGateway ChainのカスタムHTTPルートを登録します
 func RegisterCustomHTTPRoutes(clientCtx client.Context, r *mux.Router, k keeper.Keeper, config GatewayConfig) {
+	fmt.Println("DEBUG: RegisterCustomHTTPRoutes called")
+
 	// 1. レンダリング用 (ダウンロード) ルート
 	r.HandleFunc("/render/{project}/{version}/{path:.*}", func(w http.ResponseWriter, req *http.Request) {
 		handleRender(clientCtx, k, w, req, config)
@@ -38,15 +40,59 @@ func RegisterCustomHTTPRoutes(clientCtx client.Context, r *mux.Router, k keeper.
 		config.UploadDir = "./tmp/uploads"
 	}
 
-	// 修正: StripPrefix を使用する場合、ハンドラー内部の相対ベースパスは "/" である必要があります。
-	// これにより tusd が "POST /" を新規アップロードとして正しく受け取れます。
+	// TUSハンドラーの初期化 (ベースパスは "/" として初期化)
 	tusHandler, err := NewTusHandler(clientCtx, k, config.UploadDir, "/")
 	if err != nil {
-		fmt.Printf("Failed to initialize TUS handler: %v\n", err)
-	} else {
-		// 外部向けのパスPrefixを指定し、ハンドラーに渡す前にストリップします。
-		r.PathPrefix("/upload/tus-stream/").Handler(http.StripPrefix("/upload/tus-stream", tusHandler))
+		panic(fmt.Sprintf("CRITICAL ERROR: Failed to initialize TUS handler: %v", err))
 	}
+
+	fmt.Println("DEBUG: TUS Handler initialized. Registering routes...")
+
+	// 【重要】デバッグ用ラッパー
+	debugWrapper := func(path string, h http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			fmt.Printf("DEBUG: TUS Route HIT! Request Path: %s (Matched: %s)\n", req.URL.Path, path)
+			h.ServeHTTP(w, req)
+		})
+	}
+
+	// 【重要】2つのパターンを明示的に登録して、マッチング漏れを完全に防ぐ
+
+	// パターンA: スラッシュなし ("/upload/tus-stream")
+	// リクエストが "/upload/tus-stream" の場合 -> StripPrefixで "" になり、tusdは "/" 相当として処理
+	pathNoSlash := "/upload/tus-stream"
+	handlerNoSlash := http.StripPrefix(pathNoSlash, tusHandler)
+	r.PathPrefix(pathNoSlash).Handler(debugWrapper(pathNoSlash, handlerNoSlash))
+
+	// パターンB: スラッシュあり ("/upload/tus-stream/")
+	// リクエストが "/upload/tus-stream/" の場合 -> StripPrefixで "/" になり、tusdは "/" として処理
+	pathSlash := "/upload/tus-stream/"
+	handlerSlash := http.StripPrefix(pathSlash, tusHandler)
+	r.PathPrefix(pathSlash).Handler(debugWrapper(pathSlash, handlerSlash))
+	fmt.Println("DEBUG: TUS Handler yeaaaaaaaaaaaaa...")
+
+	// 【追加 1】 極限まで単純なテスト用ルート (TUS関係なく繋がるか確認)
+	r.HandleFunc("/ping", func(w http.ResponseWriter, req *http.Request) {
+		fmt.Println("DEBUG: /ping endpoint hit!")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("pong"))
+	}).Methods("GET")
+
+	// 【追加 2】 ルーターが認識している全ルートを起動時にダンプする
+	fmt.Println("DEBUG: === Registered Routes Dump START ===")
+	r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+		tpl, err := route.GetPathTemplate()
+		if err != nil {
+			return nil
+		}
+		methods, _ := route.GetMethods()
+		fmt.Printf("DEBUG: Route: %s (Methods: %v)\n", tpl, methods)
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("DEBUG: Failed to walk routes: %v\n", err)
+	}
+	fmt.Println("DEBUG: === Registered Routes Dump END ===")
 }
 
 // handleRender は指定されたプロジェクト・バージョンのファイルを解決・復元して返却します
