@@ -4,6 +4,7 @@ import { useKeplr } from './hooks/useKeplr';
 import { useCsuUpload } from './hooks/useCsuUpload';
 import { processFileList } from './lib/zip';
 import { styles } from './styles/AppStyles';
+import { CONFIG } from './constants/config';
 
 export default function App() {
   const { address, client, connect, requestFaucet } = useKeplr();
@@ -22,7 +23,7 @@ export default function App() {
             <button
               onClick={async () => {
                 const ok = await requestFaucet(address);
-                if (!ok) alert("Faucetサーバーに接続できませんでした。ポート4500が開放されているか確認してください。");
+                if (!ok) alert(`Faucetサーバーに接続できませんでした。ポート${CONFIG.faucetEndpoint.split(':')[2]}が開放されているか確認してください。`);
               }}
               style={{ ...styles.btnPrimary, width: 'auto', padding: '8px 16px', fontSize: '0.8rem', backgroundColor: '#64748b' }}
             >

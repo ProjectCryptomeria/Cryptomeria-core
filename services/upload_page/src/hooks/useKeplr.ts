@@ -21,8 +21,7 @@ export function useKeplr() {
 
     const requestFaucet = useCallback(async (targetAddr: string) => {
         try {
-            // ポートを4500に設定 (Igniteのデフォルト)
-            const faucetUrl = `${CONFIG.restEndpoint.replace(/:\d+$/, ':4500')}/`;
+            const faucetUrl = `${CONFIG.faucetEndpoint}`;
             const response = await fetch(faucetUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
