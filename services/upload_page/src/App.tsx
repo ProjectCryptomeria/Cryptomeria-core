@@ -1,5 +1,5 @@
 // src/App.tsx
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useKeplr } from './hooks/useKeplr';
 import { useCsuUpload } from './hooks/useCsuUpload';
 import { processFileList } from './lib/zip';
