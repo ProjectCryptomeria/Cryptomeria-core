@@ -717,6 +717,17 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@keplr-wallet/types@npm:^0.13.1":
+  version: 0.13.1
+  resolution: "@keplr-wallet/types@npm:0.13.1"
+  dependencies:
+    long: "npm:^4.0.0"
+  peerDependencies:
+    starknet: ^8
+  checksum: 10c0/7af0324e2d92ca0914d034f1d23d919a37021393d05a7e22f0c57c06360b69fc7a3bce50eeb27d42e969c16ccc267780b5e269eddc342da42058b5846b6c9966
+  languageName: node
+  linkType: hard
+
 "@noble/ciphers@npm:^1.3.0":
   version: 1.3.0
   resolution: "@noble/ciphers@npm:1.3.0"
@@ -3129,6 +3140,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"long@npm:^4.0.0":
+  version: 4.0.0
+  resolution: "long@npm:4.0.0"
+  checksum: 10c0/50a6417d15b06104dbe4e3d4a667c39b137f130a9108ea8752b352a4cfae047531a3ac351c181792f3f8768fe17cca6b0f406674a541a86fb638aaac560d83ed
+  languageName: node
+  linkType: hard
+
 "long@npm:^5.3.2":
   version: 5.3.2
   resolution: "long@npm:5.3.2"
@@ -4444,6 +4462,7 @@ __metadata:
     "@cosmjs/stargate": "npm:^0.38.1"
     "@cosmjs/tendermint-rpc": "npm:^0.38.1"
     "@eslint/js": "npm:^9.39.1"
+    "@keplr-wallet/types": "npm:^0.13.1"
     "@types/node": "npm:^25.0.10"
     "@types/react": "npm:^19.2.10"
     "@types/react-dom": "npm:^19.2.3"
