@@ -61,7 +61,7 @@ data:
   # ------------------------------------------------------------------
   # 3. faucet.js
   # ------------------------------------------------------------------
-    faucet.js: |
+  faucet.js: |
     import express from 'express';
     import cors from 'cors';
     import * as path from 'path'
@@ -134,8 +134,6 @@ data:
       const fee = conf.tx.fee;
       return client.sendTokens(firstAccount.address, recipient, [amount], fee);
     }
-
-
 
   # ------------------------------------------------------------------
   # 4. config.js
