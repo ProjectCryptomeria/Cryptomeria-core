@@ -21,12 +21,8 @@ export function useKeplr() {
 
     const requestFaucet = useCallback(async (targetAddr: string) => {
         try {
-            const faucetUrl = `${CONFIG.faucetEndpoint}`;
-            const response = await fetch(faucetUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ address: targetAddr, coins: ["10000000uatom"] }),
-            });
+            const faucetUrl = `${CONFIG.faucetEndpoint}/send/${targetAddr}`;
+            const response = await fetch(faucetUrl);
             return response.ok;
         } catch (e) {
             console.error("Faucetリクエスト失敗:", e);
