@@ -44,7 +44,7 @@ FORWARDS=(
     "cryptomeria-mdsc:30010:9090"   # Local 30010 -> MDSC 9090
 
     # Faucet Server (4500)
-    "faucet:4500:4500"              # Local 4500 -> Faucet 4500
+    "faucet:30045:4500"              # Local 4500 -> Faucet 4500
 )
 PIDS=()
 
@@ -76,7 +76,7 @@ echo "📋 Available endpoints:"
 echo "   gwc:     REST=http://localhost:30003  RPC=http://localhost:30007"
 echo "   fdsc-0:  REST=http://localhost:30023  RPC=http://localhost:30027"
 echo "   mdsc:    REST=http://localhost:30013  RPC=http://localhost:30017"
-echo "   faucet:  API =http://localhost:4500"
+echo "   faucet:  API =http://localhost:30045"
 echo ""
 echo "Press Ctrl+C to stop."
 echo ""
