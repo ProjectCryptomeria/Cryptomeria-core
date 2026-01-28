@@ -1,0 +1,31 @@
+syntax = "proto3";
+package gwc.gateway.v1;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "gwc/x/gateway/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (amino.name) = "gwc/x/gateway/Params";
+  option (gogoproto.equal) = true;
+
+  // max_fragment_bytes is the maximum allowed size of a single fragment.
+  // This is enforced for:
+  // - MsgInitSession.fragment_size
+  // - MsgDistributeBatch.items[].fragment_bytes length
+  uint64 max_fragment_bytes = 1;
+
+  // max_fragments_per_session limits the total number of fragments distributable in a single session.
+  // This is enforced in MsgDistributeBatch using session.distributed_count (+ incoming batch size).
+  uint64 max_fragments_per_session = 2;
+
+  // default_deadline_seconds is used when MsgInitSession.deadline_unix == 0.
+  int64 default_deadline_seconds = 3;
+
+  // local_admin is the fixed executor address (aka "local-admin") for CSU.
+  // CSU protocol requires executor fixed to local-admin.
+  // If empty, CSU executor enforcement will fail (InitSession/Distribute/Finalize/Abort will be rejected).
+  string local_admin = 4;
+}

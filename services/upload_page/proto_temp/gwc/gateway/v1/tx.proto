@@ -1,0 +1,118 @@
+syntax = "proto3";
+package gwc.gateway.v1;
+
+import "amino/amino.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "gwc/gateway/v1/packet.proto";
+import "gwc/gateway/v1/params.proto";
+import "gwc/gateway/v1/types.proto";
+
+option go_package = "gwc/x/gateway/types";
+
+// Msg defines the Msg service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+
+  // --- CSU Session Flow ---
+
+  // Step 1: Initialize a CSU session (creates session_id and returns session_upload_token for TUS/HTTP upload)
+  rpc InitSession(MsgInitSession) returns (MsgInitSessionResponse);
+  // Step 2: Commit RootProof (computed from the extracted zip contents)
+  rpc CommitRootProof(MsgCommitRootProof) returns (MsgCommitRootProofResponse);
+  // Step 3: Distribute fragments to FDSC (executor executes this via authz; signer is executor)
+  rpc DistributeBatch(MsgDistributeBatch) returns (MsgDistributeBatchResponse);
+  // Step 4: Upload manifest to MDSC and close session on MDSC ACK (success path)
+  rpc FinalizeAndCloseSession(MsgFinalizeAndCloseSession) returns (MsgFinalizeAndCloseSessionResponse);
+  // Abort session and close immediately (failure path)
+  rpc AbortAndCloseSession(MsgAbortAndCloseSession) returns (MsgAbortAndCloseSessionResponse);
+
+  // Storage登録 (管理者のみ実行可能)
+  rpc RegisterStorage(MsgRegisterStorage) returns (MsgRegisterStorageResponse);
+}
+
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+  option (amino.name) = "gwc/x/gateway/MsgUpdateParams";
+
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  Params params = 2 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+}
+message MsgUpdateParamsResponse {}
+
+message MsgRegisterStorage {
+  // 署名者を authority (Governance) に変更して権限を制限します
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  repeated StorageInfo storage_infos = 2;
+}
+message MsgRegisterStorageResponse {}
+
+// --- CSU Session Flow Messages ---
+
+message MsgInitSession {
+  option (cosmos.msg.v1.signer) = "owner";
+
+  string owner = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // executorフィールドは削除 (LocalAdmin固定のため)
+  // uint64 fragment_size is the fixed fragment size used for splitting files
+  uint64 fragment_size = 3;
+
+  // deadline_unix is the session deadline (unix seconds). 0 means "use chain default".
+  int64 deadline_unix = 4;
+}
+
+message MsgInitSessionResponse {
+  string session_id = 1;
+
+  // session_upload_token is used by TUS/HTTP upload endpoint (off-chain) to authorize the upload.
+  string session_upload_token = 2;
+
+  // resolved_deadline_unix is the deadline actually stored in chain state.
+  int64 resolved_deadline_unix = 3;
+}
+
+message MsgCommitRootProof {
+  option (cosmos.msg.v1.signer) = "owner";
+  string owner = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string session_id = 2;
+
+  // root_proof_hex is the RootProof as hex string.
+  string root_proof_hex = 3;
+}
+message MsgCommitRootProofResponse {}
+
+message MsgDistributeBatch {
+  option (cosmos.msg.v1.signer) = "executor";
+  string executor = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  string session_id = 2;
+
+  repeated DistributeItem items = 3 [(gogoproto.nullable) = false];
+}
+message MsgDistributeBatchResponse {}
+
+message MsgFinalizeAndCloseSession {
+  option (cosmos.msg.v1.signer) = "executor";
+  string executor = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  string session_id = 2;
+
+  // manifest is sent to MDSC.
+  // Session is closed as SUCCESS only after MDSC ACK is received.
+  ManifestPacket manifest = 3 [(gogoproto.nullable) = false];
+}
+message MsgFinalizeAndCloseSessionResponse {}
+
+message MsgAbortAndCloseSession {
+  option (cosmos.msg.v1.signer) = "executor";
+  string executor = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  string session_id = 2;
+
+  string reason = 3;
+}
+message MsgAbortAndCloseSessionResponse {}
