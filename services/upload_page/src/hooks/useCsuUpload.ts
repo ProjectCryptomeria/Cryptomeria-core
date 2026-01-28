@@ -77,17 +77,32 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
                 value: { owner: address, sessionId: initData.sessionId, rootProofHex: rootProof }
             }], { amount: [{ denom: 'ugwc', amount: '2000' }], gas: '200000' });
 
-            addLog('Step 5: TUSアップロードを開始...');
+            addLog(`Step 5: TUSアップロードを開始 (合計サイズ: ${(zipBlob.size / 1024 / 1024).toFixed(2)} MB)...`);
+
+            let lastLoggedProgress = -1; // ログの重複出力を防ぐフラグ
+
             const tusUpload = new tus.Upload(zipBlob, {
                 endpoint: `${CONFIG.restEndpoint}/upload/tus-stream/`,
                 headers: { Authorization: `Bearer ${initData.sessionUploadToken}` },
                 metadata: { session_id: initData.sessionId, project_name: projectName, version: projectVersion },
-                onProgress: (bytes, total) => setUploadProgress(Math.floor((bytes / total) * 100)),
+                onProgress: (bytes, total) => {
+                    const percent = Math.floor((bytes / total) * 100);
+                    setUploadProgress(percent);
+
+                    // 10% 刻みでログに出力する
+                    if (percent % 10 === 0 && percent !== lastLoggedProgress) {
+                        addLog(`↑ アップロード中... ${percent}% (${(bytes / 1024 / 1024).toFixed(2)} MB / ${(total / 1024 / 1024).toFixed(2)} MB)`);
+                        lastLoggedProgress = percent;
+                    }
+                },
                 onSuccess: () => {
-                    addLog('✅ デプロイ完了！オンチェーンWebが公開されました。');
+                    addLog('✅ デプロイ完了！全フラグメントがネットワークに永続化されました。');
                     setIsProcessing(false);
                 },
-                onError: (err) => { throw err; }
+                onError: (err) => {
+                    addLog(`❌ アップロードエラー: ${err.message}`);
+                    throw err;
+                }
             });
             tusUpload.start();
 
