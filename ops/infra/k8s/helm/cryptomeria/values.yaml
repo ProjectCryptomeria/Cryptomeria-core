@@ -110,25 +110,24 @@ genesisServer:
   service:
     port: 80
 
-
 # =============================================================================
 # 6. Faucet Configuration
 # =============================================================================
 faucet:
   enabled: true
   image:
-    repository: ghcr.io/ping-pub/faucet
-    tag: latest
+    repository: node
+    tag: 20-alpine
     pullPolicy: IfNotPresent
   # GWCチェーンへの接続設定
   chain:
     name: cryptomeria
     rpc: "http://gwc-0.gwc-headless:26657"
     prefix: cosmos
-    gasPrice: "0.025ugwc"
+    gasPrice: "0.025uatom"
     coinType: 118
-    denom: ugwc
-    maxCredit: 10000000 # 1回あたりの配布量 (10 GWC)
+    denom: uatom
+    maxCredit: "10000000" # 1回あたりの配布量 (10 GWC)
   service:
     type: NodePort
     port: 4500

@@ -16,53 +16,39 @@ spec:
       labels:
         app: faucet
     spec:
-      initContainers:
-        - name: config-gen
-          image: alpine
+      containers:
+        - name: faucet
+          image: node:20-alpine
+          imagePullPolicy: IfNotPresent
+          workingDir: /app
           command: ["/bin/sh", "-c"]
-          # 環境変数MNEMONICを使ってconfig.jsonを生成し、共有ボリュームに配置する
           args:
             - |
-              cat <<EOF > /config/config.json
-              {
-                "blockchains": [
-                  {
-                    "name": "{{ .Values.faucet.chain.name }}",
-                    "rpc": "{{ .Values.faucet.chain.rpc }}",
-                    "coin_type": {{ .Values.faucet.chain.coinType }},
-                    "address_prefix": "{{ .Values.faucet.chain.prefix }}",
-                    "gas_price": "{{ .Values.faucet.chain.gasPrice }}",
-                    "max_credit": "{{ .Values.faucet.chain.maxCredit }}",
-                    "sender": "\$MNEMONIC"
-                  }
-                ]
-              }
-              EOF
-              # sedを使ってプレースホルダーを実際の環境変数値に置換
-              sed -i "s/\$MNEMONIC/$MNEMONIC/g" /config/config.json
+              echo "🚀 Setting up Faucet from ConfigMap..." && \
+              # ↓↓↓ ビルドツールを追加 ↓↓↓
+              apk add --no-cache python3 make g++ && \
+              # ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
+              mkdir -p /app/db && \
+              cp /src/* /app/ && \
+              echo "🔑 Injecting mnemonic..." && \
+              sed -i "s/MNEMONIC_PLACEHOLDER/$MNEMONIC/g" /app/config.js && \
+              echo "📦 Installing dependencies..." && \
+              npm install --quiet && \
+              echo "✅ Starting Faucet..." && \
+              npm start
+          ports:
+            - containerPort: 4500
           env:
             - name: MNEMONIC
               valueFrom:
                 secretKeyRef:
                   name: cryptomeria-mnemonics
-                  key: gwc-local-admin
+                  key: gwc.local-admin.mnemonic
           volumeMounts:
-            - name: config-volume
-              mountPath: /config
-      containers:
-        - name: faucet
-          image: "{{ .Values.faucet.image.repository }}:{{ .Values.faucet.image.tag }}"
-          imagePullPolicy: {{ .Values.faucet.image.pullPolicy }}
-          command: ["faucet"]
-          args: ["-c", "/config/config.json", "-p", "4500"]
-          ports:
-            - containerPort: 4500
-          volumeMounts:
-            - name: config-volume
-              mountPath: /config
-          resources:
-            {{- toYaml .Values.faucet.resources | nindent 12 }}
+            - name: src-volume
+              mountPath: /src
       volumes:
-        - name: config-volume
-          emptyDir: {}
+        - name: src-volume
+          configMap:
+            name: faucet-source
 {{- end }}
