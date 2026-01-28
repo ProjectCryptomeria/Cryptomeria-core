@@ -16,7 +16,7 @@ import {
   MsgInitSession,
   MsgInitSessionResponse,
   MsgCommitRootProof
-} from './lib/proto/src/lib/proto/gwc/gateway/v1/tx';
+} from './lib/proto/gwc/gateway/v1/tx';
 
 // プロトコルパッケージ名 (Type URL構築用)
 const PROTO_PKG = 'gwc.gateway.v1';
