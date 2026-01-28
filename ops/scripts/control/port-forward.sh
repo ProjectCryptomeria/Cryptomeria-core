@@ -65,7 +65,7 @@ for forward in "${FORWARDS[@]}"; do
     fi
     
     # ポートフォワード実行（バックグラウンド）
-    kubectl port-forward -n "${NAMESPACE}" "${TARGET_RESOURCE}" "${local_port}:${target_port}" &>/dev/null &
+    kubectl port-forward --address 0.0.0.0 -n "${NAMESPACE}" "${TARGET_RESOURCE}" "${local_port}:${target_port}" &>/dev/null &
     PIDS+=($!)
 done
 
