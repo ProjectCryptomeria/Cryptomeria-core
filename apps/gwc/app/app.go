@@ -245,10 +245,8 @@ func (app *App) SimulationManager() *module.SimulationManager {
 func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig) {
 	fmt.Println("DEBUG: RegisterAPIRoutes - Starting Injection")
 
-	// 1. TUSハンドラーの初期化
 	uploadDir := "./tmp/uploads"
-	// 【重要】ベースパスを "/upload/tus-stream/" (末尾スラッシュあり) に固定します。
-	// tusd内部でのID解析の起点となるため、末尾スラッシュは必須です。
+	// 【重要】末尾スラッシュありで統一
 	tusBasePath := "/upload/tus-stream/"
 
 	tusHandler, err := gatewayserver.NewTusHandler(apiSvr.ClientCtx, app.GatewayKeeper, uploadDir, tusBasePath)
@@ -259,15 +257,7 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 	// 2. TUSリクエスト専用の優先ミドルウェア
 	apiSvr.Router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			// TUS関連のリクエストパス（/upload/tus-stream...）を検知
 			if strings.HasPrefix(req.URL.Path, "/upload/tus-stream") {
-
-				// --- パスの正規化 (Normalization) ---
-				// クライアントが末尾スラッシュを忘れた場合 ("/upload/tus-stream") でも、
-				// コレクションエンドポイント ("/upload/tus-stream/") として扱うように補完します。
-				if req.URL.Path == "/upload/tus-stream" {
-					req.URL.Path = "/upload/tus-stream/"
-				}
 
 				// 詳細デバッグログ
 				fmt.Printf("\n🎯 [TUS DEBUG] Method: %s | Path: %s\n", req.Method, req.URL.Path)
@@ -276,27 +266,22 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 				w.Header().Set("Access-Control-Allow-Origin", "*")
 				w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, PATCH, HEAD")
 				w.Header().Set("Access-Control-Allow-Headers", "*")
-				// Locationヘッダーを公開しないと、クライアントが次のPATCHリクエスト先を知ることができません。
 				w.Header().Set("Access-Control-Expose-Headers", "Location, Tus-Resumable, Upload-Offset, Upload-Length")
 
-				// OPTIONS (プリフライト) は 204 で即答して終了
 				if req.Method == http.MethodOptions {
 					w.WriteHeader(http.StatusNoContent)
 					return
 				}
 
-				// 【重要】StripPrefix は行わず、正規化したパスをそのまま tusHandler (tusd) へ渡します。
-				// tusd は config.BasePath と req.URL.Path を比較して処理を分岐するためです。
+				// 【修正】パスの書き換え（正規化）ロジックを完全に削除。
+				// クライアントが正しいURL（末尾スラッシュあり）を叩くことを前提にします。
 				tusHandler.ServeHTTP(w, req)
-				return // TUSとして処理を完結させる
+				return
 			}
-
-			// TUS以外（通常のCosmos SDKルート）はそのまま次へ
 			next.ServeHTTP(w, req)
 		})
 	})
 
-	// 3. カスタムハンドラー設定の準備 (Render用)
 	mdscEndpoint, _ := app.appOpts.Get("gwc.mdsc_endpoint").(string)
 	fdscEndpointsRaw, _ := app.appOpts.Get("gwc.fdsc_endpoints").(map[string]interface{})
 	fdscEndpoints := make(map[string]string)
