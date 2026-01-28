@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -27,12 +26,8 @@ type GatewayConfig struct {
 	UploadDir     string
 }
 
-func RegisterCustomHTTPRoutes(clientCtx client.Context, r *mux.Router, k keeper.Keeper, config GatewayConfig, tusHandler http.Handler) {
+func RegisterCustomHTTPRoutes(clientCtx client.Context, r *mux.Router, k keeper.Keeper, config GatewayConfig) {
 	fmt.Println("DEBUG: RegisterCustomHTTPRoutes (Render Only) called")
-
-	// 【修正】TUS用の PathPrefix 登録を削除。
-	// app.go のミドルウェアで既に ServeHTTP して return しているため、
-	// ここでの登録は二重管理の原因になります。
 
 	// --- レンダリング用ルート ---
 	r.HandleFunc("/render/{project}/{version}/{path:.*}", func(w http.ResponseWriter, req *http.Request) {
@@ -74,9 +69,7 @@ func handleRender(clientCtx client.Context, k keeper.Keeper, w http.ResponseWrit
 		if info.ApiEndpoint == "" {
 			continue
 		}
-		// "localhost" を "127.0.0.1" に強制置換して IPv6 解決を回避
-		endpoint := strings.Replace(info.ApiEndpoint, "localhost", "127.0.0.1", 1)
-		endpoint = strings.TrimSuffix(endpoint, "/")
+		endpoint := strings.TrimSuffix(info.ApiEndpoint, "/")
 
 		if info.ChainId == "mdsc" {
 			config.MDSCEndpoint = endpoint
@@ -103,21 +96,7 @@ func handleRender(clientCtx client.Context, k keeper.Keeper, w http.ResponseWrit
 		url.QueryEscape(version),
 	)
 
-	dialer := &net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}
-
-	httpClient := &http.Client{
-		Timeout: 15 * time.Second,
-		Transport: &http.Transport{
-			// ネットワークを "tcp4" に指定することで IPv4 を強制します
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return dialer.DialContext(ctx, "tcp4", addr)
-			},
-		},
-	}
-
+	httpClient := &http.Client{Timeout: 15 * time.Second}
 	resp, err := httpClient.Get(manifestURL)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to connect to MDSC: %v", err), http.StatusBadGateway)
