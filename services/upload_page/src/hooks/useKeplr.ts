@@ -18,6 +18,19 @@ registry.register(`/gwc.gateway.v1.MsgCommitRootProof`, MsgCommitRootProof);
 export function useKeplr() {
     const [address, setAddress] = useState<string>('');
     const [client, setClient] = useState<SigningStargateClient | null>(null);
+    const [balance, setBalance] = useState<string>('0');
+
+    // 残高をクエリして状態を更新する関数
+    const updateBalance = useCallback(async (addr: string, signingClient: SigningStargateClient) => {
+        try {
+            const bal = await signingClient.getBalance(addr, CONFIG.denom);
+            setBalance(bal.amount);
+            return bal.amount;
+        } catch (e) {
+            console.error("残高取得失敗:", e);
+            return null;
+        }
+    }, []);
 
     const requestFaucet = useCallback(async (targetAddr: string) => {
         try {
@@ -48,12 +61,12 @@ export function useKeplr() {
                 bech32PrefixConsAddr: 'cosmosvalcons',
                 bech32PrefixConsPub: 'cosmosvalconspub',
             },
-            currencies: [{ coinDenom: 'GWC', coinMinimalDenom: 'ugwc', coinDecimals: 6 }],
+            currencies: [{ coinDenom: 'ATOM', coinMinimalDenom: 'uatom', coinDecimals: 6 }],
             feeCurrencies: [{
-                coinDenom: 'GWC', coinMinimalDenom: 'ugwc', coinDecimals: 6,
+                coinDenom: 'ATOM', coinMinimalDenom: 'uatom', coinDecimals: 6,
                 gasPriceStep: { low: 0.01, average: 0.025, high: 0.04 },
             }],
-            stakeCurrency: { coinDenom: 'GWC', coinMinimalDenom: 'ugwc', coinDecimals: 6 },
+            stakeCurrency: { coinDenom: 'ATOM', coinMinimalDenom: 'uatom', coinDecimals: 6 },
         });
 
         await window.keplr.enable(CONFIG.chainId);
@@ -73,8 +86,12 @@ export function useKeplr() {
 
         setAddress(accounts[0].address);
         setClient(signingClient);
-        return accounts[0].address;
-    }, []);
 
-    return { address, client, connect, requestFaucet };
+        // 接続完了後に残高を取得
+        await updateBalance(accounts[0].address, signingClient);
+
+        return accounts[0].address;
+    }, [updateBalance]);
+
+    return { address, client, balance, connect, requestFaucet, updateBalance };
 }

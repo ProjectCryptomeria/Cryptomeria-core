@@ -1,3 +1,4 @@
+// src/hooks/useCsuUpload.ts
 import { useState, useCallback } from 'react';
 import { SigningStargateClient } from '@cosmjs/stargate';
 import Long from 'long';
@@ -96,5 +97,5 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
         }
     };
 
-    return { upload, isProcessing, uploadProgress, logs };
+    return { upload, isProcessing, uploadProgress, logs, addLog };
 }
