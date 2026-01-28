@@ -25,9 +25,8 @@ spec:
           args:
             - |
               echo "🚀 Setting up Faucet from ConfigMap..." && \
-              # ↓↓↓ ビルドツールを追加 ↓↓↓
+              # ビルドツールの追加
               apk add --no-cache python3 make g++ && \
-              # ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
               mkdir -p /app/db && \
               cp /src/* /app/ && \
               echo "🔑 Injecting mnemonic..." && \
@@ -35,7 +34,8 @@ spec:
               echo "📦 Installing dependencies..." && \
               npm install --quiet && \
               echo "✅ Starting Faucet..." && \
-              npm start
+              # exec を使用して、Node.jsプロセスがシグナル(SIGTERM)を直接受け取れるように修正
+              exec npm start
           ports:
             - containerPort: 4500
           env:
