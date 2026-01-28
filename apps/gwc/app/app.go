@@ -273,9 +273,14 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 					return
 				}
 
-				// 【修正】パスの書き換え（正規化）ロジックを完全に削除。
-				// クライアントが正しいURL（末尾スラッシュあり）を叩くことを前提にします。
-				tusHandler.ServeHTTP(w, req)
+				tusMount := http.StripPrefix("/upload/tus-stream", tusHandler)
+
+				// 末尾スラッシュ補正は残してもOK
+				if req.URL.Path == "/upload/tus-stream" {
+					req.URL.Path = "/upload/tus-stream/"
+				}
+
+				tusMount.ServeHTTP(w, req)
 				return
 			}
 			next.ServeHTTP(w, req)
