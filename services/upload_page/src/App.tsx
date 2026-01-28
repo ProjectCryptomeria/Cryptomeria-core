@@ -7,28 +7,55 @@ import { styles } from './styles/AppStyles';
 import { CONFIG } from './constants/config';
 
 export default function App() {
-  const { address, client, connect, requestFaucet } = useKeplr();
-  const { upload, isProcessing, uploadProgress, logs } = useCsuUpload(client, address);
+  const { address, client, balance, connect, requestFaucet, updateBalance } = useKeplr();
+  const { upload, isProcessing, uploadProgress, logs, addLog } = useCsuUpload(client, address);
 
   const [projectName, setProjectName] = useState('onchain-web-portal');
   const [files, setFiles] = useState<any[]>([]);
+
+  // 表示用にugwcをGWCに変換するユーティリティ
+  const formatBalance = (amount: string) => {
+    return (parseInt(amount) / 1000000).toLocaleString(undefined, { minimumFractionDigits: 2 });
+  };
 
   return (
     <div style={styles.container}>
       {/* ナビゲーション */}
       <nav style={styles.navbar}>
         <div style={styles.brand}>🌲 CRYPTOMERIA CORE</div>
-        <div style={{ display: 'flex', gap: '12px' }}>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           {address && (
-            <button
-              onClick={async () => {
-                const ok = await requestFaucet(address);
-                if (!ok) alert(`Faucetサーバーに接続できませんでした。ポート${CONFIG.faucetEndpoint.split(':')[2]}が開放されているか確認してください。`);
-              }}
-              style={{ ...styles.btnPrimary, width: 'auto', padding: '8px 16px', fontSize: '0.8rem', backgroundColor: '#64748b' }}
-            >
-              🪙 トークン取得
-            </button>
+            <>
+              {/* アカウント残高表示領域 */}
+              <div style={{ ...styles.addressBadge, background: '#1e293b', border: '1px solid #334155' }}>
+                <span style={{ fontSize: '0.7rem', color: '#94a3b8', marginRight: '8px' }}>BALANCE</span>
+                <strong style={{ color: '#f8fafc' }}>{formatBalance(balance)} {CONFIG.minDenom}</strong>
+              </div>
+
+              <button
+                onClick={async () => {
+                  addLog("🪙 Faucetからトークンの取得をリクエストしています...");
+                  const prevBalStr = await updateBalance(address, client!);
+
+                  const ok = await requestFaucet(address);
+                  if (ok) {
+                    addLog("⏳ ネットワークへの反映を待機中（約3秒）...");
+                    // チェーンの反映を待ってから残高を更新
+                    setTimeout(async () => {
+                      const newBalStr = await updateBalance(address, client!);
+                      const diff = (parseInt(newBalStr || "0") - parseInt(prevBalStr || "0")) / 1000000;
+                      addLog(`✅ トークン取得成功: +${diff} ${CONFIG.minDenom} を受領しました。`);
+                      addLog(`現在の総残高: ${formatBalance(newBalStr || "0")} ${CONFIG.minDenom}`);
+                    }, 3000);
+                  } else {
+                    addLog(`❌ Faucetサーバーに接続できませんでした。ポート${CONFIG.faucetEndpoint.split(':')[2]}が開放されているか確認してください。`);
+                  }
+                }}
+                style={{ ...styles.btnPrimary, width: 'auto', padding: '8px 16px', fontSize: '0.8rem', backgroundColor: '#64748b' }}
+              >
+                🪙 トークン取得
+              </button>
+            </>
           )}
           {!address ? (
             <button onClick={connect} style={{ ...styles.btnPrimary, width: 'auto', padding: '8px 24px', fontSize: '0.9rem' }}>
