@@ -1,0 +1,68 @@
+{{- if .Values.faucet.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: faucet
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: faucet
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: faucet
+  template:
+    metadata:
+      labels:
+        app: faucet
+    spec:
+      initContainers:
+        - name: config-gen
+          image: alpine
+          command: ["/bin/sh", "-c"]
+          # 環境変数MNEMONICを使ってconfig.jsonを生成し、共有ボリュームに配置する
+          args:
+            - |
+              cat <<EOF > /config/config.json
+              {
+                "blockchains": [
+                  {
+                    "name": "{{ .Values.faucet.chain.name }}",
+                    "rpc": "{{ .Values.faucet.chain.rpc }}",
+                    "coin_type": {{ .Values.faucet.chain.coinType }},
+                    "address_prefix": "{{ .Values.faucet.chain.prefix }}",
+                    "gas_price": "{{ .Values.faucet.chain.gasPrice }}",
+                    "max_credit": "{{ .Values.faucet.chain.maxCredit }}",
+                    "sender": "\$MNEMONIC"
+                  }
+                ]
+              }
+              EOF
+              # sedを使ってプレースホルダーを実際の環境変数値に置換
+              sed -i "s/\$MNEMONIC/$MNEMONIC/g" /config/config.json
+          env:
+            - name: MNEMONIC
+              valueFrom:
+                secretKeyRef:
+                  name: cryptomeria-mnemonics
+                  key: gwc-local-admin
+          volumeMounts:
+            - name: config-volume
+              mountPath: /config
+      containers:
+        - name: faucet
+          image: "{{ .Values.faucet.image.repository }}:{{ .Values.faucet.image.tag }}"
+          imagePullPolicy: {{ .Values.faucet.image.pullPolicy }}
+          command: ["faucet"]
+          args: ["-c", "/config/config.json", "-p", "4500"]
+          ports:
+            - containerPort: 4500
+          volumeMounts:
+            - name: config-volume
+              mountPath: /config
+          resources:
+            {{- toYaml .Values.faucet.resources | nindent 12 }}
+      volumes:
+        - name: config-volume
+          emptyDir: {}
+{{- end }}

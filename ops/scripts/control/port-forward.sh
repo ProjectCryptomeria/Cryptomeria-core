@@ -42,23 +42,30 @@ FORWARDS=(
     "cryptomeria-mdsc:30013:1317"   # Local 30013 -> MDSC 1317
     "cryptomeria-mdsc:30017:26657"  # Local 30017 -> MDSC 26657
     "cryptomeria-mdsc:30010:9090"   # Local 30010 -> MDSC 9090
+
+    # Faucet Server (4500)
+    "faucet:4500:4500"              # Local 4500 -> Faucet 4500
 )
 PIDS=()
 
 for forward in "${FORWARDS[@]}"; do
     IFS=':' read -r service local_port target_port <<< "$forward"
     
-    # 【修正】Service名からPod名を推測するロジックを追加
-    # StatefulSetの場合、通常は "サービス名-0" となる (例: cryptomeria-gwc-0)
-    # もしDeploymentでランダムなハッシュがつく場合は、kubectl get pods で動的に取得する必要があるが、
-    # 今回の構成(StatefulSet)であればこれで固定できるはずです。
+    # 【修正】リソースタイプの判定
+    # FaucetはDeploymentのため "svc/faucet" を使用 (Pod名はランダムなため)
+    # チェーン群はStatefulSetのため "pod/サービス名-0" を使用 (0番ノード固定)
+    if [[ "${service}" == "faucet" ]]; then
+        TARGET_RESOURCE="svc/${service}"
+        echo "  → ${service} (Service): localhost:${local_port} → ${target_port}"
+    else
+        # 既存ロジック: StatefulSetの0番Podをターゲットにする
+        POD_NAME="${service}-0" 
+        TARGET_RESOURCE="pod/${POD_NAME}"
+        echo "  → ${service} (pod/${POD_NAME}): localhost:${local_port} → ${target_port}"
+    fi
     
-    POD_NAME="${service}-0" 
-
-    echo "  → ${service} (pod/${POD_NAME}): localhost:${local_port} → ${target_port}"
-    
-    # "svc/${service}" を "pod/${POD_NAME}" に変更
-    kubectl port-forward -n "${NAMESPACE}" "pod/${POD_NAME}" "${local_port}:${target_port}" &>/dev/null &
+    # ポートフォワード実行（バックグラウンド）
+    kubectl port-forward -n "${NAMESPACE}" "${TARGET_RESOURCE}" "${local_port}:${target_port}" &>/dev/null &
     PIDS+=($!)
 done
 
@@ -69,6 +76,7 @@ echo "📋 Available endpoints:"
 echo "   gwc:     REST=http://localhost:30003  RPC=http://localhost:30007"
 echo "   fdsc-0:  REST=http://localhost:30023  RPC=http://localhost:30027"
 echo "   mdsc:    REST=http://localhost:30013  RPC=http://localhost:30017"
+echo "   faucet:  API =http://localhost:4500"
 echo ""
 echo "Press Ctrl+C to stop."
 echo ""

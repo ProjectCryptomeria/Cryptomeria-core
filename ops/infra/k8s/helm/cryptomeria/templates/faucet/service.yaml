@@ -1,0 +1,19 @@
+{{- if .Values.faucet.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: faucet
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: faucet
+spec:
+  type: {{ .Values.faucet.service.type }}
+  ports:
+    - port: {{ .Values.faucet.service.port }}
+      targetPort: 4500
+      nodePort: {{ .Values.faucet.service.nodePort }}
+      protocol: TCP
+      name: http
+  selector:
+    app: faucet
+{{- end }}
