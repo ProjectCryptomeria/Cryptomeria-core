@@ -72,30 +72,23 @@ execute_tx() {
 # 3. 実行フェーズ
 # ------------------------------------------------------------------------------
 
-phase_infra() {
-  local GWC_API="${API_URL}"
-  local MDSC_API="${MDSC_API_URL:-http://localhost:30013}"
-  local FDSC_API="${FDSC_API_URL:-http://localhost:30023}"
-
-  log_step "Step 1: インフラ設定"
-  OWNER_ADDR=$("${BINARY}" keys show "${OWNER_KEY}" -a ${KEYRING} 2>/dev/null)
-  [[ -z "${OWNER_ADDR}" ]] && fail "Key '${OWNER_KEY}' が見つかりません。"
-
-  log_info "ストレージノードを登録中..."
-  local common="--from ${OWNER_KEY} ${KEYRING} --chain-id ${CHAIN_ID} --node ${NODE_URL} -y"
-  execute_tx "${BINARY} tx gateway register-storage channel-0 fdsc ${FDSC_API} fdsc ${common}" >/dev/null
-  execute_tx "${BINARY} tx gateway register-storage channel-1 mdsc ${MDSC_API} mdsc ${common}" >/dev/null
-}
+# NOTE: phase_infra は削除されました。
+# システム起動時の connect-chain.sh により、正しいChainID(fdsc-0)ですでに登録が行われているため、
+# ここで重複登録や誤ったID(fdsc)での登録を行うとルーティング不整合の原因となります。
 
 phase_content() {
-  log_step "Step 2: コンテンツ準備"
+  log_step "Step 1: コンテンツ準備"
   echo "<h1>CSU Integrity Test</h1><p>Time: $(date)</p>" > "${TEST_DIR}/index.html"
   (cd "${TEST_DIR}" && zip -r "${ZIP_FILE}" . >/dev/null)
   log_info "ZIP作成完了: ${ZIP_FILE}"
 }
 
 phase_session() {
-  log_step "Step 3: セッション開始 & 権限付与"
+  log_step "Step 2: セッション開始 & 権限付与"
+  
+  OWNER_ADDR=$("${BINARY}" keys show "${OWNER_KEY}" -a ${KEYRING} 2>/dev/null)
+  [[ -z "${OWNER_ADDR}" ]] && fail "Key '${OWNER_KEY}' が見つかりません。"
+
   local tx_res
   tx_res=$(execute_tx "${BINARY} tx gateway init-session ${FRAGMENT_SIZE} 0 --from ${OWNER_KEY} ${KEYRING} --chain-id ${CHAIN_ID} --node ${NODE_URL} -y")
 
@@ -120,7 +113,7 @@ phase_session() {
 }
 
 phase_merkle() {
-  log_step "Step 4: Merkle Root コミット"
+  log_step "Step 3: Merkle Root コミット"
   export TEST_DIR FRAGMENT_SIZE ROOT_PROOF_FILE
   python3 -c '
 import hashlib, os
@@ -154,11 +147,20 @@ with open(os.environ["ROOT_PROOF_FILE"], "w") as f: f.write(root.hex())
 }
 
 phase_upload() {
-  log_step "Step 5: TUSアップロード"
+  log_step "Step 4: TUSアップロード"
   local base_url="${API_URL%/}/upload/tus-stream/"
-  local metadata="session_id $(echo -n "${SESSION_ID}" | base64 | tr -d '\n')"
+  
+  # メタデータをBase64エンコードして構築 (TUSプロトコル仕様)
+  # 形式: key value,key value (valueはBase64)
+  local sess_b64=$(echo -n "${SESSION_ID}" | base64 | tr -d '\n')
+  local proj_b64=$(echo -n "${PROJECT_NAME}" | base64 | tr -d '\n')
+  local ver_b64=$(echo -n "${PROJECT_VERSION}" | base64 | tr -d '\n')
+  
+  local metadata="session_id ${sess_b64},project_name ${proj_b64},version ${ver_b64}"
   
   log_info "POST: ${base_url}"
+  log_info "Metadata: Project=${PROJECT_NAME}, Version=${PROJECT_VERSION}"
+
   local post_resp=$(curl -i -s -X POST "${base_url}" \
     -H "Tus-Resumable: 1.0.0" \
     -H "Upload-Length: $(stat -c%s "${ZIP_FILE}")" \
@@ -183,7 +185,7 @@ phase_upload() {
 }
 
 phase_verify() {
-  log_step "Step 6: 最終検証"
+  log_step "Step 5: 最終検証"
   for i in {1..20}; do
     local state=$("${BINARY}" q gateway session "${SESSION_ID}" --node "${NODE_URL}" -o json | jq -r '.session.state')
     log_info "   Current State: ${state}"
@@ -192,14 +194,16 @@ phase_verify() {
     sleep 3
   done
 
+  # 正しいプロジェクト名とバージョンでレンダリングパスを構築
   local render_url="${API_URL}/render/${PROJECT_NAME}/${PROJECT_VERSION}/index.html"
   log_info "レンダリング確認: ${render_url}"
+  
   local code=$(curl -s -o /dev/null -w "%{http_code}" "${render_url}")
   [[ "${code}" == "200" ]] && log_info "✅ テスト成功！" || fail "レンダリング失敗 (Status: ${code})"
 }
 
 main() {
-  phase_infra
+  # phase_infra は実行しない (システムによる自動登録を使用)
   phase_content
   phase_session
   phase_merkle
