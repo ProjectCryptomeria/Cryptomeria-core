@@ -12,6 +12,9 @@ import { MerkleTreeCalculator, type InputFile } from '../lib/merkle';
 import { createZipBlob } from '../lib/zip';
 import { CONFIG } from '../constants/config';
 
+/**
+ * CSU（Chain Storage Unit）へのアップロードロジックを管理するカスタムフック
+ */
 export function useCsuUpload(client: SigningStargateClient | null, address: string) {
     const [isProcessing, setIsProcessing] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
@@ -27,23 +30,34 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
         setUploadProgress(0);
 
         try {
+            // Step 1: マークルツリーの計算とZIP圧縮
             addLog('Step 1: Merkle Rootの計算とZIP圧縮を開始...');
             const merkleCalc = new MerkleTreeCalculator();
             const rootProof = await merkleCalc.calculateRootProof(files, 1024);
             const zipBlob = await createZipBlob(files);
             addLog(`ZIPファイル作成完了: ${(zipBlob.size / 1024).toFixed(2)} KB`);
 
+            // Step 2: セッションの初期化
             addLog('Step 2: セッションの初期化 (On-chain)...');
+            // セッション期限を現在時刻から1時間後に設定（0だと即時失効する可能性があるため）
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
             const initRes = await client.signAndBroadcast(address, [{
                 typeUrl: '/gwc.gateway.v1.MsgInitSession',
-                value: { owner: address, fragmentSize: Long.fromNumber(1024), deadlineUnix: Long.fromNumber(0) }
-            }], { amount: [{ denom: 'ugwc', amount: '2000' }], gas: '200000' });
+                value: {
+                    owner: address,
+                    fragmentSize: Long.fromNumber(1024),
+                    deadlineUnix: Long.fromNumber(deadline)
+                }
+            }], { amount: [{ denom: CONFIG.denom, amount: '2000' }], gas: '200000' });
 
             if (initRes.code !== 0) throw new Error(initRes.rawLog);
             const initData = MsgInitSessionResponse.decode(initRes.msgResponses[0].value);
+
+            // イベントからExecutor（実行者）のアドレスを取得
             const executor = initRes.events.find(e => e.type === 'csu_init_session')
                 ?.attributes.find(a => a.key === 'executor')?.value.replace(/^"|"$/g, '') || "";
 
+            // Step 3: Executorへの権限委譲 (Authz & Feegrant)
             addLog('Step 3: Executorへの権限委譲...');
             const grantMsgs = ['MsgDistributeBatch', 'MsgFinalizeAndCloseSession', 'MsgAbortAndCloseSession'].map(type => ({
                 typeUrl: '/cosmos.authz.v1beta1.MsgGrant',
@@ -69,39 +83,49 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
                     }
                 })
             };
-            await client.signAndBroadcast(address, [...grantMsgs, feeGrant], { amount: [{ denom: 'ugwc', amount: '5000' }], gas: '500000' });
+            await client.signAndBroadcast(address, [...grantMsgs, feeGrant], { amount: [{ denom: CONFIG.denom, amount: '5000' }], gas: '500000' });
 
+            // Step 4: Root Proofのコミット
             addLog('Step 4: Root Proofのコミット...');
             await client.signAndBroadcast(address, [{
                 typeUrl: '/gwc.gateway.v1.MsgCommitRootProof',
                 value: { owner: address, sessionId: initData.sessionId, rootProofHex: rootProof }
-            }], { amount: [{ denom: 'ugwc', amount: '2000' }], gas: '200000' });
+            }], { amount: [{ denom: CONFIG.denom, amount: '2000' }], gas: '200000' });
 
+            // Step 5: TUSプロトコルによるZIPファイルのアップロード
             addLog(`Step 5: TUSアップロードを開始 (合計サイズ: ${(zipBlob.size / 1024 / 1024).toFixed(2)} MB)...`);
 
-            let lastLoggedProgress = -1; // ログの重複出力を防ぐフラグ
+            let lastLoggedProgress = -1;
 
             const tusUpload = new tus.Upload(zipBlob, {
                 endpoint: `${CONFIG.restEndpoint}/upload/tus-stream/`,
+                // リトライ設定：サーバー側の一時的な検証エラー等に対処
+                retryDelays: [0, 1000, 3000],
                 headers: { Authorization: `Bearer ${initData.sessionUploadToken}` },
-                metadata: { session_id: initData.sessionId, project_name: projectName, version: projectVersion },
+                metadata: {
+                    session_id: initData.sessionId,
+                    project_name: projectName,
+                    version: projectVersion
+                },
                 onProgress: (bytes, total) => {
                     const percent = Math.floor((bytes / total) * 100);
                     setUploadProgress(percent);
 
-                    // 10% 刻みでログに出力する
                     if (percent % 10 === 0 && percent !== lastLoggedProgress) {
                         addLog(`↑ アップロード中... ${percent}% (${(bytes / 1024 / 1024).toFixed(2)} MB / ${(total / 1024 / 1024).toFixed(2)} MB)`);
                         lastLoggedProgress = percent;
                     }
                 },
                 onSuccess: () => {
-                    addLog('✅ デプロイ完了！全フラグメントがネットワークに永続化されました。');
+                    addLog('✅ アップロード完了！');
+                    const accessUrl = `${CONFIG.restEndpoint}/render/${projectName}/${projectVersion}/index.html`;
+                    addLog(`🌐 アクセスURL: ${accessUrl}`);
+                    setUploadProgress(100);
                     setIsProcessing(false);
                 },
                 onError: (err) => {
                     addLog(`❌ アップロードエラー: ${err.message}`);
-                    throw err;
+                    setIsProcessing(false);
                 }
             });
             tusUpload.start();

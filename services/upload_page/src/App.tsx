@@ -6,11 +6,16 @@ import { processFileList } from './lib/zip';
 import { styles } from './styles/AppStyles';
 import { CONFIG } from './constants/config';
 
+/**
+ * メインアプリケーションコンポーネント
+ */
 export default function App() {
   const { address, client, balance, connect, requestFaucet, updateBalance } = useKeplr();
   const { upload, isProcessing, uploadProgress, logs, addLog } = useCsuUpload(client, address);
 
+  // プロジェクト設定の状態
   const [projectName, setProjectName] = useState('onchain-web-portal');
+  const [projectVersion, setProjectVersion] = useState('1.0.0'); // バージョン用の状態を追加
   const [files, setFiles] = useState<any[]>([]);
 
   // 表示用にugwcをGWCに変換するユーティリティ
@@ -40,7 +45,6 @@ export default function App() {
                   const ok = await requestFaucet(address);
                   if (ok) {
                     addLog("⏳ ネットワークへの反映を待機中（約3秒）...");
-                    // チェーンの反映を待ってから残高を更新
                     setTimeout(async () => {
                       const newBalStr = await updateBalance(address, client!);
                       const diff = (parseInt(newBalStr || "0") - parseInt(prevBalStr || "0")) / 1000000;
@@ -77,11 +81,24 @@ export default function App() {
         <aside style={styles.sidebar}>
           <div style={styles.card}>
             <h3 style={styles.sectionTitle}>デプロイ設定</h3>
-            <div style={{ marginBottom: '20px' }}>
+
+            {/* プロジェクトID入力 */}
+            <div style={{ marginBottom: '15px' }}>
               <label style={styles.label}>プロジェクトID</label>
               <input
                 type="text" value={projectName}
                 onChange={e => setProjectName(e.target.value)}
+                style={styles.input}
+              />
+            </div>
+
+            {/* バージョン入力欄の追加 */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={styles.label}>プロジェクトバージョン</label>
+              <input
+                type="text" value={projectVersion}
+                onChange={e => setProjectVersion(e.target.value)}
+                placeholder="1.0.0"
                 style={styles.input}
               />
             </div>
@@ -102,7 +119,7 @@ export default function App() {
           </div>
 
           <button
-            onClick={() => upload(files, projectName, '1.0.0')}
+            onClick={() => upload(files, projectName, projectVersion)}
             disabled={!address || files.length === 0 || isProcessing}
             style={{
               ...styles.btnPrimary,

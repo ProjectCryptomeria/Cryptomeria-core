@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	clienthelpers "cosmossdk.io/client/v2/helpers"
 	"cosmossdk.io/core/appmodule"
@@ -254,38 +253,11 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 		panic(fmt.Sprintf("Failed to init TUS: %v", err))
 	}
 
-	// 2. TUSリクエスト専用の優先ミドルウェア
-	apiSvr.Router.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if strings.HasPrefix(req.URL.Path, "/upload/tus-stream") {
+	// ★【要件】この行は必ず保持
+	tusMount := http.StripPrefix("/upload/tus-stream", tusHandler)
 
-				// 詳細デバッグログ
-				fmt.Printf("\n🎯 [TUS DEBUG] Method: %s | Path: %s\n", req.Method, req.URL.Path)
-
-				// ブラウザおよびスクリプト向けのCORSヘッダー強制付与
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-				w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, PATCH, HEAD")
-				w.Header().Set("Access-Control-Allow-Headers", "*")
-				w.Header().Set("Access-Control-Expose-Headers", "Location, Tus-Resumable, Upload-Offset, Upload-Length")
-
-				if req.Method == http.MethodOptions {
-					w.WriteHeader(http.StatusNoContent)
-					return
-				}
-
-				tusMount := http.StripPrefix("/upload/tus-stream", tusHandler)
-
-				// 末尾スラッシュ補正は残してもOK
-				if req.URL.Path == "/upload/tus-stream" {
-					req.URL.Path = "/upload/tus-stream/"
-				}
-
-				tusMount.ServeHTTP(w, req)
-				return
-			}
-			next.ServeHTTP(w, req)
-		})
-	})
+	// tus用のCORS/OPTIONS/デバッグ/末尾スラッシュ補正は tus-handler.go に集約
+	apiSvr.Router.Use(gatewayserver.TusMiddleware(tusMount))
 
 	mdscEndpoint, _ := app.appOpts.Get("gwc.mdsc_endpoint").(string)
 	fdscEndpointsRaw, _ := app.appOpts.Get("gwc.fdsc_endpoints").(map[string]interface{})
@@ -301,10 +273,10 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 		UploadDir:     uploadDir,
 	}
 
-	// 4. Render用GETルート等の登録
-	gatewayserver.RegisterCustomHTTPRoutes(apiSvr.ClientCtx, apiSvr.Router, app.GatewayKeeper, gatewayConfig, tusHandler)
+	// Render用GETルート等の登録（tusHandler 引数は不要になったので削除）
+	gatewayserver.RegisterCustomHTTPRoutes(apiSvr.ClientCtx, apiSvr.Router, app.GatewayKeeper, gatewayConfig)
 
-	// 5. 標準Cosmos SDK APIルートの登録
+	// 標準Cosmos SDK APIルートの登録
 	app.App.RegisterAPIRoutes(apiSvr, apiConfig)
 
 	fmt.Println("DEBUG: RegisterAPIRoutes - Injection Complete")

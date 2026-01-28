@@ -66,7 +66,7 @@ for forward in "${FORWARDS[@]}"; do
     
     # ポートフォワード実行（バックグラウンド）
     # 修正後（IPv4とIPv6の両方を指定）
-    kubectl port-forward --address "127.0.0.1" -n "${NAMESPACE}" "${TARGET_RESOURCE}" "${local_port}:${target_port}" &>/dev/null &
+    kubectl port-forward -n "${NAMESPACE}" "${TARGET_RESOURCE}" "${local_port}:${target_port}" &>/dev/null &
     PIDS+=($!)
 done
 
