@@ -1,6 +1,6 @@
 // services/upload_page/src/App.tsx
 import React, { useState } from 'react';
-import { SigningStargateClient, type StdFee } from '@cosmjs/stargate';
+import { accountFromAny, GasPrice, SigningStargateClient, type StdFee } from '@cosmjs/stargate';
 import { Registry } from '@cosmjs/proto-signing';
 import { defaultRegistryTypes } from '@cosmjs/stargate';
 import { MsgGrant } from 'cosmjs-types/cosmos/authz/v1beta1/tx';
@@ -23,10 +23,12 @@ const PROTO_PKG = 'gwc.gateway.v1';
 
 import { MerkleTreeCalculator, type InputFile } from './lib/merkle';
 import { createZipBlob, processFileList } from './lib/zip';
+import { Comet38Client } from '@cosmjs/tendermint-rpc';
 
 // 環境設定 (devcontainer/localhost環境)
 const CONFIG = {
   chainId: 'gwc',
+  chainName: 'Cryptomeria Gateway',
   rpcEndpoint: 'http://localhost:30007', // Proxy経由 (config.tomlでCORS許可が必要)
   restEndpoint: 'http://localhost:30003', // TUS Upload用
 };
@@ -55,16 +57,74 @@ export default function App() {
       return;
     }
     try {
+      // 1. チェーン情報をKeplrに登録 (suggestChain)
+      await window.keplr.experimentalSuggestChain({
+        chainId: CONFIG.chainId,
+        chainName: CONFIG.chainName,
+        rpc: CONFIG.rpcEndpoint,
+        rest: CONFIG.restEndpoint,
+        bip44: {
+          coinType: 118,
+        },
+        bech32Config: {
+          bech32PrefixAccAddr: 'gwc',
+          bech32PrefixAccPub: 'gwcpub',
+          bech32PrefixValAddr: 'gwcvaloper',
+          bech32PrefixValPub: 'gwcvaloperpub',
+          bech32PrefixConsAddr: 'gwcvalcons',
+          bech32PrefixConsPub: 'gwcvalconspub',
+        },
+        currencies: [
+          {
+            coinDenom: 'GWC',
+            coinMinimalDenom: 'ugwc',
+            coinDecimals: 6,
+            coinGeckoId: 'cosmos', // 仮設定
+          },
+        ],
+        feeCurrencies: [
+          {
+            coinDenom: 'GWC',
+            coinMinimalDenom: 'ugwc',
+            coinDecimals: 6,
+            coinGeckoId: 'cosmos',
+            gasPriceStep: {
+              low: 0.01,
+              average: 0.025,
+              high: 0.04,
+            },
+          },
+        ],
+        stakeCurrency: {
+          coinDenom: 'GWC',
+          coinMinimalDenom: 'ugwc',
+          coinDecimals: 6,
+          coinGeckoId: 'cosmos',
+        },
+      });
+
       await window.keplr.enable(CONFIG.chainId);
+
       const offlineSigner = window.keplr.getOfflineSigner(CONFIG.chainId);
       const accounts = await offlineSigner.getAccounts();
       setAddress(accounts[0].address);
 
-      const signingClient = await SigningStargateClient.connectWithSigner(
-        CONFIG.rpcEndpoint,
+      // 変更点: Tendermintクライアントを手動作成し、オプションをフルコントロールする
+      const tmClient = await Comet38Client.connect(CONFIG.rpcEndpoint);
+
+      const signingClient = SigningStargateClient.createWithSigner(
+        tmClient,
         offlineSigner,
-        { registry }
+        {
+          registry,
+          // ここでガス価格を指定しないと、tx送信時にエラーになる可能性があります
+          gasPrice: GasPrice.fromString("0.025ugwc"),
+
+          // アカウント取得時のプレフィックス不一致エラーを回避するための重要設定
+          accountParser: accountFromAny,
+        }
       );
+
       setClient(signingClient);
       addLog(`Connected: ${accounts[0].address}`);
     } catch (e: any) {
