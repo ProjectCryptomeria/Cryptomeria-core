@@ -40,7 +40,8 @@ if [ -z "$TARGETS" ]; then
 fi
 
 for COMPONENT in $TARGETS; do
-    connect_instances "$COMPONENT"
+    connect_instances "$COMPONENT" &
 done
+wait
 
 log_success "All connections processed."

@@ -243,42 +243,60 @@ func (app *App) SimulationManager() *module.SimulationManager {
 
 // RegisterAPIRoutes は、APIサーバーにすべてのアプリケーションモジュールのルートを登録します。
 func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig) {
-	fmt.Println("DEBUG: RegisterAPIRoutes - Starting Injection on EXISTING Router")
+	fmt.Println("DEBUG: RegisterAPIRoutes - Starting Injection")
 
 	// 1. TUSハンドラーの初期化
 	uploadDir := "./tmp/uploads"
+	// 【重要】ベースパスを "/upload/tus-stream/" (末尾スラッシュあり) に固定します。
+	// tusd内部でのID解析の起点となるため、末尾スラッシュは必須です。
+	tusBasePath := "/upload/tus-stream/"
 
-	tusHandler, err := gatewayserver.NewTusHandler(apiSvr.ClientCtx, app.GatewayKeeper, uploadDir, "/upload/tus-stream/")
+	tusHandler, err := gatewayserver.NewTusHandler(apiSvr.ClientCtx, app.GatewayKeeper, uploadDir, tusBasePath)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to init TUS: %v", err))
 	}
 
-	// 2. 既存ルーターへのミドルウェア注入
+	// 2. TUSリクエスト専用の優先ミドルウェア
 	apiSvr.Router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			// A. TUS Upload Check
+			// TUS関連のリクエストパス（/upload/tus-stream...）を検知
 			if strings.HasPrefix(req.URL.Path, "/upload/tus-stream") {
-				fmt.Printf("DEBUG: Hijack Middleware HIT TUS: %s\n", req.URL.Path)
-				w.Header().Set("X-Handler-Source", "Hijack-Middleware")
-				http.StripPrefix("/upload/tus-stream", tusHandler).ServeHTTP(w, req)
-				return
+
+				// --- パスの正規化 (Normalization) ---
+				// クライアントが末尾スラッシュを忘れた場合 ("/upload/tus-stream") でも、
+				// コレクションエンドポイント ("/upload/tus-stream/") として扱うように補完します。
+				if req.URL.Path == "/upload/tus-stream" {
+					req.URL.Path = "/upload/tus-stream/"
+				}
+
+				// 詳細デバッグログ
+				fmt.Printf("\n🎯 [TUS DEBUG] Method: %s | Path: %s\n", req.Method, req.URL.Path)
+
+				// ブラウザおよびスクリプト向けのCORSヘッダー強制付与
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, PATCH, HEAD")
+				w.Header().Set("Access-Control-Allow-Headers", "*")
+				// Locationヘッダーを公開しないと、クライアントが次のPATCHリクエスト先を知ることができません。
+				w.Header().Set("Access-Control-Expose-Headers", "Location, Tus-Resumable, Upload-Offset, Upload-Length")
+
+				// OPTIONS (プリフライト) は 204 で即答して終了
+				if req.Method == http.MethodOptions {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+
+				// 【重要】StripPrefix は行わず、正規化したパスをそのまま tusHandler (tusd) へ渡します。
+				// tusd は config.BasePath と req.URL.Path を比較して処理を分岐するためです。
+				tusHandler.ServeHTTP(w, req)
+				return // TUSとして処理を完結させる
 			}
 
-			// B. Ping Check
-			if req.URL.Path == "/ping" {
-				fmt.Println("DEBUG: Hijack Middleware HIT /ping")
-				w.Header().Set("Content-Type", "text/plain")
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("pong"))
-				return
-			}
-
-			// C. それ以外は標準フローへ
+			// TUS以外（通常のCosmos SDKルート）はそのまま次へ
 			next.ServeHTTP(w, req)
 		})
 	})
 
-	// 3. Renderハンドラー
+	// 3. カスタムハンドラー設定の準備 (Render用)
 	mdscEndpoint, _ := app.appOpts.Get("gwc.mdsc_endpoint").(string)
 	fdscEndpointsRaw, _ := app.appOpts.Get("gwc.fdsc_endpoints").(map[string]interface{})
 	fdscEndpoints := make(map[string]string)
@@ -293,10 +311,10 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 		UploadDir:     uploadDir,
 	}
 
-	// 【修正】tusHandler を5番目の引数として渡します
+	// 4. Render用GETルート等の登録
 	gatewayserver.RegisterCustomHTTPRoutes(apiSvr.ClientCtx, apiSvr.Router, app.GatewayKeeper, gatewayConfig, tusHandler)
 
-	// 4. 標準APIルート（gRPC Gateway）の登録
+	// 5. 標準Cosmos SDK APIルートの登録
 	app.App.RegisterAPIRoutes(apiSvr, apiConfig)
 
 	fmt.Println("DEBUG: RegisterAPIRoutes - Injection Complete")

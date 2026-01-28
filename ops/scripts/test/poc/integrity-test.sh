@@ -167,6 +167,8 @@ phase_upload() {
     -H "Upload-Metadata: ${metadata}" \
     -H "Authorization: Bearer ${UPLOAD_TOKEN}")
 
+  echo post_resp: "${post_resp}"
+
   local location=$(echo "${post_resp}" | grep -i "Location:" | awk '{print $2}' | tr -d '\r')
   [[ -z "${location}" ]] && { echo "${post_resp}" >&2; fail "Locationヘッダーがありません。"; }
 
