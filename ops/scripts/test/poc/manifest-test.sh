@@ -56,26 +56,29 @@ echo "$MANIFEST_JSON" | jq '{
 echo "---------------------------"
 
 # =============================================================================
-# 2. Resolve fragment location using GWC endpoints (channel_id -> chain_id)
+# 2. Resolve fragment location
 # =============================================================================
-log_step "3) Resolving fragment location via manifest + gwc endpoints..."
+log_step "3) Resolving fragment location from manifest..."
 
 FILE_KEY=$(echo "$MANIFEST_JSON" | jq -r '.files | keys[0]')
 if [ -z "$FILE_KEY" ] || [ "$FILE_KEY" = "null" ]; then
   log_error "No files found in selected manifest."
 fi
 
-FDSC_CHANNEL=$(echo "$MANIFEST_JSON" | jq -r --arg K "$FILE_KEY" '.files[$K].fragments[0].fdsc_id')
+# NOTE: マニフェスト内の 'fdsc_id' は現在 ChainID (例: fdsc-0) を直接保持している。
+FDSC_CHAIN=$(echo "$MANIFEST_JSON" | jq -r --arg K "$FILE_KEY" '.files[$K].fragments[0].fdsc_id')
 FRAGMENT_ID=$(echo "$MANIFEST_JSON" | jq -r --arg K "$FILE_KEY" '.files[$K].fragments[0].fragment_id')
 
-if [ -z "$FDSC_CHANNEL" ] || [ "$FDSC_CHANNEL" = "null" ] || [ -z "$FRAGMENT_ID" ] || [ "$FRAGMENT_ID" = "null" ]; then
+if [ -z "$FDSC_CHAIN" ] || [ "$FDSC_CHAIN" = "null" ] || [ -z "$FRAGMENT_ID" ] || [ "$FRAGMENT_ID" = "null" ]; then
   log_error "Failed to extract fragment mapping from manifest."
 fi
 
+# GWCに登録されているか確認（オプション）
 ENDPOINTS_JSON=$(pod_exec "$GWC_POD" gwcd q gateway endpoints -o json)
-FDSC_CHAIN=$(echo "$ENDPOINTS_JSON" | jq -r --arg CH "$FDSC_CHANNEL" '.storage_infos[] | select(.channel_id==$CH) | .chain_id' | head -n 1)
-if [ -z "$FDSC_CHAIN" ] || [ "$FDSC_CHAIN" = "null" ]; then
-  log_error "Could not resolve fdsc chain id for channel '$FDSC_CHANNEL'."
+IS_REGISTERED=$(echo "$ENDPOINTS_JSON" | jq -r --arg CID "$FDSC_CHAIN" '.storage_infos[] | select(.chain_id==$CID) | .chain_id')
+
+if [ -z "$IS_REGISTERED" ]; then
+  log_warn "Warning: FDSC Chain '$FDSC_CHAIN' found in manifest but NOT registered in GWC endpoints."
 fi
 
 FDSC_POD=$(get_chain_pod_name "$FDSC_CHAIN")
@@ -83,7 +86,7 @@ if [ -z "$FDSC_POD" ]; then
   log_error "FDSC pod not found for chain '$FDSC_CHAIN'."
 fi
 
-log_success "Resolved fragment: project=$LATEST_PROJECT file=$FILE_KEY channel=$FDSC_CHANNEL chain=$FDSC_CHAIN fragment_id=$FRAGMENT_ID"
+log_success "Resolved fragment: project=$LATEST_PROJECT file=$FILE_KEY chain=$FDSC_CHAIN fragment_id=$FRAGMENT_ID"
 
 # =============================================================================
 # 3. FDSC: Fragment Inspection
@@ -92,7 +95,6 @@ log_step "4) Querying FDSC ($FDSC_CHAIN) for fragment..."
 FRAG_JSON=$(pod_exec "$FDSC_POD" fdscd q datastore get-fragment "$FRAGMENT_ID" -o json)
 
 echo "--- [Fragment JSON] ---"
-# Fragment側にも site_root が付与されているか確認
 echo "$FRAG_JSON" | jq .
 echo "------------------------"
 

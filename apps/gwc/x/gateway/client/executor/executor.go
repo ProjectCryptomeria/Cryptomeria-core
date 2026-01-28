@@ -42,18 +42,32 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		return fmt.Errorf("session %s is already closed", sessionID)
 	}
 
-	// 2. 有効な FDSC ID (ChainId) を動的に取得 (Issue 3 対応)
-	// ストレージトポロジーをクエリし、connection_type が "fdsc" のものを探します
+	// 2. 有効な FDSC ID (ChainId) と ChannelId を動的に取得
+	// ストレージトポロジーをクエリし、connection_type が "datastore" のものを探します
+	fmt.Printf("[Executor] Resolving storage endpoints...\n")
 	resStorage, err := queryClient.StorageEndpoints(ctx, &types.QueryStorageEndpointsRequest{})
-	targetFdscID := "fdsc" // フォールバック用のデフォルト値
-	if err == nil {
-		for _, info := range resStorage.StorageInfos {
-			if info.ConnectionType == "fdsc" {
-				// 実際に登録されている ChainId (例: "fdsc-1") を取得
-				targetFdscID = info.ChainId
-				break
-			}
+	if err != nil {
+		return fmt.Errorf("failed to query storage endpoints: %w", err)
+	}
+
+	var targetFdscID string
+	var targetChannelID string
+
+	for _, info := range resStorage.StorageInfos {
+		// 修正: インフラ側の登録名 "datastore" に合わせる
+		if info.ConnectionType == "datastore" {
+			targetFdscID = info.ChainId
+			targetChannelID = info.ChannelId
+			fmt.Printf("[Executor] Found active FDSC: %s (Endpoint: %s, Channel: %s)\n", targetFdscID, info.ApiEndpoint, targetChannelID)
+			break
 		}
+	}
+
+	if targetFdscID == "" {
+		return fmt.Errorf("no active FDSC storage found in registry (connection_type='datastore'). Please ensure storage is registered via 'gwcd tx gateway register-storage'")
+	}
+	if targetChannelID == "" {
+		return fmt.Errorf("active FDSC found (%s) but channel_id is missing. Please re-register storage correctly.", targetFdscID)
 	}
 
 	// 3. ZIPファイルの読み込み
@@ -115,7 +129,8 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 				FragmentProof:     frag.FragmentProof,
 				FileSize:          frag.FileSize,
 				FileProof:         frag.FileProof,
-				TargetFdscChannel: "",
+				// 修正: 特定したチャネルIDを明示的に指定
+				TargetFdscChannel: targetChannelID,
 			})
 		}
 
@@ -125,7 +140,7 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 			Items:     batchItems,
 		}
 
-		fmt.Printf("[Executor] Broadcasting Batch %d-%d...\n", i, end)
+		fmt.Printf("[Executor] Broadcasting Batch %d-%d to channel %s...\n", i, end, targetChannelID)
 		txRes, err := broadcastAndConfirm(clientCtx, txf, msg)
 		if err != nil {
 			fmt.Printf("[Executor] Failed to confirm batch Tx: %v\n", err)
@@ -144,9 +159,13 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	// 断片情報をパスごとに整理
 	fragmentsByPath := make(map[string][]*types.PacketFragmentMapping)
 	for _, frag := range proofData.Fragments {
+		// 修正: FDSCの MakeFragmentID と同じロジックでIDを生成
+		// FDSC側: hex(sha256("FDSC_FRAG_ID:{session_id}:{path}:{index}"))
+		calculatedID := calculateFragmentID(sessionID, frag.Path, frag.Index)
+
 		mapping := &types.PacketFragmentMapping{
-			FdscId:     targetFdscID, // 動的に解決した FDSC ID を使用
-			FragmentId: fmt.Sprintf("%s-%d", frag.Path, frag.Index),
+			FdscId:     targetFdscID, 
+			FragmentId: calculatedID, // 単純なpath-indexではなく、ハッシュ化されたIDを使用
 		}
 		fragmentsByPath[frag.Path] = append(fragmentsByPath[frag.Path], mapping)
 	}
@@ -172,7 +191,6 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	}
 
 	// 7. セッションの終了とマニフェストの確定
-	// 引数で受け取った projectName と version を使用 (Issue 1 & 2 対応)
 	finalizeMsg := &types.MsgFinalizeAndCloseSession{
 		Executor:  executorAddr,
 		SessionId: sessionID,
@@ -197,6 +215,14 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	fmt.Printf("[Executor] Session %s finalized successfully.\n", sessionID)
 
 	return nil
+}
+
+// calculateFragmentID generates the same deterministic ID as FDSC
+func calculateFragmentID(sessionID, path string, index uint64) string {
+	// FDSCの types.MakeFragmentID と完全一致させる必要があります
+	payload := []byte(fmt.Sprintf("FDSC_FRAG_ID:%s:%s:%d", sessionID, path, index))
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
 }
 
 // calculateFileRoot は types.BuildCSUProofs と同じロジックでFileRootを計算します
