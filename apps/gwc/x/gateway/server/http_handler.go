@@ -26,32 +26,12 @@ type GatewayConfig struct {
 	UploadDir     string
 }
 
-// RegisterCustomHTTPRoutes はGateway ChainのカスタムHTTPルートを登録します
 func RegisterCustomHTTPRoutes(clientCtx client.Context, r *mux.Router, k keeper.Keeper, config GatewayConfig, tusHandler http.Handler) {
-	fmt.Println("DEBUG: RegisterCustomHTTPRoutes (Render & TUS) called")
+	fmt.Println("DEBUG: RegisterCustomHTTPRoutes (Render Only) called")
 
-	// --- TUS アップロードルートの登録 ---
-	// パスプレフィックス "/upload/tus-stream/" に一致するすべてのリクエストを処理
-	r.PathPrefix("/upload/tus-stream/").Handler(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		// ブラウザ向けのCORSヘッダー設定
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, PATCH, HEAD")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Tus-Resumable, Upload-Offset, Upload-Length, Upload-Metadata, Upload-Defer-Length, Upload-Concat")
-		// クライアント側で Location や Upload-Offset を読めるようにする (重要)
-		w.Header().Set("Access-Control-Expose-Headers", "Location, Tus-Resumable, Upload-Offset, Upload-Length, Content-Type")
-
-		// プリフライト(OPTIONS)リクエストには 204 で即答
-		if req.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		// 到達確認用のログ
-		fmt.Printf("DEBUG: TUS Request Received: %s %s\n", req.Method, req.URL.Path)
-
-		// プレフィックスを削除せずに渡す（tusd内部の BasePath チェックと一致させるため）
-		tusHandler.ServeHTTP(w, req)
-	}))
+	// 【修正】TUS用の PathPrefix 登録を削除。
+	// app.go のミドルウェアで既に ServeHTTP して return しているため、
+	// ここでの登録は二重管理の原因になります。
 
 	// --- レンダリング用ルート ---
 	r.HandleFunc("/render/{project}/{version}/{path:.*}", func(w http.ResponseWriter, req *http.Request) {

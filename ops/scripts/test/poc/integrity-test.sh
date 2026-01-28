@@ -148,7 +148,8 @@ with open(os.environ["ROOT_PROOF_FILE"], "w") as f: f.write(root.hex())
 
 phase_upload() {
   log_step "Step 4: TUSアップロード"
-  local base_url="${API_URL%/}/upload/tus-stream/"
+  # 【修正】末尾スラッシュを削除し、サーバー側のBasePathと一致させます。
+  local base_url="${API_URL%/}/upload/tus-stream"
   
   # メタデータをBase64エンコードして構築 (TUSプロトコル仕様)
   # 形式: key value,key value (valueはBase64)
