@@ -256,7 +256,7 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 	// ★【要件】この行は必ず保持
 	tusMount := http.StripPrefix("/upload/tus-stream", tusHandler)
 
-	// tus用のCORS/OPTIONS/デバッグ/末尾スラッシュ補正は tus-handler.go に集約
+	// TUSのイベント購読・CORS・OPTIONS等は tus-handler.go に集約
 	apiSvr.Router.Use(gatewayserver.TusMiddleware(tusMount))
 
 	mdscEndpoint, _ := app.appOpts.Get("gwc.mdsc_endpoint").(string)
@@ -273,7 +273,7 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 		UploadDir:     uploadDir,
 	}
 
-	// Render用GETルート等の登録（tusHandler 引数は不要になったので削除）
+	// Render用GETルート等の登録（tusHandler引数は削除）
 	gatewayserver.RegisterCustomHTTPRoutes(apiSvr.ClientCtx, apiSvr.Router, app.GatewayKeeper, gatewayConfig)
 
 	// 標準Cosmos SDK APIルートの登録
