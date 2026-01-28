@@ -18,26 +18,11 @@ spec:
     spec:
       containers:
         - name: faucet
-          image: node:20-alpine
-          imagePullPolicy: IfNotPresent
-          workingDir: /app
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              echo "🚀 Setting up Faucet from ConfigMap..." && \
-              # ビルドツールの追加
-              apk add --no-cache python3 make g++ && \
-              mkdir -p /app/db && \
-              cp /src/* /app/ && \
-              echo "🔑 Injecting mnemonic..." && \
-              sed -i "s/MNEMONIC_PLACEHOLDER/$MNEMONIC/g" /app/config.js && \
-              echo "📦 Installing dependencies..." && \
-              npm install --quiet && \
-              echo "✅ Starting Faucet..." && \
-              # exec を使用して、Node.jsプロセスがシグナル(SIGTERM)を直接受け取れるように修正
-              exec npm start
+          # ✅ values.yaml で指定したビルド済みイメージを使用
+          image: "{{ .Values.faucet.image.repository }}:{{ .Values.faucet.image.tag }}"
+          imagePullPolicy: {{ .Values.faucet.image.pullPolicy }}
           ports:
-            - containerPort: 4500
+            - containerPort: 8080 # ping-pub/faucet のデフォルト
           env:
             - name: MNEMONIC
               valueFrom:
@@ -45,10 +30,11 @@ spec:
                   name: cryptomeria-mnemonics
                   key: gwc.local-admin.mnemonic
           volumeMounts:
-            - name: src-volume
-              mountPath: /src
+            - name: config-volume
+              mountPath: /config # config.json を配置する場所
       volumes:
-        - name: src-volume
+        - name: config-volume
           configMap:
-            name: faucet-source
+            # ✅ 新しい ConfigMap 名に変更（下記参照）
+            name: faucet-config
 {{- end }}

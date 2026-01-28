@@ -116,23 +116,24 @@ genesisServer:
 faucet:
   enabled: true
   image:
-    repository: node
-    tag: 20-alpine
+    repository: cryptomeria/faucet # ビルドしたイメージ名
+    tag: latest
     pullPolicy: IfNotPresent
-  # GWCチェーンへの接続設定
   chain:
     name: cryptomeria
-    rpc: "http://gwc-0.gwc-headless:26657"
+    # ✅ 修正: 以前の確認結果に基づき、正しいサービス名に変更
+    rpc: "http://cryptomeria-gwc:26657"
+    api: "http://cryptomeria-gwc:1317"
     prefix: cosmos
-    gasPrice: "0.025uatom"
     coinType: 118
     denom: uatom
-    maxCredit: "10000000" # 1回あたりの配布量 (10 GWC)
+    # ✅ テンプレートで使用する変数名を統一
+    amount: "10000000"
+    fee: "2000"
   service:
     type: NodePort
     port: 4500
-    nodePort: 30045 # NodePortの空きポートを割り当て
-  resources: {}
+    nodePort: 30045
 
 # =============================================================================
 # Network / Security
