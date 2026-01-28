@@ -22,8 +22,9 @@ connect_instances() {
     
     for chain_id in $instances; do
         log_step "Triggering connection for: $chain_id"
-        "$SCRIPT_DIR/connect-chain.sh" "$chain_id"
+        "$SCRIPT_DIR/connect-chain.sh" "$chain_id" &
     done
+    wait
 }
 
 # =============================================================================
