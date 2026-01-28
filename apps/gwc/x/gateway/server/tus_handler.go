@@ -139,9 +139,19 @@ func compareHashes(a, b []byte) bool {
 func processCompletedUpload(clientCtx client.Context, k keeper.Keeper, upload tusd.FileInfo) error {
 	meta := upload.MetaData
 	sessionID := meta["session_id"]
+	// 追加: メタデータからプロジェクト名とバージョンを取得
+	projectName := meta["project_name"]
+	version := meta["version"]
 
 	if sessionID == "" {
 		return fmt.Errorf("missing session_id in upload metadata")
+	}
+	// デフォルト値の設定
+	if projectName == "" {
+		projectName = "default-project"
+	}
+	if version == "" {
+		version = "v1"
 	}
 
 	filePath := upload.Storage["Path"]
@@ -149,8 +159,8 @@ func processCompletedUpload(clientCtx client.Context, k keeper.Keeper, upload tu
 		return fmt.Errorf("unable to resolve file path for upload %s", upload.ID)
 	}
 
-	fmt.Printf("Starting execution for session %s, file %s\n", sessionID, filePath)
+	fmt.Printf("Starting execution for session %s (Project: %s, Version: %s), file %s\n", sessionID, projectName, version, filePath)
 
-	// Executor ロジックを呼び出します
-	return executor.ExecuteSessionUpload(clientCtx, sessionID, filePath)
+	// 引数を追加して Executor を呼び出します
+	return executor.ExecuteSessionUpload(clientCtx, sessionID, filePath, projectName, version)
 }

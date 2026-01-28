@@ -3,7 +3,7 @@ package gwc.gateway.v1;
 
 option go_package = "gwc/x/gateway/types";
 
-// 追加: gogoprotoをインポートして、Map Entryのコード生成をCosmos SDK互換にする
+// gogoprotoをインポート
 import "gogoproto/gogo.proto";
 
 // GatewayPacketData defines the packet data for the gateway module
@@ -37,7 +37,7 @@ message PacketFragmentMapping {
 // FileMetadata defines metadata for a single file within the project
 message FileMetadata {
   string mime_type = 1;
-  uint64 file_size = 2; // manifestと同じようにsize→file_sizeに変更
+  uint64 file_size = 2; 
   repeated PacketFragmentMapping fragments = 3;
   // file_root is the Merkle root of fragments in this file
   string file_root = 4;
@@ -47,11 +47,21 @@ message FileMetadata {
 message ManifestPacket {
   string project_name = 1;
   string version      = 2;
-  map<string, FileMetadata> files = 3;
+  
+  // 修正点: mapはGogoProtoとCosmos SDKのPulsarリフレクションで互換性がないため、
+  // 独自のEntry構造体を使用したrepeatedに変更します。
+  repeated ManifestFileEntry files = 3 [(gogoproto.nullable) = false];
+
   // CSU verification fields
   string root_proof = 4;
   uint64 fragment_size = 5;
   // identity fields
   string owner = 6;
   string session_id = 7;
+}
+
+// ManifestFileEntry は map<string, FileMetadata> の代替となるエントリ構造体です
+message ManifestFileEntry {
+  string path = 1;
+  FileMetadata metadata = 2 [(gogoproto.nullable) = false];
 }

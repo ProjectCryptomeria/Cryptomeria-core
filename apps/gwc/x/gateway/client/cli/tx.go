@@ -200,13 +200,13 @@ func CmdDistributeBatch() *cobra.Command {
 // finalize-and-close [session-id] [manifest.json]
 func CmdFinalizeAndCloseSession() *cobra.Command {
 	type manifestJSON struct {
-		ProjectName  string                         `json:"project_name"`
-		Version      string                         `json:"version"`
-		Files        map[string]*types.FileMetadata `json:"files"`
-		RootProof    string                         `json:"root_proof"`
-		FragmentSize uint64                         `json:"fragment_size"`
-		Owner        string                         `json:"owner"`
-		SessionId    string                         `json:"session_id"`
+		ProjectName  string                    `json:"project_name"`
+		Version      string                    `json:"version"`
+		Files        []types.ManifestFileEntry `json:"files"`
+		RootProof    string                    `json:"root_proof"`
+		FragmentSize uint64                    `json:"fragment_size"`
+		Owner        string                    `json:"owner"`
+		SessionId    string                    `json:"session_id"`
 	}
 
 	cmd := &cobra.Command{

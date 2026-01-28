@@ -22,23 +22,41 @@ import (
 
 const MaxFragmentsPerBatch = 50
 
-func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePath string) error {
+// ExecuteSessionUpload はZIPファイルの解凍、断片化、各ストレージへの配布、およびマニフェストの登録を一括して実行します。
+func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePath string, projectName string, version string) error {
 	fmt.Printf("[Executor] Starting process for session %s\n", sessionID)
 
 	queryClient := types.NewQueryClient(clientCtx)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// 1. オンチェーンからセッション情報を取得
 	res, err := queryClient.Session(ctx, &types.QuerySessionRequest{SessionId: sessionID})
 	if err != nil {
 		return fmt.Errorf("failed to query session %s: %w", sessionID, err)
 	}
 	session := res.Session
 
+	// セッションが既に閉じている場合はエラー
 	if session.State == types.SessionState_SESSION_STATE_CLOSED_SUCCESS || session.State == types.SessionState_SESSION_STATE_CLOSED_FAILED {
 		return fmt.Errorf("session %s is already closed", sessionID)
 	}
 
+	// 2. 有効な FDSC ID (ChainId) を動的に取得 (Issue 3 対応)
+	// ストレージトポロジーをクエリし、connection_type が "fdsc" のものを探します
+	resStorage, err := queryClient.StorageEndpoints(ctx, &types.QueryStorageEndpointsRequest{})
+	targetFdscID := "fdsc" // フォールバック用のデフォルト値
+	if err == nil {
+		for _, info := range resStorage.StorageInfos {
+			if info.ConnectionType == "fdsc" {
+				// 実際に登録されている ChainId (例: "fdsc-1") を取得
+				targetFdscID = info.ChainId
+				break
+			}
+		}
+	}
+
+	// 3. ZIPファイルの読み込み
 	zipBytes, err := os.ReadFile(zipFilePath)
 	if err != nil {
 		return abortSession(clientCtx, &session, "FAILED_READ_ZIP")
@@ -49,18 +67,21 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		fragmentSize = 1024 * 1024
 	}
 
+	// ZIPの解凍と断片化
 	fmt.Printf("[Executor] Processing ZIP... fragment_size=%d\n", fragmentSize)
 	files, err := types.ProcessZipAndSplit(zipBytes, fragmentSize)
 	if err != nil {
 		return abortSession(clientCtx, &session, "INVALID_ZIP_CONTENT")
 	}
 
+	// 4. CSU Proof (Merkle Tree) の構築
 	fmt.Printf("[Executor] Building Merkle Tree...\n")
 	proofData, err := types.BuildCSUProofs(files)
 	if err != nil {
 		return abortSession(clientCtx, &session, "PROOF_GENERATION_FAILED")
 	}
 
+	// ルートハッシュの検証
 	if proofData.RootProofHex != session.RootProofHex {
 		fmt.Printf("[Executor] RootProof mismatch! OnChain=%s, Computed=%s\n", session.RootProofHex, proofData.RootProofHex)
 		return abortSession(clientCtx, &session, "ROOT_PROOF_MISMATCH")
@@ -70,6 +91,7 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	totalItems := len(proofData.Fragments)
 	fmt.Printf("[Executor] Total fragments to distribute: %d\n", totalItems)
 
+	// トランザクションファクトリの準備
 	ownerAddr, _ := sdk.AccAddressFromBech32(session.Owner)
 	txf, err := prepareFactory(clientCtx, executorAddr)
 	if err != nil {
@@ -77,6 +99,7 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	}
 	txf = txf.WithFeeGranter(ownerAddr)
 
+	// 5. 断片データの配布 (バッチ処理)
 	for i := 0; i < totalItems; i += MaxFragmentsPerBatch {
 		end := i + MaxFragmentsPerBatch
 		if end > totalItems {
@@ -110,22 +133,19 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		}
 		fmt.Printf("[Executor] Batch confirmed successfully. TxHash: %s\n", txRes.TxHash)
 
+		// 次のシーケンス番号へ更新
 		txf = txf.WithSequence(txf.Sequence() + 1)
 	}
 
-	// =========================================================================
-	// マニフェストファイル情報の構築
-	// =========================================================================
+	// 6. マニフェストファイル情報の構築
+	// Map Entry の互換性問題回避のためスライス構造を使用
+	var manifestFiles []types.ManifestFileEntry
 
-	// Proto定義では map<string, FileMetadata> は map[string]*FileMetadata となる
-	manifestFiles := make(map[string]*types.FileMetadata)
-
-	// 断片情報をパスごとに整理 (PacketFragmentMappingのポインタ配列)
+	// 断片情報をパスごとに整理
 	fragmentsByPath := make(map[string][]*types.PacketFragmentMapping)
-
 	for _, frag := range proofData.Fragments {
 		mapping := &types.PacketFragmentMapping{
-			FdscId:     "fdsc",
+			FdscId:     targetFdscID, // 動的に解決した FDSC ID を使用
 			FragmentId: fmt.Sprintf("%s-%d", frag.Path, frag.Index),
 		}
 		fragmentsByPath[frag.Path] = append(fragmentsByPath[frag.Path], mapping)
@@ -137,24 +157,28 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 			mimeType = "application/octet-stream"
 		}
 
-		// FileRootの再計算
+		// ファイルごとの Merkle Root を計算
 		fileRoot := calculateFileRoot(file.Path, file.Chunks)
 
-		manifestFiles[file.Path] = &types.FileMetadata{
-			MimeType:  mimeType,
-			FileSize:  uint64(len(file.Content)), // 修正: Size -> FileSize
-			Fragments: fragmentsByPath[file.Path],
-			FileRoot:  fileRoot,
-		}
+		manifestFiles = append(manifestFiles, types.ManifestFileEntry{
+			Path: file.Path,
+			Metadata: types.FileMetadata{
+				MimeType:  mimeType,
+				FileSize:  uint64(len(file.Content)),
+				Fragments: fragmentsByPath[file.Path],
+				FileRoot:  fileRoot,
+			},
+		})
 	}
 
-	projectName := types.GetProjectNameFromZipFilename(filepath.Base(zipFilePath))
+	// 7. セッションの終了とマニフェストの確定
+	// 引数で受け取った projectName と version を使用 (Issue 1 & 2 対応)
 	finalizeMsg := &types.MsgFinalizeAndCloseSession{
 		Executor:  executorAddr,
 		SessionId: sessionID,
 		Manifest: types.ManifestPacket{
 			ProjectName:  projectName,
-			Version:      "v1",
+			Version:      version,
 			RootProof:    proofData.RootProofHex,
 			FragmentSize: session.FragmentSize,
 			Owner:        session.Owner,
@@ -162,7 +186,7 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 			Files:        manifestFiles,
 		},
 	}
-	fmt.Printf("[Executor] Manifest: %+v\n", finalizeMsg.Manifest)
+	fmt.Printf("[Executor] Manifest for project %s (version %s)\n", projectName, version)
 
 	fmt.Printf("[Executor] Finalizing session...\n")
 	_, err = broadcastAndConfirm(clientCtx, txf, finalizeMsg)
