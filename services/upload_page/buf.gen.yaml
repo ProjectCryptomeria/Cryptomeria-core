@@ -2,13 +2,12 @@
 version: v1
 plugins:
   - plugin: ts-proto
-    out: src/lib/proto
+    out: .                     # 修正: 二重階層にならないよう "." (カレント) に変更
     opt:
       - esModuleInterop=true
       - forceLong=long
-      - useOptionals=messages
+      - useOptionals=messages  # 修正: 警告対応 (true -> messages)
       - outputClientImpl=false
       - snakeToCamel=true
     strategy: all
-    # 実行場所(proto_temp)から見た相対パスに変更
     path: ../node_modules/.bin/protoc-gen-ts_proto

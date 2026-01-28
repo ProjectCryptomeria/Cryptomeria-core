@@ -15,6 +15,7 @@
     "@cosmjs/stargate": "^0.38.1",
     "@cosmjs/tendermint-rpc": "^0.38.1",
     "jszip": "^3.10.1",
+    "long": "^5.3.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "tus-js-client": "^4.3.1"
