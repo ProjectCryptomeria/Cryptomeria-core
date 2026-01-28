@@ -18,27 +18,30 @@ build-all:
 
 # [Parallel] 各コンポーネントのビルド定義（イメージビルドは並列のまま維持）
 [parallel]
-build-image-all: (build-image 'fdsc') (build-image 'mdsc') (build-image 'gwc') (build-image 'relayer')
+build-image-all: (build-image 'fdsc') (build-image 'mdsc') (build-image 'gwc') (build-image 'relayer') (build-image 'faucet')
 
 # [Build Image] 個別イメージビルド
-# 変更点: 自動ビルドを廃止し、バイナリの存在チェックのみを行うように変更
 build-image target:
     #!/usr/bin/env bash
     set -e
     echo "🐳 Building Docker image for {{target}}..."
     
-    # Relayer用: Gatewayバイナリのコピー処理
+    # 1. 事前チェックとバイナリの準備
     if [ "{{target}}" == "relayer" ]; then
-        # gwcdバイナリが存在するかチェック
+        # Relayer用: Gatewayバイナリのコピー処理
         if [ ! -f "apps/gwc/dist/gwcd" ]; then
              echo "❌ Error: Gwcd binary not found at apps/gwc/dist/gwcd."
              echo "ℹ️  Please run 'just dev::build-chain gwc' first."
              exit 1
         fi
         cp "apps/gwc/dist/gwcd" "apps/relayer/gwcd"
+        
+    elif [ "{{target}}" == "faucet" ]; then
+        # ✅ Faucet用: Goバイナリ(faucetd)は存在しないため、チェックをスキップ
+        echo "✅ Faucet detected. Skipping Go binary check (Source-based build)."
+        
     else
-        # チェーン用: バイナリ存在チェック
-        # ignite build -o dist/ で生成されるバイナリパスを確認 (例: fdsc -> fdscd)
+        # チェーン用 (gwc, mdsc, fdsc): バイナリ存在チェック
         BINARY_PATH="apps/{{target}}/dist/{{target}}d"
         
         if [ ! -f "$BINARY_PATH" ]; then
@@ -50,15 +53,15 @@ build-image target:
         echo "✅ Binary found: $BINARY_PATH"
     fi
 
+    # 2. ビルドの実行
     cd "apps/{{target}}"
     docker build \
         --build-arg CACHEBUST=$(date +%s) \
         -t "{{PROJECT_NAME}}/{{target}}:latest" .
     
-    # 後処理: Relayer用にコピーしたバイナリを削除
+    # 3. 後処理: Relayer用にコピーしたバイナリを削除
     if [ "{{target}}" == "relayer" ]; then rm gwcd; fi
 
-# [Build Chain All] 全チェーンのバイナリをコンパイル
 # 変更点: [parallel]を削除し、逐次実行に変更（メモリ負荷軽減のため）
 build-chain-all: (build-chain 'fdsc') (build-chain 'mdsc') (build-chain 'gwc')
     
