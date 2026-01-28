@@ -23,22 +23,48 @@ import (
 type GatewayConfig struct {
 	MDSCEndpoint  string
 	FDSCEndpoints map[string]string
-	UploadDir     string // TUSアップロード用の一時ディレクトリ
+	UploadDir     string
 }
 
 // RegisterCustomHTTPRoutes はGateway ChainのカスタムHTTPルートを登録します
-func RegisterCustomHTTPRoutes(clientCtx client.Context, r *mux.Router, k keeper.Keeper, config GatewayConfig) {
-	fmt.Println("DEBUG: RegisterCustomHTTPRoutes (Render Only) called")
+// ※ tusHandler を引数に追加しています
+func RegisterCustomHTTPRoutes(clientCtx client.Context, r *mux.Router, k keeper.Keeper, config GatewayConfig, tusHandler http.Handler) {
+	fmt.Println("DEBUG: RegisterCustomHTTPRoutes (Render & TUS) called")
 
-	// レンダリング用 (ダウンロード) ルート
-	// GETメソッドのみ。競合しにくいのでここで登録してOK
+	// --- 1. TUS アップロードルート (パスのプレフィックスで判定) ---
+	// TUSは独自のメソッド(PATCH, HEAD等)を多用するため、専用のパスでハンドラーに委譲します
+	r.PathPrefix("/upload/tus-stream/").Handler(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// CORS設定: ブラウザからのPATCHリクエスト等を許可する
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, PATCH, HEAD")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Tus-Resumable, Upload-Offset, Upload-Length, Upload-Metadata, Upload-Defer-Length, Upload-Concat")
+		w.Header().Set("Access-Control-Expose-Headers", "Location, Tus-Resumable, Upload-Offset, Upload-Length, Content-Type")
+
+		// OPTIONSリクエスト（プリフライト）には204で即答する
+		if req.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		// それ以外はTUSハンドラーに処理を渡す
+		tusHandler.ServeHTTP(w, req)
+	}))
+
+	// --- 2. レンダリング用 (ダウンロード) ルート ---
 	r.HandleFunc("/render/{project}/{version}/{path:.*}", func(w http.ResponseWriter, req *http.Request) {
+		// ダウンロード側にもCORS許可を出しておくとWebUIからのフェッチが安定します
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 		handleRender(clientCtx, k, w, req, config)
-	}).Methods("GET")
+	}).Methods("GET", "OPTIONS")
 }
 
 // handleRender は指定されたプロジェクト・バージョンのファイルを解決・復元して返却します
 func handleRender(clientCtx client.Context, k keeper.Keeper, w http.ResponseWriter, req *http.Request, config GatewayConfig) {
+	// OPTIONSの場合はCORS対応のみで終了
+	if req.Method == http.MethodOptions {
+		return
+	}
+
 	vars := mux.Vars(req)
 	projectName := vars["project"]
 	version := vars["version"]

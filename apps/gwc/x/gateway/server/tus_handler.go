@@ -42,18 +42,27 @@ func NewTusHandler(clientCtx client.Context, k keeper.Keeper, uploadDir string, 
 	}
 
 	// イベントフック: アップロード完了時
-	go func() {
-		for {
-			event := <-handler.CompleteUploads
-			fmt.Printf("Upload %s finished\n", event.Upload.ID)
-
-			// Executor ロジックの実行
-			err := processCompletedUpload(clientCtx, k, event.Upload)
-			if err != nil {
-				fmt.Printf("Error processing upload %s: %v\n", event.Upload.ID, err)
-			}
-		}
-	}()
+	// アップロード中の進捗をキャッチするリスナー
+    go func() {
+        for {
+            select {
+            case event := <-h.TusServer.Metrics.UploadsCreated:
+                h.logger.Info("TUS: アップロード開始", "id", event.Upload.ID, "size", event.Upload.Size)
+            
+            // PATCHリクエストによりデータが書き込まれるたびに発生
+            case event := <-h.TusServer.Metrics.BytesReceived:
+                // 1MBごとにログを出すなどの調整が可能
+                h.logger.Info("TUS: データ受信中", 
+                    "id", event.Upload.ID, 
+                    "received", event.Upload.Storage.GetOffset(), // 現在のオフセット
+                    "total", event.Upload.Size,
+                )
+            
+            case event := <-h.TusServer.Metrics.UploadsFinished:
+                h.logger.Info("✅ TUS: 全データ受信完了", "id", event.Upload.ID)
+            }
+        }
+    }()
 
 	// 認証ミドルウェアを含んだハンドラーを返却します
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
