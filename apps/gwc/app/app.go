@@ -255,6 +255,7 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 
 	// ★【要件】この行は必ず保持
 	tusMount := http.StripPrefix("/upload/tus-stream", tusHandler)
+	fmt.Println("tusMount: ", tusMount)
 
 	// TUSのイベント購読・CORS・OPTIONS等は tus-handler.go に集約
 	apiSvr.Router.Use(gatewayserver.TusMiddleware(tusMount))
