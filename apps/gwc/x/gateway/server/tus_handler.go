@@ -34,6 +34,8 @@ func NewTusHandler(clientCtx client.Context, k keeper.Keeper, uploadDir string, 
 		BasePath:              basePath,
 		StoreComposer:         composer,
 		NotifyCompleteUploads: true,
+		NotifyUploadProgress:  true, // 進捗通知を有効化
+		NotifyCreatedUploads:  true, // アップロードリソース作成時の通知を有効化
 	}
 
 	handler, err := tusd.NewHandler(config)
@@ -41,28 +43,36 @@ func NewTusHandler(clientCtx client.Context, k keeper.Keeper, uploadDir string, 
 		return nil, fmt.Errorf("failed to create tus handler: %w", err)
 	}
 
-	// イベントフック: アップロード完了時
-	// アップロード中の進捗をキャッチするリスナー
-    go func() {
-        for {
-            select {
-            case event := <-h.TusServer.Metrics.UploadsCreated:
-                h.logger.Info("TUS: アップロード開始", "id", event.Upload.ID, "size", event.Upload.Size)
-            
-            // PATCHリクエストによりデータが書き込まれるたびに発生
-            case event := <-h.TusServer.Metrics.BytesReceived:
-                // 1MBごとにログを出すなどの調整が可能
-                h.logger.Info("TUS: データ受信中", 
-                    "id", event.Upload.ID, 
-                    "received", event.Upload.Storage.GetOffset(), // 現在のオフセット
-                    "total", event.Upload.Size,
-                )
-            
-            case event := <-h.TusServer.Metrics.UploadsFinished:
-                h.logger.Info("✅ TUS: 全データ受信完了", "id", event.Upload.ID)
-            }
-        }
-    }()
+	// イベントフック: アップロードのライフサイクルイベントをキャッチしてログ出力します
+	go func() {
+		for {
+			select {
+			// アップロードリソースが新しく作成された時（アップロード開始前）
+			case event := <-handler.CreatedUploads:
+				fmt.Printf("[TUS] 📤 アップロード作成 ID: %s (予定サイズ: %d bytes)\n", event.Upload.ID, event.Upload.Size)
+
+			// データが転送され、サーバー側でオフセットが更新された時
+			case event := <-handler.UploadProgress:
+				var percentage float64
+				if event.Upload.Size > 0 {
+					percentage = float64(event.Upload.Offset) / float64(event.Upload.Size) * 100
+				}
+				// ID, 進捗率, 現在の受信バイト数/合計サイズを表示
+				fmt.Printf("[TUS] 🚀 進捗中 ID: %s -> %.2f%% (%d/%d bytes)\n",
+					event.Upload.ID, percentage, event.Upload.Offset, event.Upload.Size)
+
+			// 全てのデータ受信が正常に完了した時
+			case event := <-handler.CompleteUploads:
+				fmt.Printf("[TUS] ✅ 受信完了 ID: %s (最終サイズ: %d bytes)\n", event.Upload.ID, event.Upload.Size)
+
+				// Executor ロジックの実行
+				err := processCompletedUpload(clientCtx, k, event.Upload)
+				if err != nil {
+					fmt.Printf("Error processing upload %s: %v\n", event.Upload.ID, err)
+				}
+			}
+		}
+	}()
 
 	// 認証ミドルウェアを含んだハンドラーを返却します
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -77,7 +87,6 @@ func NewTusHandler(clientCtx client.Context, k keeper.Keeper, uploadDir string, 
 			}
 
 			// 2. Upload-Metadata ヘッダーから session_id を取得
-			// TUSのメタデータ形式: "key1 base64val1,key2 base64val2"
 			metadata := parseTusMetadata(r.Header.Get("Upload-Metadata"))
 			sessionID := metadata["session_id"]
 			if sessionID == "" {
@@ -132,7 +141,7 @@ func parseTusMetadata(metadataHeader string) map[string]string {
 	return metadata
 }
 
-// compareHashes は2つのハッシュ値が一致するかを一定時間で比較します（タイミング攻撃対策）
+// compareHashes は2つのハッシュ値が一致するかを一定時間で比較します
 func compareHashes(a, b []byte) bool {
 	if len(a) != len(b) {
 		return false
@@ -148,14 +157,12 @@ func compareHashes(a, b []byte) bool {
 func processCompletedUpload(clientCtx client.Context, k keeper.Keeper, upload tusd.FileInfo) error {
 	meta := upload.MetaData
 	sessionID := meta["session_id"]
-	// 追加: メタデータからプロジェクト名とバージョンを取得
 	projectName := meta["project_name"]
 	version := meta["version"]
 
 	if sessionID == "" {
 		return fmt.Errorf("missing session_id in upload metadata")
 	}
-	// デフォルト値の設定
 	if projectName == "" {
 		projectName = "default-project"
 	}
@@ -170,6 +177,5 @@ func processCompletedUpload(clientCtx client.Context, k keeper.Keeper, upload tu
 
 	fmt.Printf("Starting execution for session %s (Project: %s, Version: %s), file %s\n", sessionID, projectName, version, filePath)
 
-	// 引数を追加して Executor を呼び出します
 	return executor.ExecuteSessionUpload(clientCtx, sessionID, filePath, projectName, version)
 }
