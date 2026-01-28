@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -73,7 +74,9 @@ func handleRender(clientCtx client.Context, k keeper.Keeper, w http.ResponseWrit
 		if info.ApiEndpoint == "" {
 			continue
 		}
-		endpoint := strings.TrimSuffix(info.ApiEndpoint, "/")
+		// "localhost" を "127.0.0.1" に強制置換して IPv6 解決を回避
+		endpoint := strings.Replace(info.ApiEndpoint, "localhost", "127.0.0.1", 1)
+		endpoint = strings.TrimSuffix(endpoint, "/")
 
 		if info.ChainId == "mdsc" {
 			config.MDSCEndpoint = endpoint
@@ -100,7 +103,21 @@ func handleRender(clientCtx client.Context, k keeper.Keeper, w http.ResponseWrit
 		url.QueryEscape(version),
 	)
 
-	httpClient := &http.Client{Timeout: 15 * time.Second}
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+
+	httpClient := &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			// ネットワークを "tcp4" に指定することで IPv4 を強制します
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return dialer.DialContext(ctx, "tcp4", addr)
+			},
+		},
+	}
+
 	resp, err := httpClient.Get(manifestURL)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to connect to MDSC: %v", err), http.StatusBadGateway)
