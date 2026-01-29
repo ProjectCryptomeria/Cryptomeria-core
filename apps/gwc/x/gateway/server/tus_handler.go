@@ -50,12 +50,12 @@ func (w *DebugTusResponseWriter) WriteHeader(statusCode int) {
 
 	// 3. 【診断用】送信されるヘッダーをログに出力
 	// ループしている HEAD メソッドや OPTIONS メソッドの時だけ表示
-	if w.req.Method == http.MethodHead || w.req.Method == http.MethodOptions {
-		fmt.Printf("⚡ [TUS OUT] %s %s (Status: %d)\n", w.req.Method, w.req.URL.Path, statusCode)
-		fmt.Printf("   -> Upload-Offset: %s\n", h.Get("Upload-Offset"))
-		fmt.Printf("   -> AC-Expose-Headers: %s\n", h.Get("Access-Control-Expose-Headers"))
-		fmt.Printf("   -> AC-Allow-Origin: %s\n", h.Get("Access-Control-Allow-Origin"))
-	}
+	// if w.req.Method == http.MethodHead || w.req.Method == http.MethodOptions {
+	fmt.Printf("⚡ [TUS OUT] %s %s (Status: %d)\n", w.req.Method, w.req.URL.Path, statusCode)
+	fmt.Printf("   -> Upload-Offset: %s\n", h.Get("Upload-Offset"))
+	fmt.Printf("   -> AC-Expose-Headers: %s\n", h.Get("Access-Control-Expose-Headers"))
+	fmt.Printf("   -> AC-Allow-Origin: %s\n", h.Get("Access-Control-Allow-Origin"))
+	// }
 
 	w.ResponseWriter.WriteHeader(statusCode)
 }
