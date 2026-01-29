@@ -17,7 +17,6 @@ export const createZipBlob = async (files: InputFile[]): Promise<Blob> => {
     // Blobとして生成
     // compression: 'DEFLATE' を指定して圧縮を有効化できますが、
     // CSUプロトコルでは圧縮・非圧縮どちらでも展開後のデータが正しければOKです。
-    // ここでは標準的な設定で生成します。
     const content = await zip.generateAsync({
         type: 'blob',
         platform: 'UNIX', // パス区切り文字などをUNIXスタイルに統一
@@ -28,11 +27,12 @@ export const createZipBlob = async (files: InputFile[]): Promise<Blob> => {
 
 /**
  * FileList (input type="file" から取得) をInputFile形式に変換します。
- * ここでパスの正規化（バックスラッシュの置換など）を行います。
+ * ディレクトリ選択時に含まれる共通のルートディレクトリ（例: "dist/"）を自動的に削除します。
  */
 export const processFileList = async (fileList: FileList): Promise<InputFile[]> => {
-    const inputFiles: InputFile[] = [];
+    const tempFiles: { rawPath: string; file: File }[] = [];
 
+    // 1. まず全てのファイルをスキャンして正規化パスを生成
     for (let i = 0; i < fileList.length; i++) {
         const file = fileList[i];
 
@@ -45,15 +45,48 @@ export const processFileList = async (fileList: FileList): Promise<InputFile[]> 
         // 先頭の ./ や / を削除
         normalizedPath = normalizedPath.replace(/^\.?\//, '');
 
-        // 隠しファイル (.git など) やシステムファイルを除外するロジックをここに追加可能
+        // 隠しファイル (.git など) やシステムファイルを除外
         if (normalizedPath.startsWith('.git') || normalizedPath.includes('/.git')) {
             continue;
         }
 
-        const arrayBuffer = await file.arrayBuffer();
+        tempFiles.push({ rawPath: normalizedPath, file });
+    }
+
+    if (tempFiles.length === 0) {
+        return [];
+    }
+
+    // 2. 共通のルートディレクトリを検出
+    // 全てのファイルが共通のディレクトリ配下にある場合、そのディレクトリ名を特定する
+    let commonPrefix = '';
+    const firstPath = tempFiles[0].rawPath;
+
+    if (firstPath.includes('/')) {
+        const parts = firstPath.split('/');
+        // 最初のセグメント（例: "dist"）を候補とする
+        const potentialRoot = parts[0] + '/';
+
+        // 全てのファイルがこの候補で始まっているか確認
+        const isCommon = tempFiles.every(f => f.rawPath.startsWith(potentialRoot));
+        if (isCommon) {
+            commonPrefix = potentialRoot;
+        }
+    }
+
+    // 3. 共通ルートを除去して InputFile 形式の配列を構築
+    const inputFiles: InputFile[] = [];
+
+    for (const item of tempFiles) {
+        // 共通ルートがあれば除去し、なければそのままのパスを使用
+        const finalPath = commonPrefix
+            ? item.rawPath.substring(commonPrefix.length)
+            : item.rawPath;
+
+        const arrayBuffer = await item.file.arrayBuffer();
 
         inputFiles.push({
-            path: normalizedPath,
+            path: finalPath,
             data: new Uint8Array(arrayBuffer),
         });
     }
