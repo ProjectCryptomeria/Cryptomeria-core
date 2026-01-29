@@ -22,9 +22,8 @@ connect_instances() {
     
     for chain_id in $instances; do
         log_step "Triggering connection for: $chain_id"
-        "$SCRIPT_DIR/connect-chain.sh" "$chain_id" &
+        "$SCRIPT_DIR/connect-chain.sh" "$chain_id"
     done
-    wait
 }
 
 # =============================================================================
@@ -40,8 +39,7 @@ if [ -z "$TARGETS" ]; then
 fi
 
 for COMPONENT in $TARGETS; do
-    connect_instances "$COMPONENT" &
+    connect_instances "$COMPONENT" 
 done
-wait
 
 log_success "All connections processed."

@@ -54,13 +54,16 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 
 	for _, info := range resStorage.StorageInfos {
 		if info.ConnectionType == "datastore" {
-			targetFdscID = info.ChainId
-			targetChannelID = info.ChannelId
-			fmt.Printf("[Executor] ✅ 有効なFDSCを発見: %s (Endpoint: %s, Channel: %s)\n", targetFdscID, info.ApiEndpoint, targetChannelID)
-			break
+			// 全ての有効なFDSCをログに表示
+			fmt.Printf("[Executor] ✅ 有効なFDSCを発見: %s (Channel: %s)\n", info.ChainId, info.ChannelId)
+
+			// 最初の1つをデフォルトとして保持（マニフェスト生成等に利用する場合）
+			if targetFdscID == "" {
+				targetFdscID = info.ChainId
+				targetChannelID = info.ChannelId
+			}
 		}
 	}
-
 	if targetFdscID == "" {
 		return fmt.Errorf("有効なFDSCストレージが見つかりません (connection_type='datastore')。'gwcd tx gateway register-storage' で登録を確認してください")
 	}
@@ -121,13 +124,13 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		batchItems := make([]types.DistributeItem, 0, end-i)
 		for _, frag := range proofData.Fragments[i:end] {
 			batchItems = append(batchItems, types.DistributeItem{
-				Path:              frag.Path,
-				Index:             frag.Index,
-				FragmentBytes:     frag.FragmentBytes,
-				FragmentProof:     frag.FragmentProof,
-				FileSize:          frag.FileSize,
-				FileProof:         frag.FileProof,
-				TargetFdscChannel: targetChannelID,
+				Path:          frag.Path,
+				Index:         frag.Index,
+				FragmentBytes: frag.FragmentBytes,
+				FragmentProof: frag.FragmentProof,
+				FileSize:      frag.FileSize,
+				FileProof:     frag.FileProof,
+				// TargetFdscChannel: targetChannelID, //コメントアウトの場合はラウンドロビン
 			})
 		}
 
