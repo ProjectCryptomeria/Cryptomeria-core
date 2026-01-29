@@ -60,12 +60,64 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
         }
     };
 
-    // アップロードされたサイトが実際に閲覧可能か確認するヘルパー関数
-    const verifyRendering = async (url: string): Promise<boolean> => {
+    /**
+     * 指定されたミリ秒分待機するユーティリティ
+     */
+    const sleep = (ms: number): Promise<void> => {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    };
+
+    /**
+     * 非同期処理を指定回数リトライする汎用関数
+     */
+    async function withRetry<T>(
+        task: () => Promise<T>,
+        maxAttempts: number,
+        delayMs: number
+    ): Promise<T> {
+        let lastError: Error | unknown;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                return await task();
+            } catch (error) {
+                lastError = error;
+                if (attempt >= maxAttempts) break;
+                console.warn(`[Retry] 試行 ${attempt}/${maxAttempts} 失敗。${delayMs}ms後に再試行します...`);
+                await sleep(delayMs);
+            }
+        }
+        throw lastError;
+    }
+
+    /**
+     * アップロードされたサイトが実際に閲覧可能か確認するヘルパー関数
+     * リトライロジックを内包し、指定回数チェックを繰り返します
+     * * @param url 確認対象のURL
+     * @param maxAttempts 最大試行回数 (デフォルト3回)
+     * @param delayMs 再試行までの待機時間 (デフォルト2000ms)
+     * @returns 閲覧可能であれば true
+     */
+    const verifyRendering = async (
+        url: string,
+        maxAttempts: number = 3,
+        delayMs: number = 2000
+    ): Promise<boolean> => {
         try {
-            const res = await fetch(url, { method: 'HEAD' });
-            return res.status === 200;
+            // withRetryを使用してfetch処理をラップする
+            return await withRetry(async () => {
+                const res = await fetch(url, { method: 'HEAD' });
+
+                // ステータスが200でない場合はエラーを投げてリトライをトリガーする
+                if (res.status !== 200) {
+                    throw new Error(`サイトの準備ができていません (Status: ${res.status})`);
+                }
+
+                return true;
+            }, maxAttempts, delayMs);
         } catch (e) {
+            // 全てのリトライが失敗した、またはネットワークエラーが発生した場合
+            console.error(`[Verify failed] ${url}:`, e);
             return false;
         }
     };
