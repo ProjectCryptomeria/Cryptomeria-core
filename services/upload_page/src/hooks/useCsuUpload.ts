@@ -106,7 +106,7 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
         try {
             // withRetryを使用してfetch処理をラップする
             return await withRetry(async () => {
-                const res = await fetch(url, { method: 'HEAD' });
+                const res = await fetch(url);
 
                 // ステータスが200でない場合はエラーを投げてリトライをトリガーする
                 if (res.status !== 200) {
