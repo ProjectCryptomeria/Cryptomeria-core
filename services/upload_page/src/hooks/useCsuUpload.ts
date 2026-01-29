@@ -263,7 +263,7 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
                     addLog(`🌐 アクセス確認中: ${accessUrl}`);
 
                     await new Promise(r => setTimeout(r, 2000));
-                    const isAccessible = await verifyRendering(accessUrl);
+                    const isAccessible = await verifyRendering(accessUrl, 10, 2000);
 
                     if (isAccessible) {
                         addLog(`✅ サイトが表示可能です！以下のURLにアクセスしてください。`);
