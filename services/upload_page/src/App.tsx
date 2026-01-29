@@ -115,12 +115,11 @@ export default function App() {
               >
                 <option value={512}>512 B (Small)</option>
                 <option value={1024}>1 KB (Default)</option>
-                <option value={10240}>10 KB</option>
-                <option value={102400}>100 KB</option>
-                <option value={512000}>500 KB</option>
-                <option value={1048576}>1 MB</option>
-                <option value={5242880}>5 MB</option>
-                <option value={10485760}>10 MB (Large)</option>
+                <option value={16384}>16 KB</option>
+                <option value={32768}>32 KB</option>
+                <option value={65536}>64 KB</option>
+                <option value={131072}>128 KB</option>
+                <option value={256000}>256 KB (Large)</option>
               </select>
               <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '6px' }}>
                 ※ サイズが小さいほど分散性が向上し、大きいほど処理速度が向上します。

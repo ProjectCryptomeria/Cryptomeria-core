@@ -31,20 +31,31 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
     // REST API経由でセッション状態を取得するヘルパー関数
     const fetchSessionState = async (sessionId: string): Promise<string> => {
         try {
-            // ignite scaffoldされたチェーンの標準的なRESTパス (修正済みのsessionsエンドポイント)
+            // ignite scaffoldされたチェーンの標準的なRESTパス
             const url = `${CONFIG.restEndpoint}/gwc/gateway/v1/sessions/${sessionId}`;
             const res = await fetch(url);
 
             if (!res.ok) {
+                // エラーの詳細をコンソールに出す
+                console.warn(`Fetch failed: ${res.status} ${res.statusText} for URL: ${url}`);
+
                 // 404の場合はまだインデックスされていない可能性があるためリトライさせる意味でUNKNOWNを返す
                 if (res.status === 404) return "NOT_FOUND";
-                throw new Error(`State fetch failed: ${res.status}`);
+
+                // その他のエラー（500や400など）はログに残してエラー扱いにする
+                throw new Error(`API Error: ${res.status} ${res.statusText}`);
             }
 
             const data = await res.json();
+            // レスポンス構造の確認用ログ（必要なくなれば削除可）
+            // console.log("Session State Response:", data);
+
             return data.session?.state || "UNKNOWN";
         } catch (e: any) {
-            console.error("Fetch Error:", e);
+            // ネットワークエラー（CORS含む）の場合
+            console.error("Fetch Execution Error:", e);
+            // エラーの内容を文字列として返すことで、呼び出し元でログに出せるようにしても良いが、
+            // ここでは簡易的に "ERROR" を返しつつコンソールで詳細を確認する運用とする
             return "ERROR";
         }
     };
@@ -91,6 +102,7 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
             if (initRes.code !== 0) throw new Error(initRes.rawLog);
             const initData = MsgInitSessionResponse.decode(initRes.msgResponses[0].value);
 
+            // イベントログからExecutorを取得（引用符の除去処理を含む）
             const executor = initRes.events.find(e => e.type === 'csu_init_session')
                 ?.attributes.find(a => a.key === 'executor')?.value.replace(/^"|"$/g, '') || "";
 
@@ -167,7 +179,9 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
                     while (retryCount < maxRetries) {
                         const state = await fetchSessionState(initData.sessionId);
 
-                        if (retryCount % 5 === 0) {
+                        if (state === "ERROR") {
+                            addLog(`⚠️ ステータス取得エラー (Consoleを確認してください)。リトライします...`);
+                        } else if (retryCount % 5 === 0) {
                             addLog(`🔄 Status: ${state}`);
                         }
 
@@ -218,6 +232,7 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
 
         } catch (e: any) {
             addLog(`❌ エラー: ${e.message}`);
+            console.error(e); // 詳細エラーをコンソールに出力
             setIsProcessing(false);
         }
     };

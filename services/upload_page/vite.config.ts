@@ -5,6 +5,7 @@ import path from 'path';
 
 // https://vite.dev/config/
 export default defineConfig({
+    base: './',
     plugins: [
         react(),
         // CosmJSなどのライブラリが依存するNode.jsのGlobal変数(Buffer, process等)をブラウザで使えるようにする
