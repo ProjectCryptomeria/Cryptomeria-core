@@ -61,7 +61,6 @@ func HashFileLeaf(path string, fileSize uint64, fileRoot []byte) []byte {
 // - Each step contains sibling hash and whether sibling is on the left in concatenation.
 func VerifyMerkleProof(leaf []byte, proof *types.MerkleProof) ([]byte, error) {
 	if proof == nil || len(proof.Steps) == 0 {
-		// single-leaf tree
 		if len(leaf) != 32 {
 			return nil, fmt.Errorf("leaf must be 32 bytes, got %d", len(leaf))
 		}
@@ -73,19 +72,21 @@ func VerifyMerkleProof(leaf []byte, proof *types.MerkleProof) ([]byte, error) {
 	}
 
 	current := leaf
-	for i, step := range proof.Steps {
-		sib, err := mustHex32(step.SiblingHex)
-		if err != nil {
-			return nil, fmt.Errorf("invalid sibling_hex at step %d: %w", i, err)
+	for _, step := range proof.Steps {
+		// 現在のノードをHex文字列化
+		currentHex := hex.EncodeToString(current)
+		siblingHex := step.SiblingHex
+
+		var concatStr string
+		if step.SiblingIsLeft {
+			// 文字列として結合 (LeftHex + RightHex)
+			concatStr = siblingHex + currentHex
+		} else {
+			concatStr = currentHex + siblingHex
 		}
 
-		var concat []byte
-		if step.SiblingIsLeft {
-			concat = append(append([]byte{}, sib...), current...)
-		} else {
-			concat = append(append([]byte{}, current...), sib...)
-		}
-		current = sha256Bytes(concat)
+		// 結合文字列をバイト列化してハッシュ計算
+		current = sha256Bytes([]byte(concatStr))
 	}
 	return current, nil
 }
