@@ -15,6 +15,13 @@ const fragmentTimeoutSeconds = 600
 func (k msgServer) DistributeBatch(goCtx context.Context, msg *types.MsgDistributeBatch) (*types.MsgDistributeBatchResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
+	// [LOG: CSU Phase 5] バッチ配布開始
+	ctx.Logger().Info("CSU Phase 5: DistributeBatch Started",
+		"session_id", msg.SessionId,
+		"items_count", len(msg.Items),
+		"executor", msg.Executor,
+	)
+
 	// ヘルパーを使用してパラメータを取得（クリーンアップ）
 	params := k.Keeper.getParamsOrDefault(ctx)
 
@@ -74,7 +81,15 @@ func (k msgServer) DistributeBatch(goCtx context.Context, msg *types.MsgDistribu
 			return nil, errorsmod.Wrap(types.ErrDuplicateFragment, "duplicate fragment")
 		}
 
+		// Merkle Proof 検証
 		if err := VerifyFragment(sess.RootProofHex, item); err != nil {
+			// [LOG: CSU Phase 5] 検証失敗時の詳細ログ (重要)
+			ctx.Logger().Error("CSU Phase 5: Merkle Verification Failed",
+				"session_id", msg.SessionId,
+				"path", item.Path,
+				"index", item.Index,
+				"error", err,
+			)
 			return nil, errorsmod.Wrap(types.ErrInvalidProof, err.Error())
 		}
 
@@ -118,5 +133,13 @@ func (k msgServer) DistributeBatch(goCtx context.Context, msg *types.MsgDistribu
 	}
 
 	_ = k.Keeper.SetSession(ctx, sess)
+
+	// [LOG: CSU Phase 5] バッチ配布完了
+	ctx.Logger().Info("CSU Phase 5: Batch Distributed",
+		"session_id", msg.SessionId,
+		"items_sent", len(msg.Items),
+		"current_state", sess.State.String(),
+	)
+
 	return &types.MsgDistributeBatchResponse{}, nil
 }

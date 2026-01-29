@@ -54,7 +54,10 @@ func NewTusHandler(clientCtx client.Context, k keeper.Keeper, uploadDir, tusBase
 			select {
 			// アップロードリソースが新しく作成された時（アップロード開始前）
 			case event := <-h.CreatedUploads:
-				fmt.Printf("[TUS] 📤 アップロード作成 ID: %s (予定サイズ: %d bytes)\n", event.Upload.ID, event.Upload.Size)
+				// [LOG: CSU Phase 3] TUS作成イベント
+				sessionID := event.Upload.MetaData["session_id"]
+				fmt.Printf("[CSU Phase 3: TUS] 📤 Upload Created | TUS_ID: %s | SessionID: %s | Size: %d bytes\n",
+					event.Upload.ID, sessionID, event.Upload.Size)
 
 			// データが転送され、サーバー側でオフセットが更新された時
 			case event := <-h.UploadProgress:
@@ -62,17 +65,20 @@ func NewTusHandler(clientCtx client.Context, k keeper.Keeper, uploadDir, tusBase
 				if event.Upload.Size > 0 {
 					percentage = float64(event.Upload.Offset) / float64(event.Upload.Size) * 100
 				}
-				// ID, 進捗率, 現在の受信バイト数/合計サイズを表示
-				fmt.Printf("[TUS] 🚀 進捗中 ID: %s -> %.2f%% (%d/%d bytes)\n",
+				// [LOG: CSU Phase 3] TUS進捗イベント（頻度が高いので注意）
+				fmt.Printf("[CSU Phase 3: TUS] 🚀 Upload Progress | TUS_ID: %s | %.2f%% (%d/%d bytes)\n",
 					event.Upload.ID, percentage, event.Upload.Offset, event.Upload.Size)
 
 			// 全てのデータ受信が正常に完了した時
 			case event := <-h.CompleteUploads:
-				fmt.Printf("[TUS] ✅ 受信完了 ID: %s (最終サイズ: %d bytes)\n", event.Upload.ID, event.Upload.Size)
+				sessionID := event.Upload.MetaData["session_id"]
+				// [LOG: CSU Phase 3] TUS完了イベント
+				fmt.Printf("[CSU Phase 3: TUS] ✅ Upload Completed | TUS_ID: %s | SessionID: %s | FinalSize: %d bytes\n",
+					event.Upload.ID, sessionID, event.Upload.Size)
 
 				// Executor ロジックの実行（旧版踏襲）
 				if err := processCompletedUpload(clientCtx, k, event.Upload); err != nil {
-					fmt.Printf("Error processing upload %s: %v\n", event.Upload.ID, err)
+					fmt.Printf("[CSU Phase 3: TUS] ❌ Error processing upload %s: %v\n", event.Upload.ID, err)
 				}
 			}
 		}
@@ -86,8 +92,10 @@ func TusMiddleware(tusMount http.Handler) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if strings.HasPrefix(req.URL.Path, "/upload/tus-stream") {
 
-				// 詳細デバッグログ
-				fmt.Printf("\n🎯 [TUS DEBUG] Method: %s | Path: %s\n", req.Method, req.URL.Path)
+				// 詳細デバッグログ（HTTPメソッドレベル）
+				if req.Method != http.MethodHead && req.Method != http.MethodPatch { // ノイズ低減のため一部除外可
+					fmt.Printf("🎯 [TUS DEBUG] Method: %s | Path: %s\n", req.Method, req.URL.Path)
+				}
 
 				// ブラウザおよびスクリプト向けのCORSヘッダー強制付与
 				w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -137,7 +145,8 @@ func processCompletedUpload(clientCtx client.Context, k keeper.Keeper, upload tu
 		return fmt.Errorf("unable to resolve file path for upload %s", upload.ID)
 	}
 
-	fmt.Printf("Starting execution for session %s (Project: %s, Version: %s), file %s\n",
+	// [LOG: CSU Phase 3] Executor呼び出し前ログ
+	fmt.Printf("[CSU Phase 3: TUS] 🔄 Triggering Executor for SessionID: %s (Project: %s, Version: %s), file: %s\n",
 		sessionID, projectName, version, filePath)
 
 	_ = k // 旧実装では使っていないがシグネチャ維持のため残す

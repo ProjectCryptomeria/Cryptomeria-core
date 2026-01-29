@@ -252,13 +252,18 @@ func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig
 	if err != nil {
 		panic(fmt.Sprintf("Failed to init TUS: %v", err))
 	}
-
 	// ★【要件】この行は必ず保持
 	tusMount := http.StripPrefix("/upload/tus-stream", tusHandler)
 	fmt.Println("tusMount: ", tusMount)
 
-	// TUSのイベント購読・CORS・OPTIONS等は tus-handler.go に集約
-	apiSvr.Router.Use(gatewayserver.TusMiddleware(tusMount))
+	// 【修正】Useではなく、PathPrefixで明示的にルート登録する
+	// Gorilla MuxはルートにマッチしないとMiddlewareを実行しないため、
+	// Use()ではなくHandlerとして登録することでCORS処理を強制的に走らせる。
+	// TusMiddleware は func(http.Handler) http.Handler を返すため、
+	// ダミーの NotFoundHandler を渡して http.Handler を生成する。
+	apiSvr.Router.PathPrefix("/upload/tus-stream").Handler(
+		gatewayserver.TusMiddleware(tusMount)(http.NotFoundHandler()),
+	)
 
 	mdscEndpoint, _ := app.appOpts.Get("gwc.mdsc_endpoint").(string)
 	fdscEndpointsRaw, _ := app.appOpts.Get("gwc.fdsc_endpoints").(map[string]interface{})
