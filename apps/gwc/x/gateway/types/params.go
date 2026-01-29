@@ -10,9 +10,9 @@ import (
 // Default parameter values (safe-ish operational defaults).
 // Tune via governance with MsgUpdateParams.
 const (
-	DefaultMaxFragmentBytes       uint64 = 1_048_576 // 1 MiB
+	DefaultMaxFragmentBytes       uint64 = 10_485_7600 // 100 MiBs
 	DefaultMaxFragmentsPerSession uint64 = 50_000
-	DefaultDeadlineSeconds        int64  = 24 * 60 * 60 // 24h
+	DefaultDeadlineSeconds        int64  = 1 * 60 * 60 // 1h
 )
 
 // NewParams creates a new Params instance.
