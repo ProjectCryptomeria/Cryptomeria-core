@@ -18,7 +18,7 @@ build-all:
 
 # [Parallel] 各コンポーネントのビルド定義（イメージビルドは並列のまま維持）
 [parallel]
-build-image-all: (build-image 'fdsc') (build-image 'mdsc') (build-image 'gwc') (build-image 'relayer') (build-image 'faucet')
+build-image-all: (build-image 'fdsc') (build-image 'mdsc') (build-image 'gwc') (build-image 'relayer') (build-image 'faucet') (build-image 'genesis')
 
 # [Build Image] 個別イメージビルド
 build-image target:
@@ -39,7 +39,9 @@ build-image target:
     elif [ "{{target}}" == "faucet" ]; then
         # ✅ Faucet用: Goバイナリ(faucetd)は存在しないため、チェックをスキップ
         echo "✅ Faucet detected. Skipping Go binary check (Source-based build)."
-        
+    elif [ "{{target}}" == "genesis" ]; then
+        # ✅ Genesis用: Goバイナリ(genesisd)は存在しないため、チェックをスキップ
+        echo "✅ Genesis detected. Skipping Go binary check (Source-based build)."
     else
         # チェーン用 (gwc, mdsc, fdsc): バイナリ存在チェック
         BINARY_PATH="apps/{{target}}/dist/{{target}}d"
