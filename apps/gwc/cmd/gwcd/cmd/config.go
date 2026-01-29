@@ -23,7 +23,6 @@ func initCometBFTConfig() *cmtcfg.Config {
 	cfg.RPC.CORSAllowedOrigins = []string{"*"}
 	// sed: timeout_broadcast_tx_commit = "60s"
 	cfg.RPC.TimeoutBroadcastTxCommit = 60 * time.Second
-
 	// Large TX support (10 GiB)
 	// sed: max_body_bytes, max_tx_bytes, max_txs_bytes = 10737418240
 	const largeTxSize = 10737418240
