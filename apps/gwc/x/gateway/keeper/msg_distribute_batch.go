@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 
 	"gwc/x/gateway/types"
 
@@ -15,14 +16,9 @@ const fragmentTimeoutSeconds = 600
 func (k msgServer) DistributeBatch(goCtx context.Context, msg *types.MsgDistributeBatch) (*types.MsgDistributeBatchResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// [LOG: CSU Phase 5] バッチ配布開始
-	ctx.Logger().Info("CSU Phase 5: DistributeBatch Started",
-		"session_id", msg.SessionId,
-		"items_count", len(msg.Items),
-		"executor", msg.Executor,
-	)
+	// [LOG: CSU Phase 5]
+	fmt.Printf("🔵 [KEEPER] CSU Phase 5: DistributeBatch Started | SessionID: %s | Items: %d\n", msg.SessionId, len(msg.Items))
 
-	// ヘルパーを使用してパラメータを取得（クリーンアップ）
 	params := k.Keeper.getParamsOrDefault(ctx)
 
 	sess, err := k.Keeper.MustGetSession(ctx, msg.SessionId)
@@ -35,6 +31,7 @@ func (k msgServer) DistributeBatch(goCtx context.Context, msg *types.MsgDistribu
 	}
 
 	if err := k.Keeper.RequireSessionBoundAuthz(ctx, sess, msg.Executor, msg.SessionId, types.MsgTypeURLDistributeBatch); err != nil {
+		fmt.Printf("❌ [KEEPER] Authz Failed\n")
 		return nil, err
 	}
 
@@ -42,7 +39,6 @@ func (k msgServer) DistributeBatch(goCtx context.Context, msg *types.MsgDistribu
 		return nil, errorsmod.Wrap(types.ErrSessionClosed, "session is closed")
 	}
 
-	// 制限チェック
 	if params.MaxFragmentsPerSession > 0 {
 		after := sess.DistributedCount + uint64(len(msg.Items))
 		if after > params.MaxFragmentsPerSession {
@@ -50,7 +46,6 @@ func (k msgServer) DistributeBatch(goCtx context.Context, msg *types.MsgDistribu
 		}
 	}
 
-	// 登録済みチャネルの取得
 	var fdscChannels []string
 	iter, _ := k.Keeper.DatastoreChannels.Iterate(ctx, nil)
 	defer iter.Close()
@@ -81,15 +76,8 @@ func (k msgServer) DistributeBatch(goCtx context.Context, msg *types.MsgDistribu
 			return nil, errorsmod.Wrap(types.ErrDuplicateFragment, "duplicate fragment")
 		}
 
-		// Merkle Proof 検証
 		if err := VerifyFragment(sess.RootProofHex, item); err != nil {
-			// [LOG: CSU Phase 5] 検証失敗時の詳細ログ (重要)
-			ctx.Logger().Error("CSU Phase 5: Merkle Verification Failed",
-				"session_id", msg.SessionId,
-				"path", item.Path,
-				"index", item.Index,
-				"error", err,
-			)
+			fmt.Printf("❌ [KEEPER] Merkle Verify Failed | Path: %s | Index: %d | Err: %v\n", item.Path, item.Index, err)
 			return nil, errorsmod.Wrap(types.ErrInvalidProof, err.Error())
 		}
 
@@ -134,12 +122,8 @@ func (k msgServer) DistributeBatch(goCtx context.Context, msg *types.MsgDistribu
 
 	_ = k.Keeper.SetSession(ctx, sess)
 
-	// [LOG: CSU Phase 5] バッチ配布完了
-	ctx.Logger().Info("CSU Phase 5: Batch Distributed",
-		"session_id", msg.SessionId,
-		"items_sent", len(msg.Items),
-		"current_state", sess.State.String(),
-	)
+	// [LOG: CSU Phase 5]
+	fmt.Printf("🟢 [KEEPER] CSU Phase 5: Batch Distributed | Count: %d | State: %s\n", len(msg.Items), sess.State.String())
 
 	return &types.MsgDistributeBatchResponse{}, nil
 }

@@ -24,7 +24,7 @@ const MaxFragmentsPerBatch = 50
 
 // ExecuteSessionUpload はZIPファイルの解凍、断片化、各ストレージへの配布、およびマニフェストの登録を一括して実行します。
 func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePath string, projectName string, version string) error {
-	fmt.Printf("[Executor] Starting process for session %s\n", sessionID)
+	fmt.Printf("[Executor] 🚀 セッション処理を開始します: ID=%s\n", sessionID)
 
 	queryClient := types.NewQueryClient(clientCtx)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -33,41 +33,39 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	// 1. オンチェーンからセッション情報を取得
 	res, err := queryClient.Session(ctx, &types.QuerySessionRequest{SessionId: sessionID})
 	if err != nil {
-		return fmt.Errorf("failed to query session %s: %w", sessionID, err)
+		return fmt.Errorf("セッション情報の取得に失敗しました %s: %w", sessionID, err)
 	}
 	session := res.Session
 
 	// セッションが既に閉じている場合はエラー
 	if session.State == types.SessionState_SESSION_STATE_CLOSED_SUCCESS || session.State == types.SessionState_SESSION_STATE_CLOSED_FAILED {
-		return fmt.Errorf("session %s is already closed", sessionID)
+		return fmt.Errorf("セッション %s は既にクローズされています", sessionID)
 	}
 
 	// 2. 有効な FDSC ID (ChainId) と ChannelId を動的に取得
-	// ストレージトポロジーをクエリし、connection_type が "datastore" のものを探します
-	fmt.Printf("[Executor] Resolving storage endpoints...\n")
+	fmt.Printf("[Executor] 🔍 ストレージエンドポイントを解決中...\n")
 	resStorage, err := queryClient.StorageEndpoints(ctx, &types.QueryStorageEndpointsRequest{})
 	if err != nil {
-		return fmt.Errorf("failed to query storage endpoints: %w", err)
+		return fmt.Errorf("ストレージエンドポイントのクエリに失敗しました: %w", err)
 	}
 
 	var targetFdscID string
 	var targetChannelID string
 
 	for _, info := range resStorage.StorageInfos {
-		// 修正: インフラ側の登録名 "datastore" に合わせる
 		if info.ConnectionType == "datastore" {
 			targetFdscID = info.ChainId
 			targetChannelID = info.ChannelId
-			fmt.Printf("[Executor] Found active FDSC: %s (Endpoint: %s, Channel: %s)\n", targetFdscID, info.ApiEndpoint, targetChannelID)
+			fmt.Printf("[Executor] ✅ 有効なFDSCを発見: %s (Endpoint: %s, Channel: %s)\n", targetFdscID, info.ApiEndpoint, targetChannelID)
 			break
 		}
 	}
 
 	if targetFdscID == "" {
-		return fmt.Errorf("no active FDSC storage found in registry (connection_type='datastore'). Please ensure storage is registered via 'gwcd tx gateway register-storage'")
+		return fmt.Errorf("有効なFDSCストレージが見つかりません (connection_type='datastore')。'gwcd tx gateway register-storage' で登録を確認してください")
 	}
 	if targetChannelID == "" {
-		return fmt.Errorf("active FDSC found (%s) but channel_id is missing. Please re-register storage correctly.", targetFdscID)
+		return fmt.Errorf("FDSC (%s) は見つかりましたが channel_id が設定されていません。再登録してください", targetFdscID)
 	}
 
 	// 3. ZIPファイルの読み込み
@@ -82,14 +80,14 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	}
 
 	// ZIPの解凍と断片化
-	fmt.Printf("[Executor] Processing ZIP... fragment_size=%d\n", fragmentSize)
+	fmt.Printf("[Executor] 📦 ZIP処理中... fragment_size=%d\n", fragmentSize)
 	files, err := types.ProcessZipAndSplit(zipBytes, fragmentSize)
 	if err != nil {
 		return abortSession(clientCtx, &session, "INVALID_ZIP_CONTENT")
 	}
 
 	// 4. CSU Proof (Merkle Tree) の構築
-	fmt.Printf("[Executor] Building Merkle Tree...\n")
+	fmt.Printf("[Executor] 🌳 Merkle Tree を構築中...\n")
 	proofData, err := types.BuildCSUProofs(files)
 	if err != nil {
 		return abortSession(clientCtx, &session, "PROOF_GENERATION_FAILED")
@@ -97,13 +95,13 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 
 	// ルートハッシュの検証
 	if proofData.RootProofHex != session.RootProofHex {
-		fmt.Printf("[Executor] RootProof mismatch! OnChain=%s, Computed=%s\n", session.RootProofHex, proofData.RootProofHex)
+		fmt.Printf("[Executor] ❌ RootProof 不一致! OnChain=%s, Computed=%s\n", session.RootProofHex, proofData.RootProofHex)
 		return abortSession(clientCtx, &session, "ROOT_PROOF_MISMATCH")
 	}
 
 	executorAddr := session.Executor
 	totalItems := len(proofData.Fragments)
-	fmt.Printf("[Executor] Total fragments to distribute: %d\n", totalItems)
+	fmt.Printf("[Executor] 📤 配布対象断片数: %d\n", totalItems)
 
 	// トランザクションファクトリの準備
 	ownerAddr, _ := sdk.AccAddressFromBech32(session.Owner)
@@ -129,7 +127,6 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 				FragmentProof:     frag.FragmentProof,
 				FileSize:          frag.FileSize,
 				FileProof:         frag.FileProof,
-				// 修正: 特定したチャネルIDを明示的に指定
 				TargetFdscChannel: targetChannelID,
 			})
 		}
@@ -140,32 +137,29 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 			Items:     batchItems,
 		}
 
-		fmt.Printf("[Executor] Broadcasting Batch %d-%d to channel %s...\n", i, end, targetChannelID)
+		fmt.Printf("[Executor] 📡 バッチ送信中 %d-%d (Target: %s)...\n", i, end, targetChannelID)
 		txRes, err := broadcastAndConfirm(clientCtx, txf, msg)
 		if err != nil {
-			fmt.Printf("[Executor] Failed to confirm batch Tx: %v\n", err)
+			fmt.Printf("[Executor] ❌ バッチ送信失敗: %v\n", err)
 			return abortSession(clientCtx, &session, "DISTRIBUTE_TX_FAILED")
 		}
-		fmt.Printf("[Executor] Batch confirmed successfully. TxHash: %s\n", txRes.TxHash)
+		fmt.Printf("[Executor] ✅ バッチ送信成功 TxHash: %s\n", txRes.TxHash)
 
 		// 次のシーケンス番号へ更新
 		txf = txf.WithSequence(txf.Sequence() + 1)
 	}
 
 	// 6. マニフェストファイル情報の構築
-	// Map Entry の互換性問題回避のためスライス構造を使用
 	var manifestFiles []types.ManifestFileEntry
 
 	// 断片情報をパスごとに整理
 	fragmentsByPath := make(map[string][]*types.PacketFragmentMapping)
 	for _, frag := range proofData.Fragments {
-		// 修正: FDSCの MakeFragmentID と同じロジックでIDを生成
-		// FDSC側: hex(sha256("FDSC_FRAG_ID:{session_id}:{path}:{index}"))
 		calculatedID := calculateFragmentID(sessionID, frag.Path, frag.Index)
 
 		mapping := &types.PacketFragmentMapping{
-			FdscId:     targetFdscID, 
-			FragmentId: calculatedID, // 単純なpath-indexではなく、ハッシュ化されたIDを使用
+			FdscId:     targetFdscID,
+			FragmentId: calculatedID,
 		}
 		fragmentsByPath[frag.Path] = append(fragmentsByPath[frag.Path], mapping)
 	}
@@ -176,7 +170,6 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 			mimeType = "application/octet-stream"
 		}
 
-		// ファイルごとの Merkle Root を計算
 		fileRoot := calculateFileRoot(file.Path, file.Chunks)
 
 		manifestFiles = append(manifestFiles, types.ManifestFileEntry{
@@ -204,22 +197,21 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 			Files:        manifestFiles,
 		},
 	}
-	fmt.Printf("[Executor] Manifest for project %s (version %s)\n", projectName, version)
+	fmt.Printf("[Executor] 📝 マニフェスト作成: Project=%s, Version=%s\n", projectName, version)
 
-	fmt.Printf("[Executor] Finalizing session...\n")
+	fmt.Printf("[Executor] 🏁 セッション完了(Finalize)を送信中...\n")
 	_, err = broadcastAndConfirm(clientCtx, txf, finalizeMsg)
 	if err != nil {
-		fmt.Printf("[Executor] Finalize Tx failed: %v\n", err)
+		fmt.Printf("[Executor] ❌ Finalize Tx 失敗: %v\n", err)
 		return err
 	}
-	fmt.Printf("[Executor] Session %s finalized successfully.\n", sessionID)
+	fmt.Printf("[Executor] 🎉 セッション %s は正常に完了しました。\n", sessionID)
 
 	return nil
 }
 
 // calculateFragmentID generates the same deterministic ID as FDSC
 func calculateFragmentID(sessionID, path string, index uint64) string {
-	// FDSCの types.MakeFragmentID と完全一致させる必要があります
 	payload := []byte(fmt.Sprintf("FDSC_FRAG_ID:%s:%s:%d", sessionID, path, index))
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])
@@ -232,7 +224,6 @@ func calculateFileRoot(path string, chunks [][]byte) string {
 	}
 	var leaves []string
 	for i, chunk := range chunks {
-		// FRAG:{path}:{index}:{hex(SHA256(bytes))}
 		chunkHash := sha256.Sum256(chunk)
 		chunkHashHex := hex.EncodeToString(chunkHash[:])
 
@@ -242,7 +233,6 @@ func calculateFileRoot(path string, chunks [][]byte) string {
 
 		leaves = append(leaves, leafHex)
 	}
-	// typesパッケージのMerkleTree実装を利用
 	return types.NewMerkleTree(leaves).Root()
 }
 
@@ -269,7 +259,7 @@ func prepareFactory(clientCtx client.Context, fromAddr string) (tx.Factory, erro
 		}
 	}
 	if err != nil {
-		return tx.Factory{}, fmt.Errorf("key resolution failed: %w", err)
+		return tx.Factory{}, fmt.Errorf("鍵の解決に失敗しました: %w", err)
 	}
 
 	txf, err := tx.NewFactoryCLI(clientCtx, &pflag.FlagSet{})
@@ -314,7 +304,7 @@ func broadcastAndConfirm(clientCtx client.Context, txf tx.Factory, msg sdk.Msg) 
 	}
 
 	if res.Code != 0 {
-		return res, fmt.Errorf("tx sync failed (code %d): %s", res.Code, res.RawLog)
+		return res, fmt.Errorf("Tx送信エラー (code %d): %s", res.Code, res.RawLog)
 	}
 
 	// ブロックに含まれるのを待機（最大60秒）
@@ -325,13 +315,13 @@ func broadcastAndConfirm(clientCtx client.Context, txf tx.Factory, msg sdk.Msg) 
 		if err == nil {
 			if txRes.TxResult.Code != 0 {
 				return &sdk.TxResponse{TxHash: res.TxHash, Code: txRes.TxResult.Code, RawLog: txRes.TxResult.Log},
-					fmt.Errorf("tx execution failed (code %d): %s", txRes.TxResult.Code, txRes.TxResult.Log)
+					fmt.Errorf("Tx実行エラー (code %d): %s", txRes.TxResult.Code, txRes.TxResult.Log)
 			}
 			return &sdk.TxResponse{TxHash: res.TxHash, Code: 0}, nil
 		}
 	}
 
-	return res, fmt.Errorf("tx confirmation timeout: %s", res.TxHash)
+	return res, fmt.Errorf("Tx確認タイムアウト: %s", res.TxHash)
 }
 
 func abortSession(clientCtx client.Context, session *types.Session, reason string) error {

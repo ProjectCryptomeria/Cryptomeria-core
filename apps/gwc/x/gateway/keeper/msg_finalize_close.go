@@ -16,35 +16,30 @@ const manifestTimeoutSeconds = 600
 func (k msgServer) FinalizeAndCloseSession(goCtx context.Context, msg *types.MsgFinalizeAndCloseSession) (*types.MsgFinalizeAndCloseSessionResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// [LOG: CSU Phase 6] 確定・クローズ要求開始
-	ctx.Logger().Info("CSU Phase 6: Finalize Requested", "session_id", msg.SessionId, "executor", msg.Executor)
+	// [LOG: CSU Phase 6]
+	fmt.Printf("🔵 [KEEPER] CSU Phase 6: Finalize Requested | SessionID: %s\n", msg.SessionId)
 
 	sess, err := k.Keeper.MustGetSession(ctx, msg.SessionId)
 	if err != nil {
 		return nil, errorsmod.Wrap(types.ErrSessionNotFound, err.Error())
 	}
 
-	// Executor mismatch check
 	if sess.Executor != msg.Executor {
 		return nil, errorsmod.Wrapf(types.ErrExecutorMismatch, "executor mismatch: session.executor=%s msg.executor=%s", sess.Executor, msg.Executor)
 	}
 
-	// Authz check (Executor must have permission)
 	if err := k.Keeper.RequireSessionBoundAuthz(ctx, sess, msg.Executor, msg.SessionId, types.MsgTypeURLFinalizeAndCloseSession); err != nil {
 		return nil, err
 	}
 
-	// Check state
 	if sess.State == types.SessionState_SESSION_STATE_CLOSED_SUCCESS || sess.State == types.SessionState_SESSION_STATE_CLOSED_FAILED {
 		return nil, errorsmod.Wrap(types.ErrSessionClosed, "session is closed")
 	}
 
-	// Must have root proof committed and be in valid state
 	if sess.RootProofHex == "" || (sess.State != types.SessionState_SESSION_STATE_ROOT_COMMITTED && sess.State != types.SessionState_SESSION_STATE_DISTRIBUTING) {
 		return nil, errorsmod.Wrap(types.ErrRootProofNotCommitted, "root proof not committed or invalid state")
 	}
 
-	// Validate manifest identity against session
 	manifest := msg.Manifest
 	if manifest.SessionId != msg.SessionId {
 		return nil, errorsmod.Wrapf(types.ErrInvalidManifest, "manifest.session_id mismatch")
@@ -59,13 +54,11 @@ func (k msgServer) FinalizeAndCloseSession(goCtx context.Context, msg *types.Msg
 		return nil, errorsmod.Wrapf(types.ErrInvalidManifest, "manifest.fragment_size mismatch")
 	}
 
-	// Get MDSC channel
 	mdscChannel, err := k.Keeper.MetastoreChannel.Get(ctx)
 	if err != nil || mdscChannel == "" {
 		return nil, errorsmod.Wrap(types.ErrNoMetastoreChannel, "MDSC channel not found")
 	}
 
-	// Send IBC Packet
 	packetData := types.GatewayPacketData{
 		Packet: &types.GatewayPacketData_ManifestPacket{
 			ManifestPacket: &manifest,
@@ -77,33 +70,21 @@ func (k msgServer) FinalizeAndCloseSession(goCtx context.Context, msg *types.Msg
 		return nil, err
 	}
 
-	// [LOG: CSU Phase 6] Manifestパケット送信完了
-	ctx.Logger().Info("CSU Phase 6: Manifest Packet Sent",
-		"session_id", msg.SessionId,
-		"sequence", seq,
-		"target_channel", mdscChannel,
-	)
+	fmt.Printf("🟢 [KEEPER] CSU Phase 6: Manifest Packet Sent | Seq: %d | Channel: %s\n", seq, mdscChannel)
 
-	// Bind sequence for ACK
 	if err := k.Keeper.BindManifestSeq(ctx, seq, msg.SessionId); err != nil {
 		return nil, err
 	}
 
-	// State Update: Transition to FINALIZING
-	// The session is conceptually "closed" for further uploads, pending ACK.
 	sess.State = types.SessionState_SESSION_STATE_FINALIZING
 	if err := k.Keeper.SetSession(ctx, sess); err != nil {
 		return nil, err
 	}
 
-	// CRITICAL: Revoke Authz and Feegrant grants IMMEDIATELY.
-	// This ensures "Authz lifetime matches Session lifetime".
-	// Even if ACK fails later, the Executor cannot retry without new grants (which Owner must explicitly give).
 	k.Keeper.RevokeCSUGrants(ctx, sess.Owner)
 
-	// [LOG: CSU Phase 6] 権限剥奪・クローズ完了
-	ctx.Logger().Info("CSU Phase 6: Authz/Feegrant Revoked", "owner", sess.Owner)
-	ctx.Logger().Info("CSU Phase 6: Session Closed (Success)", "session_id", msg.SessionId)
+	// [LOG: CSU Phase 6]
+	fmt.Printf("🟢 [KEEPER] CSU Phase 6: Authz/Feegrant Revoked & Session Closed (Pending ACK) | Owner: %s\n", sess.Owner)
 
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(
