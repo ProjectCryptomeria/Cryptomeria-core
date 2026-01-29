@@ -11,6 +11,10 @@ import { BasicAllowance } from 'cosmjs-types/cosmos/feegrant/v1beta1/feegrant';
 import { MerkleTreeCalculator, type InputFile } from '../lib/merkle';
 import { createZipBlob } from '../lib/zip';
 import { CONFIG } from '../constants/config';
+import { SessionState, sessionStateToJSON } from '../lib/proto/gwc/gateway/v1/types';
+
+// デフォルト値として保持（UI側で指定がない場合に使用）
+const DEFAULT_FRAGMENT_SIZE = 1024;
 
 /**
  * CSU（Chain Storage Unit）へのアップロードロジックを管理するカスタムフック
@@ -24,28 +28,62 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
         setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
     }, []);
 
-    const upload = async (files: InputFile[], projectName: string, projectVersion: string) => {
+    // REST API経由でセッション状態を取得するヘルパー関数
+    const fetchSessionState = async (sessionId: string): Promise<string> => {
+        try {
+            // ignite scaffoldされたチェーンの標準的なRESTパス (修正済みのsessionsエンドポイント)
+            const url = `${CONFIG.restEndpoint}/gwc/gateway/v1/sessions/${sessionId}`;
+            const res = await fetch(url);
+
+            if (!res.ok) {
+                // 404の場合はまだインデックスされていない可能性があるためリトライさせる意味でUNKNOWNを返す
+                if (res.status === 404) return "NOT_FOUND";
+                throw new Error(`State fetch failed: ${res.status}`);
+            }
+
+            const data = await res.json();
+            return data.session?.state || "UNKNOWN";
+        } catch (e: any) {
+            console.error("Fetch Error:", e);
+            return "ERROR";
+        }
+    };
+
+    // アップロードされたサイトが実際に閲覧可能か確認するヘルパー関数
+    const verifyRendering = async (url: string): Promise<boolean> => {
+        try {
+            const res = await fetch(url, { method: 'HEAD' });
+            return res.status === 200;
+        } catch (e) {
+            return false;
+        }
+    };
+
+    // 引数に fragmentSize を追加
+    const upload = async (files: InputFile[], projectName: string, projectVersion: string, fragmentSize: number = DEFAULT_FRAGMENT_SIZE) => {
         if (!client || !address || files.length === 0) return;
         setIsProcessing(true);
         setUploadProgress(0);
+        setLogs([]); // ログをリセット
 
         try {
             // Step 1: マークルツリーの計算とZIP圧縮
-            addLog('Step 1: Merkle Rootの計算とZIP圧縮を開始...');
+            addLog(`Step 1: Merkle Rootの計算とZIP圧縮を開始 (Fragment Size: ${fragmentSize} bytes)...`);
             const merkleCalc = new MerkleTreeCalculator();
-            const rootProof = await merkleCalc.calculateRootProof(files, 1024);
+            // ここで動的なサイズを使用
+            const rootProof = await merkleCalc.calculateRootProof(files, fragmentSize);
             const zipBlob = await createZipBlob(files);
             addLog(`ZIPファイル作成完了: ${(zipBlob.size / 1024).toFixed(2)} KB`);
 
             // Step 2: セッションの初期化
             addLog('Step 2: セッションの初期化 (On-chain)...');
-            // セッション期限を現在時刻から1時間後に設定（0だと即時失効する可能性があるため）
             const deadline = Math.floor(Date.now() / 1000) + 3600;
             const initRes = await client.signAndBroadcast(address, [{
                 typeUrl: '/gwc.gateway.v1.MsgInitSession',
                 value: {
                     owner: address,
-                    fragmentSize: Long.fromNumber(1024),
+                    // ここで動的なサイズを使用
+                    fragmentSize: Long.fromNumber(fragmentSize),
                     deadlineUnix: Long.fromNumber(deadline)
                 }
             }], { amount: [{ denom: CONFIG.denom, amount: '2000' }], gas: '200000' });
@@ -53,11 +91,10 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
             if (initRes.code !== 0) throw new Error(initRes.rawLog);
             const initData = MsgInitSessionResponse.decode(initRes.msgResponses[0].value);
 
-            // イベントからExecutor（実行者）のアドレスを取得
             const executor = initRes.events.find(e => e.type === 'csu_init_session')
                 ?.attributes.find(a => a.key === 'executor')?.value.replace(/^"|"$/g, '') || "";
 
-            // Step 3: Executorへの権限委譲 (Authz & Feegrant)
+            // Step 3: Executorへの権限委譲
             addLog('Step 3: Executorへの権限委譲...');
             const grantMsgs = ['MsgDistributeBatch', 'MsgFinalizeAndCloseSession', 'MsgAbortAndCloseSession'].map(type => ({
                 typeUrl: '/cosmos.authz.v1beta1.MsgGrant',
@@ -99,7 +136,6 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
 
             const tusUpload = new tus.Upload(zipBlob, {
                 endpoint: `${CONFIG.restEndpoint}/upload/tus-stream/`,
-                // リトライ設定：サーバー側の一時的な検証エラー等に対処
                 retryDelays: [0, 1000, 3000],
                 headers: { Authorization: `Bearer ${initData.sessionUploadToken}` },
                 metadata: {
@@ -109,18 +145,68 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
                 },
                 onProgress: (bytes, total) => {
                     const percent = Math.floor((bytes / total) * 100);
-                    setUploadProgress(percent);
+                    setUploadProgress(Math.min(percent, 80));
 
                     if (percent % 10 === 0 && percent !== lastLoggedProgress) {
-                        addLog(`↑ アップロード中... ${percent}% (${(bytes / 1024 / 1024).toFixed(2)} MB / ${(total / 1024 / 1024).toFixed(2)} MB)`);
+                        addLog(`↑ データ送信中... ${percent}%`);
                         lastLoggedProgress = percent;
                     }
                 },
-                onSuccess: () => {
-                    addLog('✅ アップロード完了！');
-                    const accessUrl = `${CONFIG.restEndpoint}/render/${projectName}/${projectVersion}/index.html`;
-                    addLog(`🌐 アクセスURL: ${accessUrl}`);
+                onSuccess: async () => {
+                    addLog('✅ データ送信完了。Gateway Chainでの分散処理を監視します...');
+
+                    // Step 6: IBC分散処理の監視 (Polling)
+                    addLog('Step 6: IBCパケット転送と分散保存の待機中...');
+                    const closedSuccessState = sessionStateToJSON(SessionState.SESSION_STATE_CLOSED_SUCCESS);
+                    const closedFailedState = sessionStateToJSON(SessionState.SESSION_STATE_CLOSED_FAILED);
+
+                    let isCompleted = false;
+                    let retryCount = 0;
+                    const maxRetries = 100;
+
+                    while (retryCount < maxRetries) {
+                        const state = await fetchSessionState(initData.sessionId);
+
+                        if (retryCount % 5 === 0) {
+                            addLog(`🔄 Status: ${state}`);
+                        }
+
+                        if (state === closedSuccessState) {
+                            isCompleted = true;
+                            break;
+                        }
+                        if (state === closedFailedState) {
+                            throw new Error("セッションが異常終了しました (CLOSED_FAILED)");
+                        }
+
+                        setUploadProgress((prev) => Math.min(prev + 0.2, 95));
+
+                        await new Promise(r => setTimeout(r, 3000));
+                        retryCount++;
+                    }
+
+                    if (!isCompleted) {
+                        throw new Error("タイムアウト: 分散処理が完了しませんでした。");
+                    }
+
                     setUploadProgress(100);
+                    addLog('🎉 セッション完了 (CLOSED_SUCCESS)');
+
+                    // Step 7: 閲覧確認
+                    const accessUrl = `${CONFIG.restEndpoint}/render/${projectName}/${projectVersion}/index.html`;
+                    addLog(`🌐 アクセス確認中: ${accessUrl}`);
+
+                    await new Promise(r => setTimeout(r, 2000));
+                    const isAccessible = await verifyRendering(accessUrl);
+
+                    if (isAccessible) {
+                        addLog(`✅ サイトが表示可能です！以下のURLにアクセスしてください。`);
+                        addLog(accessUrl);
+                    } else {
+                        addLog(`⚠️ 処理は完了しましたが、サイトへのアクセス確認に失敗しました（反映待ちの可能性があります）。`);
+                        addLog(accessUrl);
+                    }
+
                     setIsProcessing(false);
                 },
                 onError: (err) => {

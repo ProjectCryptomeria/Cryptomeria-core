@@ -103,13 +103,13 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	totalItems := len(proofData.Fragments)
 	fmt.Printf("[Executor] 📤 配布対象断片数: %d\n", totalItems)
 
-	// トランザクションファクトリの準備
 	ownerAddr, _ := sdk.AccAddressFromBech32(session.Owner)
-	txf, err := prepareFactory(clientCtx, executorAddr)
-	if err != nil {
-		return err
-	}
-	txf = txf.WithFeeGranter(ownerAddr)
+
+	// バッチ配信用に共通のFactoryを初期化 (まだGas計算はしない)
+	// sequence番号の管理のため、Factoryはループ外で一度作るのが基本だが、
+	// Gas計算結果を適用するために、最初の1回だけシミュレーションを行う。
+	var txfBatch tx.Factory
+	txfInitialized := false
 
 	// 5. 断片データの配布 (バッチ処理)
 	for i := 0; i < totalItems; i += MaxFragmentsPerBatch {
@@ -137,16 +137,29 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 			Items:     batchItems,
 		}
 
+		// 最初のバッチのみシミュレーションを実行してGasを決定する
+		if !txfInitialized {
+			fmt.Printf("[Executor] 🧪 初回バッチのガス見積もりを実行中...\n")
+			// シミュレーション付きでFactoryを生成
+			f, err := prepareFactory(clientCtx, executorAddr, ownerAddr, msg)
+			if err != nil {
+				return fmt.Errorf("Factory準備エラー: %w", err)
+			}
+			txfBatch = f
+			txfInitialized = true
+			fmt.Printf("[Executor] ⛽ ガス見積もり完了: %d\n", txfBatch.Gas())
+		} else {
+			// 2回目以降はSequenceのみインクリメント (Gasは使い回し)
+			txfBatch = txfBatch.WithSequence(txfBatch.Sequence() + 1)
+		}
+
 		fmt.Printf("[Executor] 📡 バッチ送信中 %d-%d (Target: %s)...\n", i, end, targetChannelID)
-		txRes, err := broadcastAndConfirm(clientCtx, txf, msg)
+		txRes, err := broadcastAndConfirm(clientCtx, txfBatch, msg)
 		if err != nil {
 			fmt.Printf("[Executor] ❌ バッチ送信失敗: %v\n", err)
 			return abortSession(clientCtx, &session, "DISTRIBUTE_TX_FAILED")
 		}
 		fmt.Printf("[Executor] ✅ バッチ送信成功 TxHash: %s\n", txRes.TxHash)
-
-		// 次のシーケンス番号へ更新
-		txf = txf.WithSequence(txf.Sequence() + 1)
 	}
 
 	// 6. マニフェストファイル情報の構築
@@ -199,8 +212,19 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	}
 	fmt.Printf("[Executor] 📝 マニフェスト作成: Project=%s, Version=%s\n", projectName, version)
 
+	// Finalize用には専用のシミュレーションを行って新しいFactoryを作る
+	// (マニフェストサイズが大きいため、バッチ用Gasでは足りない可能性が高い)
+	fmt.Printf("[Executor] 🧪 Finalize Tx のガス見積もりを実行中...\n")
+	// 注意: Sequence番号は最新のものを使う必要があるため、txfBatchの次の番号を取得する形にするか、
+	// prepareFactory内で再度AccountRetrieverを使ってもらう。prepareFactoryは最新Seqを取る実装になっている。
+	txfFinalize, err := prepareFactory(clientCtx, executorAddr, ownerAddr, finalizeMsg)
+	if err != nil {
+		return fmt.Errorf("Finalize用Factory準備エラー: %w", err)
+	}
+	fmt.Printf("[Executor] ⛽ Finalize ガス見積もり: %d\n", txfFinalize.Gas())
+
 	fmt.Printf("[Executor] 🏁 セッション完了(Finalize)を送信中...\n")
-	_, err = broadcastAndConfirm(clientCtx, txf, finalizeMsg)
+	_, err = broadcastAndConfirm(clientCtx, txfFinalize, finalizeMsg)
 	if err != nil {
 		fmt.Printf("[Executor] ❌ Finalize Tx 失敗: %v\n", err)
 		return err
@@ -236,7 +260,9 @@ func calculateFileRoot(path string, chunks [][]byte) string {
 	return types.NewMerkleTree(leaves).Root()
 }
 
-func prepareFactory(clientCtx client.Context, fromAddr string) (tx.Factory, error) {
+// prepareFactory は指定されたメッセージに対してシミュレーションを行い、
+// 適切なGas Limit (シミュレーション値 * 1.5) を設定した tx.Factory を返します。
+func prepareFactory(clientCtx client.Context, fromAddr string, feeGranter sdk.AccAddress, msg sdk.Msg) (tx.Factory, error) {
 	fromAcc, err := sdk.AccAddressFromBech32(fromAddr)
 	if err != nil {
 		return tx.Factory{}, err
@@ -262,6 +288,7 @@ func prepareFactory(clientCtx client.Context, fromAddr string) (tx.Factory, erro
 		return tx.Factory{}, fmt.Errorf("鍵の解決に失敗しました: %w", err)
 	}
 
+	// Factoryの初期化
 	txf, err := tx.NewFactoryCLI(clientCtx, &pflag.FlagSet{})
 	if err != nil {
 		return tx.Factory{}, err
@@ -272,15 +299,29 @@ func prepareFactory(clientCtx client.Context, fromAddr string) (tx.Factory, erro
 		return tx.Factory{}, err
 	}
 
-	return txf.
+	txf = txf.
 		WithChainID(clientCtx.ChainID).
-		WithGas(4000000).
-		WithGasAdjustment(1.5).
 		WithKeybase(clientCtx.Keyring).
 		WithFromName(krRec.Name).
 		WithSignMode(signing.SignMode_SIGN_MODE_DIRECT).
 		WithAccountNumber(num).
-		WithSequence(seq), nil
+		WithSequence(seq).
+		WithFeeGranter(feeGranter).
+		WithGasAdjustment(1.5) // 安全係数を設定
+
+	// シミュレーションを実行してGasを計算
+	if msg != nil {
+		_, adjusted, err := tx.CalculateGas(clientCtx, txf, msg)
+		if err != nil {
+			return tx.Factory{}, fmt.Errorf("ガス見積もり(Simulation)に失敗しました: %w", err)
+		}
+		txf = txf.WithGas(adjusted)
+	} else {
+		// msgがnilの場合はデフォルト値 (通常あり得ないが安全策)
+		txf = txf.WithGas(2000000000000)
+	}
+
+	return txf, nil
 }
 
 func broadcastAndConfirm(clientCtx client.Context, txf tx.Factory, msg sdk.Msg) (*sdk.TxResponse, error) {
@@ -330,10 +371,16 @@ func abortSession(clientCtx client.Context, session *types.Session, reason strin
 		SessionId: session.SessionId,
 		Reason:    reason,
 	}
-	txf, err := prepareFactory(clientCtx, session.Executor)
+	// Abort時は固定ガスで十分（中身が小さいため）
+	ownerAddr, _ := sdk.AccAddressFromBech32(session.Owner)
+	// Abort用の簡易Factory作成（Simulationなしで固定値）
+	txf, err := prepareFactory(clientCtx, session.Executor, ownerAddr, nil)
 	if err != nil {
 		return err
 	}
+	// prepareFactoryでmsg=nilだと20000000になるが、Abortには大きすぎるので手動調整
+	txf = txf.WithGas(200000)
+
 	_, err = broadcastAndConfirm(clientCtx, txf, msg)
 	return err
 }

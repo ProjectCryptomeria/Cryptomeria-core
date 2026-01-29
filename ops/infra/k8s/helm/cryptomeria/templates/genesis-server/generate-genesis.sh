@@ -1,5 +1,3 @@
-# projectcryptomeria/cryptomeria-core/Cryptomeria-core-4-dev/ops/infra/k8s/helm/cryptomeria/templates/genesis-server/generate-genesis.sh
-
 {{- define "cryptomeria.scripts.genesis" -}}
 #!/bin/sh
 set -e
@@ -22,11 +20,21 @@ generate_genesis() {
     rm -rf $HOME_DIR
     mkdir -p $HOME_DIR
 
+    # jq が無いと困るので明示チェック（必要なら消してOK）
+    if ! command -v jq >/dev/null 2>&1 ; then
+        echo "❌ jq not found. Please install jq in this image."
+        exit 1
+    fi
+
     # 1. Init
     $BINARY init $CHAIN_ID --chain-id $CHAIN_ID --home $HOME_DIR
 
-    # --- 修正箇所：デフォルト Denom を uatom に統一 ---
-    sed -i 's/"stake"/"uatom"/g' $HOME_DIR/config/genesis.json
+    GENESIS="$HOME_DIR/config/genesis.json"
+
+    # --- Denom を uatom に統一（jqで安全に全置換） ---
+    # 文字列 "stake" を含む値をすべて "uatom" に置換（元の sed と同等の広さ）
+    tmp="$(mktemp)"
+    jq 'walk(if type=="string" and .=="stake" then "uatom" else . end)' "$GENESIS" > "$tmp" && mv "$tmp" "$GENESIS"
 
     # 2. Add Key (Local Admin)
     $BINARY keys add local-admin --recover --keyring-backend=test --home $HOME_DIR < $KEY_FILE
@@ -49,14 +57,30 @@ generate_genesis() {
     # 5. Collect Gentxs (AppState の最終化)
     $BINARY genesis collect-gentxs --home $HOME_DIR
 
-    # --- 修正箇所：コマンド名を set-admin に、タイミングを最終化の後に移動 ---
+    # -------------------------------------------------------------------------
+    # ▼▼▼ ブロックサイズを最大 100MiB (= 104857600 bytes) に設定（jq） ▼▼▼
+    # Cosmos SDK の genesis では max_bytes が "文字列" で入っていることが多いので tostring で合わせる
+    # -------------------------------------------------------------------------
+    MAX_BLOCK_BYTES=104857600
+    tmp="$(mktemp)"
+    jq --arg mb "$MAX_BLOCK_BYTES" '
+      .consensus.params.block.max_bytes = ($mb|tostring)
+    ' "$GENESIS" > "$tmp" && mv "$tmp" "$GENESIS"
+    # ▲▲▲ 追加ここまで ▲▲▲
+
+    # --- gwc の追加設定 ---
     if [ "$CHAIN_ID" = "gwc" ]; then
         echo "🔧 Finalizing gwc gateway parameters..."
         $BINARY genesis set-admin "$ADDR" --home "$HOME_DIR"
+        # set-admin が genesis を書き換える可能性があるので、確実にしたいならここでもう一度 jq を当てる:
+        tmp="$(mktemp)"
+        jq --arg mb "$MAX_BLOCK_BYTES" '
+          .consensus.params.block.max_bytes = ($mb|tostring)
+        ' "$GENESIS" > "$tmp" && mv "$tmp" "$GENESIS"
     fi
 
     # 6. Export
-    cp $HOME_DIR/config/genesis.json $OUTPUT_DIR/$CHAIN_ID.json
+    cp $GENESIS $OUTPUT_DIR/$CHAIN_ID.json
     cp $HOME_DIR/config/priv_validator_key.json $OUTPUT_DIR/$CHAIN_ID-priv_validator_key.json
     chmod 644 $OUTPUT_DIR/$CHAIN_ID.json
     chmod 644 $OUTPUT_DIR/$CHAIN_ID-priv_validator_key.json

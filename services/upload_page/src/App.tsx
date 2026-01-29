@@ -15,7 +15,9 @@ export default function App() {
 
   // プロジェクト設定の状態
   const [projectName, setProjectName] = useState('onchain-web-portal');
-  const [projectVersion, setProjectVersion] = useState('1.0.0'); // バージョン用の状態を追加
+  const [projectVersion, setProjectVersion] = useState('1.0.0');
+  // フラグメントサイズの追加 (デフォルト: 1024)
+  const [fragmentSize, setFragmentSize] = useState(1024);
   const [files, setFiles] = useState<any[]>([]);
 
   // 表示用にugwcをGWCに変換するユーティリティ
@@ -92,8 +94,8 @@ export default function App() {
               />
             </div>
 
-            {/* バージョン入力欄の追加 */}
-            <div style={{ marginBottom: '20px' }}>
+            {/* バージョン入力欄 */}
+            <div style={{ marginBottom: '15px' }}>
               <label style={styles.label}>プロジェクトバージョン</label>
               <input
                 type="text" value={projectVersion}
@@ -101,6 +103,28 @@ export default function App() {
                 placeholder="1.0.0"
                 style={styles.input}
               />
+            </div>
+
+            {/* フラグメントサイズ選択の追加 */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={styles.label}>フラグメントサイズ (Byte)</label>
+              <select
+                value={fragmentSize}
+                onChange={e => setFragmentSize(Number(e.target.value))}
+                style={{ ...styles.input, cursor: 'pointer' }}
+              >
+                <option value={512}>512 B (Small)</option>
+                <option value={1024}>1 KB (Default)</option>
+                <option value={10240}>10 KB</option>
+                <option value={102400}>100 KB</option>
+                <option value={512000}>500 KB</option>
+                <option value={1048576}>1 MB</option>
+                <option value={5242880}>5 MB</option>
+                <option value={10485760}>10 MB (Large)</option>
+              </select>
+              <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '6px' }}>
+                ※ サイズが小さいほど分散性が向上し、大きいほど処理速度が向上します。
+              </div>
             </div>
 
             <h3 style={styles.sectionTitle}>フォルダアップロード</h3>
@@ -119,14 +143,15 @@ export default function App() {
           </div>
 
           <button
-            onClick={() => upload(files, projectName, projectVersion)}
+            // ここで fragmentSize を渡す
+            onClick={() => upload(files, projectName, projectVersion, fragmentSize)}
             disabled={!address || files.length === 0 || isProcessing}
             style={{
               ...styles.btnPrimary,
               backgroundColor: isProcessing ? '#cbd5e1' : '#2563eb'
             }}
           >
-            {isProcessing ? `デプロイ実行中... ${uploadProgress}%` : '🚀 ネットワークに公開する'}
+            {isProcessing ? `デプロイ実行中... ${Math.round(uploadProgress)}%` : '🚀 ネットワークに公開する'}
           </button>
         </aside>
 

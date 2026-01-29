@@ -40,6 +40,7 @@ export const styles: { [key: string]: CSSProperties } = {
         flex: 1,
         boxSizing: 'border-box',
         width: '100%',
+        alignItems: 'start', // 上揃えにする（Sticky用）
     },
     sidebar: {
         display: 'flex',
@@ -108,6 +109,11 @@ export const styles: { [key: string]: CSSProperties } = {
         borderRadius: '16px',
         overflow: 'hidden',
         boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)',
+
+        // Sticky設定と高さ固定
+        position: 'sticky',
+        top: '32px', // 上部の余白
+        height: 'calc(100vh - 200px)', // ビューポート高さからナビバーと余白を引く
     },
     consoleHeader: {
         padding: '12px 24px',
@@ -117,6 +123,7 @@ export const styles: { [key: string]: CSSProperties } = {
         fontWeight: 700,
         display: 'flex',
         justifyContent: 'space-between',
+        flexShrink: 0, // ヘッダーが縮まないように
     },
     consoleBody: {
         flex: 1,
@@ -124,7 +131,7 @@ export const styles: { [key: string]: CSSProperties } = {
         fontFamily: '"JetBrains Mono", monospace',
         fontSize: '0.9rem',
         color: '#10b981',
-        overflowY: 'auto',
+        overflowY: 'auto', // ここでスクロールさせる
         lineHeight: '1.6',
     },
     addressBadge: {

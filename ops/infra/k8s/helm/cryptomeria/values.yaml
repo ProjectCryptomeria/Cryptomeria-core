@@ -105,8 +105,9 @@ relayer:
 genesisServer:
   enabled: true
   image:
-    repository: nginx
-    tag: alpine
+    repository: cryptomeria/genesis
+    tag: latest
+    pullPolicy: IfNotPresent
   service:
     port: 80
 
