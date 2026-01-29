@@ -30,6 +30,16 @@ func initCometBFTConfig() *cmtcfg.Config {
 	cfg.Mempool.MaxTxBytes = largeTxSize
 	cfg.Mempool.MaxTxsBytes = largeTxSize
 
+	// -------------------------------------------------------------------------
+	// ▼▼▼ ここを追加：ブロック生成速度の調整 ▼▼▼
+	// -------------------------------------------------------------------------
+
+	// TimeoutCommit: ブロック確定後、次の高さへ移る前の待機時間 (デフォルトは5s程度)
+	// これを短くするとブロック生成が速くなります。
+	cfg.Consensus.TimeoutCommit = 1 * time.Second
+
+	// TimeoutPropose: ブロック提案を待つ時間
+	cfg.Consensus.TimeoutPropose = 1 * time.Second
 	return cfg
 }
 
@@ -53,15 +63,17 @@ func initAppConfig() (string, interface{}) {
 	// sed: [api] enable = true, address = "tcp://0.0.0.0:1317"
 	srvCfg.API.Enable = true
 	srvCfg.API.Address = "tcp://0.0.0.0:1317"
-	srvCfg.API.EnableUnsafeCORS = true
+	// srvCfg.API.EnableUnsafeCORS = true
+
 	// sed: [grpc] enable = true
 	srvCfg.GRPC.Enable = true
 	// sed: [grpc-web] enable = true
 	srvCfg.GRPCWeb.Enable = true
 
 	// Large TX support (10 GiB)
-	// sed: max-request-body-size, max-recv-msg-size, max-send-msg-size
+	// sed: rpc-max-body-bytes max-request-body-size, max-recv-msg-size, max-send-msg-size
 	const largeTxSize = 10737418240
+	srvCfg.API.RPCMaxBodyBytes = largeTxSize
 	srvCfg.GRPC.MaxRecvMsgSize = largeTxSize
 	srvCfg.GRPC.MaxSendMsgSize = largeTxSize
 
