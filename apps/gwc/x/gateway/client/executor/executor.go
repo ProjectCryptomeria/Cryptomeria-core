@@ -37,38 +37,36 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	}
 	session := res.Session
 
-	// セッションが既に閉じている場合はエラー
 	if session.State == types.SessionState_SESSION_STATE_CLOSED_SUCCESS || session.State == types.SessionState_SESSION_STATE_CLOSED_FAILED {
 		return fmt.Errorf("セッション %s は既にクローズされています", sessionID)
 	}
 
-	// 2. 有効な FDSC ID (ChainId) と ChannelId を動的に取得
+	// 2. 有効なすべての FDSC 情報を動的に取得
 	fmt.Printf("[Executor] 🔍 ストレージエンドポイントを解決中...\n")
 	resStorage, err := queryClient.StorageEndpoints(ctx, &types.QueryStorageEndpointsRequest{})
 	if err != nil {
 		return fmt.Errorf("ストレージエンドポイントのクエリに失敗しました: %w", err)
 	}
 
-	var targetFdscID string
-	var targetChannelID string
+	// 利用可能なFDSCをすべて保持する構造体
+	type fdscInfo struct {
+		chainId   string
+		channelId string
+	}
+	var datastores []fdscInfo
 
 	for _, info := range resStorage.StorageInfos {
-		if info.ConnectionType == "datastore" {
-			// 全ての有効なFDSCをログに表示
+		if info.ConnectionType == "datastore" && info.ChannelId != "" {
 			fmt.Printf("[Executor] ✅ 有効なFDSCを発見: %s (Channel: %s)\n", info.ChainId, info.ChannelId)
-
-			// 最初の1つをデフォルトとして保持（マニフェスト生成等に利用する場合）
-			if targetFdscID == "" {
-				targetFdscID = info.ChainId
-				targetChannelID = info.ChannelId
-			}
+			datastores = append(datastores, fdscInfo{
+				chainId:   info.ChainId,
+				channelId: info.ChannelId,
+			})
 		}
 	}
-	if targetFdscID == "" {
-		return fmt.Errorf("有効なFDSCストレージが見つかりません (connection_type='datastore')。'gwcd tx gateway register-storage' で登録を確認してください")
-	}
-	if targetChannelID == "" {
-		return fmt.Errorf("FDSC (%s) は見つかりましたが channel_id が設定されていません。再登録してください", targetFdscID)
+
+	if len(datastores) == 0 {
+		return fmt.Errorf("有効なFDSCストレージが見つかりません。'gwcd tx gateway register-storage' で登録を確認してください")
 	}
 
 	// 3. ZIPファイルの読み込み
@@ -82,7 +80,6 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		fragmentSize = 1024 * 1024
 	}
 
-	// ZIPの解凍と断片化
 	fmt.Printf("[Executor] 📦 ZIP処理中... fragment_size=%d\n", fragmentSize)
 	files, err := types.ProcessZipAndSplit(zipBytes, fragmentSize)
 	if err != nil {
@@ -96,7 +93,6 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		return abortSession(clientCtx, &session, "PROOF_GENERATION_FAILED")
 	}
 
-	// ルートハッシュの検証
 	if proofData.RootProofHex != session.RootProofHex {
 		fmt.Printf("[Executor] ❌ RootProof 不一致! OnChain=%s, Computed=%s\n", session.RootProofHex, proofData.RootProofHex)
 		return abortSession(clientCtx, &session, "ROOT_PROOF_MISMATCH")
@@ -108,13 +104,10 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 
 	ownerAddr, _ := sdk.AccAddressFromBech32(session.Owner)
 
-	// バッチ配信用に共通のFactoryを初期化 (まだGas計算はしない)
-	// sequence番号の管理のため、Factoryはループ外で一度作るのが基本だが、
-	// Gas計算結果を適用するために、最初の1回だけシミュレーションを行う。
 	var txfBatch tx.Factory
 	txfInitialized := false
 
-	// 5. 断片データの配布 (バッチ処理)
+	// 5. 断片データの配布 (Executor側でラウンドロビンを制御)
 	for i := 0; i < totalItems; i += MaxFragmentsPerBatch {
 		end := i + MaxFragmentsPerBatch
 		if end > totalItems {
@@ -122,15 +115,19 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		}
 
 		batchItems := make([]types.DistributeItem, 0, end-i)
-		for _, frag := range proofData.Fragments[i:end] {
+		for j, frag := range proofData.Fragments[i:end] {
+			// 全断片の通し番号 (i+j) を用いて配送先チャネルを決定
+			dsIdx := (i + j) % len(datastores)
+			targetDS := datastores[dsIdx]
+
 			batchItems = append(batchItems, types.DistributeItem{
-				Path:          frag.Path,
-				Index:         frag.Index,
-				FragmentBytes: frag.FragmentBytes,
-				FragmentProof: frag.FragmentProof,
-				FileSize:      frag.FileSize,
-				FileProof:     frag.FileProof,
-				// TargetFdscChannel: targetChannelID, //コメントアウトの場合はラウンドロビン
+				Path:              frag.Path,
+				Index:             frag.Index,
+				FragmentBytes:     frag.FragmentBytes,
+				FragmentProof:     frag.FragmentProof,
+				FileSize:          frag.FileSize,
+				FileProof:         frag.FileProof,
+				TargetFdscChannel: targetDS.channelId, // 明示的に配送先を指定
 			})
 		}
 
@@ -140,10 +137,8 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 			Items:     batchItems,
 		}
 
-		// 最初のバッチのみシミュレーションを実行してGasを決定する
 		if !txfInitialized {
 			fmt.Printf("[Executor] 🧪 初回バッチのガス見積もりを実行中...\n")
-			// シミュレーション付きでFactoryを生成
 			f, err := prepareFactory(clientCtx, executorAddr, ownerAddr, msg)
 			if err != nil {
 				return fmt.Errorf("Factory準備エラー: %w", err)
@@ -152,11 +147,10 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 			txfInitialized = true
 			fmt.Printf("[Executor] ⛽ ガス見積もり完了: %d\n", txfBatch.Gas())
 		} else {
-			// 2回目以降はSequenceのみインクリメント (Gasは使い回し)
 			txfBatch = txfBatch.WithSequence(txfBatch.Sequence() + 1)
 		}
 
-		fmt.Printf("[Executor] 📡 バッチ送信中 %d-%d (Target: %s)...\n", i, end, targetChannelID)
+		fmt.Printf("[Executor] 📡 バッチ送信中 %d-%d (%d 個のチャネルへ分散)...\n", i, end, len(datastores))
 		txRes, err := broadcastAndConfirm(clientCtx, txfBatch, msg)
 		if err != nil {
 			fmt.Printf("[Executor] ❌ バッチ送信失敗: %v\n", err)
@@ -165,16 +159,19 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		fmt.Printf("[Executor] ✅ バッチ送信成功 TxHash: %s\n", txRes.TxHash)
 	}
 
-	// 6. マニフェストファイル情報の構築
+	// 6. マニフェストファイル情報の構築 (実際の配送先 ChainId を正確に記録)
 	var manifestFiles []types.ManifestFileEntry
-
-	// 断片情報をパスごとに整理
 	fragmentsByPath := make(map[string][]*types.PacketFragmentMapping)
-	for _, frag := range proofData.Fragments {
+
+	for i, frag := range proofData.Fragments {
 		calculatedID := calculateFragmentID(sessionID, frag.Path, frag.Index)
 
+		// 配送時と同じロジックで ChainId を特定
+		dsIdx := i % len(datastores)
+		actualFdscID := datastores[dsIdx].chainId
+
 		mapping := &types.PacketFragmentMapping{
-			FdscId:     targetFdscID,
+			FdscId:     actualFdscID,
 			FragmentId: calculatedID,
 		}
 		fragmentsByPath[frag.Path] = append(fragmentsByPath[frag.Path], mapping)
@@ -215,16 +212,10 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	}
 	fmt.Printf("[Executor] 📝 マニフェスト作成: Project=%s, Version=%s\n", projectName, version)
 
-	// Finalize用には専用のシミュレーションを行って新しいFactoryを作る
-	// (マニフェストサイズが大きいため、バッチ用Gasでは足りない可能性が高い)
-	fmt.Printf("[Executor] 🧪 Finalize Tx のガス見積もりを実行中...\n")
-	// 注意: Sequence番号は最新のものを使う必要があるため、txfBatchの次の番号を取得する形にするか、
-	// prepareFactory内で再度AccountRetrieverを使ってもらう。prepareFactoryは最新Seqを取る実装になっている。
 	txfFinalize, err := prepareFactory(clientCtx, executorAddr, ownerAddr, finalizeMsg)
 	if err != nil {
 		return fmt.Errorf("Finalize用Factory準備エラー: %w", err)
 	}
-	fmt.Printf("[Executor] ⛽ Finalize ガス見積もり: %d\n", txfFinalize.Gas())
 
 	fmt.Printf("[Executor] 🏁 セッション完了(Finalize)を送信中...\n")
 	_, err = broadcastAndConfirm(clientCtx, txfFinalize, finalizeMsg)
