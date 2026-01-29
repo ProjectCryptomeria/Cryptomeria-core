@@ -14,49 +14,59 @@ import (
 	tusd "github.com/tus/tusd/v2/pkg/handler"
 )
 
-// DebugTusResponseWriter は http.ResponseWriter をラップし、
-// ヘッダーの強制上書きとデバッグ出力を行います。
-// 【重要】Unwrapメソッドは実装しません。これによりtusdがラッパーをバイパスするのを防ぎます。
+// GlobalCORSMiddleware は、APIとTUSの両方で必要となるCORSヘッダーを付与し、
+// OPTIONSリクエストを適切に処理します。
+func GlobalCORSMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			origin = "*"
+		}
+
+		h := w.Header()
+		h.Set("Access-Control-Allow-Origin", origin)
+		h.Set("Access-Control-Allow-Credentials", "true")
+		h.Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, PATCH, HEAD")
+		// TUS特有のヘッダーをすべて許可リストに含める
+		h.Set("Access-Control-Allow-Headers", "Authorization, Origin, X-Requested-With, X-Request-ID, X-HTTP-Method-Override, Content-Type, Upload-Length, Upload-Offset, Tus-Resumable, Upload-Metadata, Cache-Control")
+		// ブラウザ側で読み取り可能にするヘッダーを指定
+		h.Set("Access-Control-Expose-Headers", "Location, Tus-Resumable, Upload-Offset, Upload-Length, Upload-Metadata, Tus-Version, Tus-Max-Size, Tus-Extension")
+		h.Set("Access-Control-Max-Age", "86400")
+
+		// Preflight (OPTIONS) の場合はここで完了させる
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// DebugTusResponseWriter は tusd 内部のヘッダー制御をログ出力・デバッグするために使用します
 type DebugTusResponseWriter struct {
 	http.ResponseWriter
 	req *http.Request
 }
 
-// Flush は http.Flusher インターフェースを実装します（これはあっても安全）
 func (w *DebugTusResponseWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
 }
 
-// WriteHeader でヘッダーを強制的にセットし、ログ出力します
 func (w *DebugTusResponseWriter) WriteHeader(statusCode int) {
-	// 1. Origin解決
+	// グローバルミドルウェアでセット済みだが、tusdが上書きする場合に備えて再セット
 	origin := w.req.Header.Get("Origin")
 	if origin == "" {
 		origin = "*"
 	}
-
 	h := w.ResponseWriter.Header()
-
-	// 2. CORSヘッダーの強制上書き (AddではなくSetを使うことで重複防止)
 	h.Set("Access-Control-Allow-Origin", origin)
-	h.Set("Access-Control-Allow-Credentials", "true")
-	h.Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, PATCH, HEAD")
-	h.Set("Access-Control-Allow-Headers", "Authorization, Origin, X-Requested-With, X-Request-ID, X-HTTP-Method-Override, Content-Type, Upload-Length, Upload-Offset, Tus-Resumable, Upload-Metadata, Cache-Control")
-	// ブラウザがUpload-Offsetを読むために必須
-	h.Set("Access-Control-Expose-Headers", "Location, Tus-Resumable, Upload-Offset, Upload-Length, Upload-Metadata, Tus-Version, Tus-Max-Size, Tus-Extension")
-	h.Set("Access-Control-Max-Age", "86400")
 
-	// 3. 【診断用】送信されるヘッダーをログに出力
-	// ループしている HEAD メソッドや OPTIONS メソッドの時だけ表示
-	// if w.req.Method == http.MethodHead || w.req.Method == http.MethodOptions {
-	fmt.Printf("⚡ [TUS OUT] %s %s (Status: %d)\n", w.req.Method, w.req.URL.Path, statusCode)
-	fmt.Printf("   -> Upload-Offset: %s\n", h.Get("Upload-Offset"))
-	fmt.Printf("   -> AC-Expose-Headers: %s\n", h.Get("Access-Control-Expose-Headers"))
-	fmt.Printf("   -> AC-Allow-Origin: %s\n", h.Get("Access-Control-Allow-Origin"))
-	// }
-
+	if statusCode >= 400 {
+		fmt.Printf("⚠️ [TUS ERROR] %s %s (Status: %d)\n", w.req.Method, w.req.URL.Path, statusCode)
+	}
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
@@ -71,15 +81,8 @@ func (h *TusWithCorsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		req.URL.Path = "/upload/tus-stream/"
 	}
 
-	// Preflight (OPTIONS)
-	if req.Method == http.MethodOptions {
-		// ラッパーを通してヘッダーをセットし、即リターン
-		wrapper := &DebugTusResponseWriter{ResponseWriter: w, req: req}
-		wrapper.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	// 通常リクエスト
+	// 既にグローバルミドルウェアでOPTIONSは処理されているが、
+	// 安全のため tusd にはデバッグラッパーを被せて渡す
 	wrapper := &DebugTusResponseWriter{ResponseWriter: w, req: req}
 	h.baseHandler.ServeHTTP(wrapper, req)
 }
@@ -118,20 +121,21 @@ func NewTusHandler(clientCtx client.Context, k keeper.Keeper, uploadDir, tusBase
 		return nil, err
 	}
 
-	// イベントログ
+	// イベントログ監視
 	go func() {
 		for {
 			select {
 			case event := <-h.CreatedUploads:
-				fmt.Printf("[CSU Phase 3: TUS] 📤 Upload Created | TUS_ID: %s | SessionID: %s | Size: %d\n",
-					event.Upload.ID, event.Upload.MetaData["session_id"], event.Upload.Size)
+				fmt.Printf("[CSU Phase 3: TUS] 📤 Upload Created | TUS_ID: %s | SessionID: %s\n",
+					event.Upload.ID, event.Upload.MetaData["session_id"])
 			case event := <-h.UploadProgress:
-				// 進捗ログ
 				var p float64
 				if event.Upload.Size > 0 {
 					p = float64(event.Upload.Offset) / float64(event.Upload.Size) * 100
 				}
-				fmt.Printf("[CSU Phase 3: TUS] 🚀 %.2f%%\n", p)
+				if int(p)%10 == 0 { // ログ過多防止のため10%刻み
+					fmt.Printf("[CSU Phase 3: TUS] 🚀 %.2f%%\n", p)
+				}
 			case event := <-h.CompleteUploads:
 				fmt.Printf("[CSU Phase 3: TUS] ✅ Upload Completed | TUS_ID: %s\n", event.Upload.ID)
 				if err := processCompletedUpload(clientCtx, k, event.Upload); err != nil {
@@ -144,7 +148,6 @@ func NewTusHandler(clientCtx client.Context, k keeper.Keeper, uploadDir, tusBase
 	return &TusWithCorsHandler{baseHandler: h}, nil
 }
 
-// TusMiddleware (Legacy support)
 func TusMiddleware(tusMount http.Handler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -165,12 +168,6 @@ func processCompletedUpload(clientCtx client.Context, k keeper.Keeper, upload tu
 
 	if sessionID == "" {
 		return fmt.Errorf("missing session_id in upload metadata")
-	}
-	if projectName == "" {
-		projectName = "default-project"
-	}
-	if version == "" {
-		version = "v1"
 	}
 
 	filePath := upload.Storage["Path"]
