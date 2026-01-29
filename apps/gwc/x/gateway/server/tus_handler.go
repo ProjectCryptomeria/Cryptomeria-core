@@ -97,11 +97,11 @@ func TusMiddleware(tusMount http.Handler) func(http.Handler) http.Handler {
 					fmt.Printf("🎯 [TUS DEBUG] Method: %s | Path: %s\n", req.Method, req.URL.Path)
 				}
 
-				// ブラウザおよびスクリプト向けのCORSヘッダー強制付与
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-				w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, PATCH, HEAD")
-				w.Header().Set("Access-Control-Allow-Headers", "*")
-				w.Header().Set("Access-Control-Expose-Headers", "Location, Tus-Resumable, Upload-Offset, Upload-Length")
+				// // ブラウザおよびスクリプト向けのCORSヘッダー強制付与
+				// w.Header().Set("Access-Control-Allow-Origin", "*")
+				// w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, PATCH, HEAD")
+				// w.Header().Set("Access-Control-Allow-Headers", "*")
+				// w.Header().Set("Access-Control-Expose-Headers", "Location, Tus-Resumable, Upload-Offset, Upload-Length")
 
 				if req.Method == http.MethodOptions {
 					w.WriteHeader(http.StatusNoContent)

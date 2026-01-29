@@ -54,6 +54,7 @@ func initAppConfig() (string, interface{}) {
 	// sed: [api] enable = true, address = "tcp://0.0.0.0:1317"
 	srvCfg.API.Enable = true
 	srvCfg.API.Address = "tcp://0.0.0.0:1317"
+	srvCfg.API.EnableUnsafeCORS = true
 	// sed: [grpc] enable = true
 	srvCfg.GRPC.Enable = true
 	// sed: [grpc-web] enable = true

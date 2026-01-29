@@ -17,8 +17,8 @@ import (
 func (k msgServer) InitSession(goCtx context.Context, msg *types.MsgInitSession) (*types.MsgInitSessionResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// [LOG: CSU Phase 1] セッション初期化開始
-	ctx.Logger().Info("CSU Phase 1: InitSession Started", "owner", msg.Owner, "fragment_size", msg.FragmentSize)
+	// [LOG: CSU Phase 1] セッション初期化開始 (fmtで強制出力)
+	fmt.Printf("🔵 [KEEPER] CSU Phase 1: InitSession Started | Owner: %s | FragSize: %d\n", msg.Owner, msg.FragmentSize)
 
 	// Load params (fallback to defaults if not set or zero-filled)
 	params, err := k.Keeper.Params.Get(ctx)
@@ -34,15 +34,13 @@ func (k msgServer) InitSession(goCtx context.Context, msg *types.MsgInitSession)
 	}
 
 	// Enforce local-admin configured (Issue8)
-	// システムのパラメータとしてLocalAdminが設定されていない場合はエラー
 	if params.LocalAdmin == "" {
+		fmt.Printf("❌ [KEEPER] LocalAdmin not configured\n")
 		return nil, errorsmod.Wrap(types.ErrLocalAdminNotConfigured, "params.local_admin must be set for CSU")
 	}
 
-	// Executorはパラメータで指定されたLocalAdminに固定する (ユーザー入力は不要)
 	executor := params.LocalAdmin
 
-	// Enforce fragment_size limit at session creation time (Issue11)
 	if params.MaxFragmentBytes > 0 && msg.FragmentSize > params.MaxFragmentBytes {
 		return nil, errorsmod.Wrapf(
 			types.ErrLimitExceeded,
@@ -52,10 +50,8 @@ func (k msgServer) InitSession(goCtx context.Context, msg *types.MsgInitSession)
 		)
 	}
 
-	// session_id: deterministic, unique enough (owner + blocktime nanos)
 	sessionID := fmt.Sprintf("%s-%d", msg.Owner, ctx.BlockTime().UnixNano())
 
-	// deadline resolution (Issue11)
 	var deadlineUnix int64
 	if msg.DeadlineUnix == 0 {
 		deadlineUnix = ctx.BlockTime().Add(time.Duration(params.DefaultDeadlineSeconds) * time.Second).Unix()
@@ -63,18 +59,14 @@ func (k msgServer) InitSession(goCtx context.Context, msg *types.MsgInitSession)
 		deadlineUnix = msg.DeadlineUnix
 	}
 
-	// upload token: deterministic token derived from session_id (no consensus randomness)
-	// token_plain = hex(sha256("upload_token:"+sessionID))
 	sum := sha256.Sum256([]byte("upload_token:" + sessionID))
 	tokenPlain := hex.EncodeToString(sum[:])
 
-	// store token hash (never store plaintext token)
 	tokenHash := sha256.Sum256([]byte(tokenPlain))
 	if err := k.Keeper.SetUploadTokenHash(ctx, sessionID, tokenHash[:]); err != nil {
 		return nil, err
 	}
 
-	// create session
 	sess := types.Session{
 		SessionId:        sessionID,
 		Owner:            msg.Owner,
@@ -93,11 +85,7 @@ func (k msgServer) InitSession(goCtx context.Context, msg *types.MsgInitSession)
 	}
 
 	// [LOG: CSU Phase 1] セッション作成完了
-	ctx.Logger().Info("CSU Phase 1: Session Created",
-		"session_id", sessionID,
-		"deadline", deadlineUnix,
-		"executor", executor,
-	)
+	fmt.Printf("🟢 [KEEPER] CSU Phase 1: Session Created | ID: %s | Executor: %s\n", sessionID, executor)
 
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(
