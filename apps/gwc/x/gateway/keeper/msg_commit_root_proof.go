@@ -14,6 +14,9 @@ import (
 func (k msgServer) CommitRootProof(goCtx context.Context, msg *types.MsgCommitRootProof) (*types.MsgCommitRootProofResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
+	// [LOG: CSU Phase 2] RootProofコミット要求受信
+	ctx.Logger().Info("CSU Phase 2: CommitRootProof Received", "session_id", msg.SessionId, "owner", msg.Owner)
+
 	sess, err := k.Keeper.MustGetSession(ctx, msg.SessionId)
 	if err != nil {
 		return nil, errorsmod.Wrap(types.ErrSessionNotFound, err.Error())
@@ -21,6 +24,7 @@ func (k msgServer) CommitRootProof(goCtx context.Context, msg *types.MsgCommitRo
 
 	// owner must match
 	if sess.Owner != msg.Owner {
+		ctx.Logger().Error("CSU Phase 2: Owner Mismatch", "session_owner", sess.Owner, "msg_owner", msg.Owner)
 		return nil, errorsmod.Wrapf(types.ErrInvalidSigner, "owner mismatch: session.owner=%s msg.owner=%s", sess.Owner, msg.Owner)
 	}
 
@@ -36,6 +40,7 @@ func (k msgServer) CommitRootProof(goCtx context.Context, msg *types.MsgCommitRo
 
 	// validate hex root proof
 	if _, err := hex.DecodeString(msg.RootProofHex); err != nil {
+		ctx.Logger().Error("CSU Phase 2: Invalid Hex", "root_proof", msg.RootProofHex)
 		return nil, errorsmod.Wrap(types.ErrInvalidRootProof, "root_proof_hex is not valid hex")
 	}
 
@@ -45,6 +50,13 @@ func (k msgServer) CommitRootProof(goCtx context.Context, msg *types.MsgCommitRo
 	if err := k.Keeper.SetSession(ctx, sess); err != nil {
 		return nil, err
 	}
+
+	// [LOG: CSU Phase 2] RootProofコミット完了・状態遷移
+	ctx.Logger().Info("CSU Phase 2: RootProof Committed",
+		"session_id", msg.SessionId,
+		"root_proof", msg.RootProofHex,
+		"state", "ROOT_COMMITTED",
+	)
 
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(

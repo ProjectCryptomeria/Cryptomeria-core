@@ -16,6 +16,9 @@ const manifestTimeoutSeconds = 600
 func (k msgServer) FinalizeAndCloseSession(goCtx context.Context, msg *types.MsgFinalizeAndCloseSession) (*types.MsgFinalizeAndCloseSessionResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
+	// [LOG: CSU Phase 6] 確定・クローズ要求開始
+	ctx.Logger().Info("CSU Phase 6: Finalize Requested", "session_id", msg.SessionId, "executor", msg.Executor)
+
 	sess, err := k.Keeper.MustGetSession(ctx, msg.SessionId)
 	if err != nil {
 		return nil, errorsmod.Wrap(types.ErrSessionNotFound, err.Error())
@@ -74,6 +77,13 @@ func (k msgServer) FinalizeAndCloseSession(goCtx context.Context, msg *types.Msg
 		return nil, err
 	}
 
+	// [LOG: CSU Phase 6] Manifestパケット送信完了
+	ctx.Logger().Info("CSU Phase 6: Manifest Packet Sent",
+		"session_id", msg.SessionId,
+		"sequence", seq,
+		"target_channel", mdscChannel,
+	)
+
 	// Bind sequence for ACK
 	if err := k.Keeper.BindManifestSeq(ctx, seq, msg.SessionId); err != nil {
 		return nil, err
@@ -90,6 +100,10 @@ func (k msgServer) FinalizeAndCloseSession(goCtx context.Context, msg *types.Msg
 	// This ensures "Authz lifetime matches Session lifetime".
 	// Even if ACK fails later, the Executor cannot retry without new grants (which Owner must explicitly give).
 	k.Keeper.RevokeCSUGrants(ctx, sess.Owner)
+
+	// [LOG: CSU Phase 6] 権限剥奪・クローズ完了
+	ctx.Logger().Info("CSU Phase 6: Authz/Feegrant Revoked", "owner", sess.Owner)
+	ctx.Logger().Info("CSU Phase 6: Session Closed (Success)", "session_id", msg.SessionId)
 
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(

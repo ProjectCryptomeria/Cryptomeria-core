@@ -17,6 +17,9 @@ import (
 func (k msgServer) InitSession(goCtx context.Context, msg *types.MsgInitSession) (*types.MsgInitSessionResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
+	// [LOG: CSU Phase 1] セッション初期化開始
+	ctx.Logger().Info("CSU Phase 1: InitSession Started", "owner", msg.Owner, "fragment_size", msg.FragmentSize)
+
 	// Load params (fallback to defaults if not set or zero-filled)
 	params, err := k.Keeper.Params.Get(ctx)
 	if err != nil {
@@ -88,6 +91,13 @@ func (k msgServer) InitSession(goCtx context.Context, msg *types.MsgInitSession)
 	if err := k.Keeper.SetSession(ctx, sess); err != nil {
 		return nil, err
 	}
+
+	// [LOG: CSU Phase 1] セッション作成完了
+	ctx.Logger().Info("CSU Phase 1: Session Created",
+		"session_id", sessionID,
+		"deadline", deadlineUnix,
+		"executor", executor,
+	)
 
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(
