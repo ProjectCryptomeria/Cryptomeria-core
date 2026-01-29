@@ -244,23 +244,21 @@ func (app *App) SimulationManager() *module.SimulationManager {
 func (app *App) RegisterAPIRoutes(apiSvr *api.Server, apiConfig config.APIConfig) {
 	fmt.Println("DEBUG: RegisterAPIRoutes - Starting Injection")
 
+	// --- 1. グローバルCORSミドルウェアの登録 ---
+	// これにより、すべてのルート（SDK API, TUS）で共通のCORS設定が適用されます。
+	apiSvr.Router.Use(gatewayserver.GlobalCORSMiddleware)
+
 	uploadDir := "./tmp/uploads"
-	// 【重要】末尾スラッシュありで統一
 	tusBasePath := "/upload/tus-stream/"
 
 	tusHandler, err := gatewayserver.NewTusHandler(apiSvr.ClientCtx, app.GatewayKeeper, uploadDir, tusBasePath)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to init TUS: %v", err))
 	}
-	// ★【要件】この行は必ず保持
-	tusMount := http.StripPrefix("/upload/tus-stream", tusHandler)
-	fmt.Println("tusMount: ", tusMount)
 
-	// 【修正】Useではなく、PathPrefixで明示的にルート登録する
-	// Gorilla MuxはルートにマッチしないとMiddlewareを実行しないため、
-	// Use()ではなくHandlerとして登録することでCORS処理を強制的に走らせる。
-	// TusMiddleware は func(http.Handler) http.Handler を返すため、
-	// ダミーの NotFoundHandler を渡して http.Handler を生成する。
+	tusMount := http.StripPrefix("/upload/tus-stream", tusHandler)
+
+	// TUSルートの登録
 	apiSvr.Router.PathPrefix("/upload/tus-stream").Handler(
 		gatewayserver.TusMiddleware(tusMount)(http.NotFoundHandler()),
 	)
