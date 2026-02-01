@@ -35,3 +35,23 @@ export function toError(error: unknown): Error {
     return new Error(String(error));
   }
 }
+
+/**
+ * 値が純粋な ArrayBuffer (SharedArrayBufferではない) かどうかを判定する型ガード
+ */
+export function isArrayBuffer(value: unknown): value is ArrayBuffer {
+  return value instanceof ArrayBuffer;
+}
+
+/**
+ * Uint8Array から純粋な ArrayBuffer を確実に取得する。
+ * 共有バッファやオフセットがある場合は新しい ArrayBuffer にコピーする。
+ */
+export function ensureArrayBuffer(data: Uint8Array): ArrayBuffer {
+  // すでに純粋な ArrayBuffer であり、全体を指している場合はそのまま返す
+  if (data.byteOffset === 0 && data.byteLength === data.buffer.byteLength && isArrayBuffer(data.buffer)) {
+    return data.buffer;
+  }
+  // 部分的なビューや SharedArrayBuffer の場合は、必要な範囲だけをコピーして新しい ArrayBuffer を作る
+  return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+}
