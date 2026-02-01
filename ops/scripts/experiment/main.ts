@@ -1,10 +1,10 @@
 /**
  * main.ts
- * 実験用スクリプトのエントリーポイント。
- * コマンドライン引数に基づいて各実験ケースを実行します。
+ * ポートフォワードをバックグラウンドで管理しながら実験を実行
  */
 import { parseArgs } from "@std/cli/parse-args";
 import { log, toError } from "./lib/common.ts";
+import { networkManager } from "./lib/network.ts";
 import { runExam1 } from "./cases/exam1.ts";
 import { runExam2 } from "./cases/exam2.ts";
 import { runExam3 } from "./cases/exam3.ts";
@@ -17,18 +17,33 @@ async function main() {
 
   log("🏗️  Cryptomeria Core Experiment Runner Start");
 
+  // --- ポートフォワード開始 ---
+  try {
+    await networkManager.start();
+  } catch (e) {
+    const err = toError(e);
+    log(`❌ Failed to start port-forwarding: ${err.message}`);
+    Deno.exit(1);
+  }
+
+  // 終了時に必ずポートフォワードを止めるためのトラップ
+  const cleanup = async () => {
+    await networkManager.stop();
+    Deno.exit(0);
+  };
+
+  Deno.addSignalListener("SIGINT", cleanup);
+  Deno.addSignalListener("SIGTERM", cleanup);
+
   try {
     switch (args.case) {
       case "1":
-        log("🚀 Starting Case 1...");
         await runExam1();
         break;
       case "2":
-        log("🚀 Starting Case 2...");
         await runExam2();
         break;
       case "3":
-        log("🚀 Starting Case 3...");
         await runExam3();
         break;
       case "all":
@@ -39,13 +54,13 @@ async function main() {
         break;
       default:
         log(`❌ Unknown case: ${args.case}`);
-        Deno.exit(1);
     }
-    log("✅ All requested experiments completed successfully.");
   } catch (error) {
     const err = toError(error);
     log(`💥 Critical Error during experiments: ${err.message}`);
-    Deno.exit(1);
+  } finally {
+    // 全ての実験が終了したら停止
+    await cleanup();
   }
 }
 
