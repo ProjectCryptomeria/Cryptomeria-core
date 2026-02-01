@@ -19,7 +19,7 @@ export function log(message: string) {
     console.log(`[${new Date().toISOString()}] ${message}`);
 }
 
-export async function saveResult(name: string, data: any) {
+export async function saveResult(name: string, data: unknown) {
     const path = `./results/${name}.json`;
     await Deno.mkdir("./results", { recursive: true });
     await Deno.writeTextFile(path, JSON.stringify(data, null, 2));

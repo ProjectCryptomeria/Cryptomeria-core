@@ -8,7 +8,7 @@ export const CONFIG = {
   CHAIN_ID: "gwc-1",
   DENOM: "ucrypt",
   BIN: {
-    GWC: "gwcd",
+    GWC: "/workspace/apps/gwc/dist/gwcd",
   },
   NAMESPACE: "cryptomeria",
 };
