@@ -7,12 +7,11 @@ import { CONFIG } from "./config.ts";
 
 /**
  * クラスタ内のミリオネアアカウントから指定のアドレスへ送金する
- * (faucet.sh のロジックを移植)
  */
 export async function faucet(address: string, amount: string, targetChain = "gwc") {
   const namespace = CONFIG.NAMESPACE;
   const millionaireKey = "local-admin";
-  const denom = "uatom"; // システム標準のデノム
+  const denom = CONFIG.DENOM; // configから取得するように調整
 
   log(`💸 Sending ${amount} to ${address} on [${targetChain}]...`);
 
@@ -36,9 +35,10 @@ export async function faucet(address: string, amount: string, targetChain = "gwc
   const formattedAmount = /^[0-9]+$/.test(amount) ? `${amount}${denom}` : amount;
 
   // 4. 送金コマンドの実行 (kubectl exec)
+  // 修正箇所: "tx", "bank", "send" を個別の引数に分割
   await runCmd([
     "kubectl", "exec", "-n", namespace, podName, "--",
-    binName, "tx bank send", millionaireKey, address, formattedAmount,
+    binName, "tx", "bank", "send", millionaireKey, address, formattedAmount,
     "--chain-id", targetChain,
     "--keyring-backend", "test",
     "--home", homeDir,
@@ -57,7 +57,7 @@ export async function setupAlice(amount = "10000000uatom") {
 
   log(`🛠️  Initializing account '${accountName}' in non-interactive mode...`);
 
-  // キーのクリーンアップと生成
+  // キーのクリーンアップ
   try {
     await runCmd([
       binary, "keys", "delete", accountName,
@@ -66,6 +66,7 @@ export async function setupAlice(amount = "10000000uatom") {
     ]);
   } catch { /* ignore */ }
 
+  // キーの追加
   await runCmd([
     binary, "keys", "add", accountName,
     "--keyring-backend", "test",
@@ -80,7 +81,7 @@ export async function setupAlice(amount = "10000000uatom") {
   ]);
   log(`  - Alice Address: ${aliceAddr}`);
 
-  // 内部関数化した faucet を呼び出し
+  // 資金送金
   await faucet(aliceAddr, amount, "gwc");
 
   return {
