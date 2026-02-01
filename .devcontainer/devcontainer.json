@@ -35,6 +35,9 @@
       "version": "latest",
       "helm": "latest",
       "minikube": "none"
+    },
+    "ghcr.io/devcontainers-community/features/deno:1": {
+      "version": "latest"
     }
   },
   // 外部スクリプトを実行。権限付与してから実行します。
