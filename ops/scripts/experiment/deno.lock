@@ -1,11 +1,15 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@std/cli@^1.0.6": "1.0.27"
+    "jsr:@std/cli@^1.0.6": "1.0.27",
+    "jsr:@std/crypto@^1.0.3": "1.0.5"
   },
   "jsr": {
     "@std/cli@1.0.27": {
       "integrity": "eba97edd0891871a7410e835dd94b3c260c709cca5983df2689c25a71fbe04de"
+    },
+    "@std/crypto@1.0.5": {
+      "integrity": "0dcfbb319fe0bba1bd3af904ceb4f948cde1b92979ec1614528380ed308a3b40"
     }
   },
   "workspace": {
