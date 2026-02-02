@@ -74,7 +74,7 @@ async function runGwcTx(args: string[]) {
     "--from", "alice",
     "--chain-id", CONFIG.CHAIN_ID,
     "--keyring-backend", "test",
-    "--broadcast-mode", "block", // ブロックに取り込まれるまで待機
+    "--broadcast-mode", "sync", // ブロックに取り込まれるまで待機
     "--yes",
     "--output", "json"
   ]);
