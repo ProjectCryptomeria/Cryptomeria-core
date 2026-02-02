@@ -1,22 +1,38 @@
 /**
  * lib/initialize.ts
- * アカウントのセットアップと、オンチェーンでの存在確認待機
  */
 import { runCmd, log } from "./common.ts";
 import { CONFIG } from "./config.ts";
 
 /**
- * アカウントがオンチェーンに存在するか（残高があるか）を確認する
+ * 指定したアドレスの残高（CONFIG.DENOM）を取得する
+ */
+export async function getBalance(address: string): Promise<number> {
+  try {
+    const output = await runCmd([
+      CONFIG.BIN.GWC, "q", "bank", "balances", address,
+      "--node", CONFIG.GWC_RPC,
+      "--output", "json"
+    ]);
+    const res = JSON.parse(output);
+    const coin = res.balances?.find((c: any) => c.denom === CONFIG.DENOM);
+    return coin ? parseInt(coin.amount) : 0;
+  } catch {
+    return 0; // アカウントが存在しない場合など
+  }
+}
+
+/**
+ * アカウントがオンチェーンに存在するか確認する
  */
 async function isAccountCreated(address: string): Promise<boolean> {
   try {
-    // 修正: ポートフォワードされたRPCノードを明示的に指定
-    const output = await runCmd([
+    await runCmd([
       CONFIG.BIN.GWC, "q", "auth", "account", address,
       "--node", CONFIG.GWC_RPC,
       "--output", "json"
     ]);
-    return !!output;
+    return true;
   } catch {
     return false;
   }
@@ -29,7 +45,7 @@ export async function faucet(address: string, amount: string, targetComponent = 
   const namespace = CONFIG.NAMESPACE;
   const millionaireKey = "local-admin";
   const denom = CONFIG.DENOM;
-  const chainId = CONFIG.CHAIN_ID; // 修正: configのChain IDを使用
+  const chainId = CONFIG.CHAIN_ID;
 
   log(`💸 Sending ${amount} to ${address} on [${targetComponent}] (Chain: ${chainId})...`);
 
@@ -47,46 +63,52 @@ export async function faucet(address: string, amount: string, targetComponent = 
   await runCmd([
     "kubectl", "exec", "-n", namespace, podName, "--",
     binName, "tx", "bank", "send", millionaireKey, address, formattedAmount,
-    "--chain-id", chainId, // 修正: gwc ではなく gwc-1 などの正しいIDを渡す
+    "--chain-id", chainId,
     "--keyring-backend", "test",
     "--home", homeDir,
     "-y"
   ]);
 
-  log(`  - Faucet transaction broadcasted.`);
-
-  // 重要: アカウントがオンチェーンで認識されるまで待機 (最大10秒)
-  log(`⏳ Waiting for account ${address} to be created on-chain...`);
-  for (let i = 0; i < 10; i++) {
+  log(`⏳ Waiting for account confirmation on-chain...`);
+  for (let i = 0; i < 30; i++) {
     if (await isAccountCreated(address)) {
-      log(`✅ Account confirmed on-chain.`);
+      log(`✅ Account confirmed.`);
       return;
     }
     await new Promise(r => setTimeout(r, 1000));
   }
-  throw new Error("Timeout: Account was not created on-chain after faucet.");
+  throw new Error("Faucet confirmation timeout.");
 }
 
 /**
  * 実験用ローカルアカウント「alice」の準備
+ * 残高が targetAmountNum 未満の場合のみ Faucet を実行する
  */
-export async function setupAlice(amount = "10000000uatom") {
+export async function setupAlice(targetAmountNum = 10000000) {
   const accountName = "alice";
   const binary = CONFIG.BIN.GWC;
 
-  log(`🛠️  Initializing account '${accountName}'...`);
+  log(`🛠️  Setting up account '${accountName}'...`);
 
+  // 1. ローカルキーの存在確認（なければ作成）
+  let address = "";
   try {
-    await runCmd([binary, "keys", "delete", accountName, "--keyring-backend", "test", "--yes"]);
-  } catch { /* ignore */ }
+    address = await runCmd([binary, "keys", "show", accountName, "-a", "--keyring-backend", "test"]);
+    log(`  - Local key found: ${address}`);
+  } catch {
+    log(`  - Local key not found. Creating new key...`);
+    const addRes = await runCmd([binary, "keys", "add", accountName, "--keyring-backend", "test", "--output", "json"]);
+    address = JSON.parse(addRes).address;
+  }
 
-  await runCmd([binary, "keys", "add", accountName, "--keyring-backend", "test", "--output", "json"]);
+  // 2. オンチェーンの残高確認
+  const currentBalance = await getBalance(address);
+  if (currentBalance < targetAmountNum) {
+    log(`  - Balance insufficient (${currentBalance} < ${targetAmountNum}). Starting faucet...`);
+    await faucet(address, targetAmountNum.toString(), "gwc");
+  } else {
+    log(`  - Balance sufficient (${currentBalance}${CONFIG.DENOM}). Skipping faucet.`);
+  }
 
-  const aliceAddr = await runCmd([binary, "keys", "show", accountName, "-a", "--keyring-backend", "test"]);
-  log(`  - Local Alice Address: ${aliceAddr}`);
-
-  // Faucet実行（待機ロジック内蔵）
-  await faucet(aliceAddr, amount, "gwc");
-
-  return { name: accountName, address: aliceAddr };
+  return { name: accountName, address };
 }

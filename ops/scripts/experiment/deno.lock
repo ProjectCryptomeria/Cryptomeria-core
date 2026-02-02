@@ -2,7 +2,8 @@
   "version": "5",
   "specifiers": {
     "jsr:@std/cli@^1.0.6": "1.0.27",
-    "jsr:@std/crypto@^1.0.3": "1.0.5"
+    "jsr:@std/crypto@^1.0.3": "1.0.5",
+    "jsr:@std/encoding@^1.0.5": "1.0.10"
   },
   "jsr": {
     "@std/cli@1.0.27": {
@@ -10,13 +11,17 @@
     },
     "@std/crypto@1.0.5": {
       "integrity": "0dcfbb319fe0bba1bd3af904ceb4f948cde1b92979ec1614528380ed308a3b40"
+    },
+    "@std/encoding@1.0.10": {
+      "integrity": "8783c6384a2d13abd5e9e87a7ae0520a30e9f56aeeaa3bdf910a3eaaf5c811a1"
     }
   },
   "workspace": {
     "dependencies": [
       "jsr:@std/assert@1",
       "jsr:@std/cli@^1.0.6",
-      "jsr:@std/crypto@^1.0.3"
+      "jsr:@std/crypto@^1.0.3",
+      "jsr:@std/encoding@^1.0.5"
     ]
   }
 }
