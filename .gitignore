@@ -9,3 +9,4 @@ gwcd
 mdscd
 fdscd
 *.bin
+tmp_*
