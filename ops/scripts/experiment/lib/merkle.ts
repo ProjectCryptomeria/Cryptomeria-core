@@ -18,10 +18,15 @@ export async function calculateMerkleRoot(leaves: Uint8Array[]): Promise<Uint8Ar
   if (leaves.length === 0) return new Uint8Array(32);
   let currentLevel = [...leaves];
   while (currentLevel.length > 1) {
-    if (currentLevel.length % 2 !== 0) currentLevel.push(currentLevel[currentLevel.length - 1]);
+    if (currentLevel.length % 2 !== 0) {
+      currentLevel.push(currentLevel[currentLevel.length - 1]);
+    }
     const nextLevel: Uint8Array[] = [];
     for (let i = 0; i < currentLevel.length; i += 2) {
-      nextLevel.push(await sha256(toHex(currentLevel[i]) + toHex(currentLevel[i + 1])));
+      // 16進数文字列として連結してからバイト列化してハッシュ計算 (merkle_logic.goに準拠)
+      const left = toHex(currentLevel[i]);
+      const right = toHex(currentLevel[i + 1]);
+      nextLevel.push(await sha256(left + right));
     }
     currentLevel = nextLevel;
   }
@@ -30,14 +35,28 @@ export async function calculateMerkleRoot(leaves: Uint8Array[]): Promise<Uint8Ar
 
 export async function buildProjectMerkleRoot(files: { path: string, data: Uint8Array }[], fragSize: number): Promise<string> {
   const fileLeaves: { path: string, hash: Uint8Array }[] = [];
+
   for (const file of files) {
-    const frags = [];
-    for (let i = 0; i < file.data.length; i += fragSize) frags.push(file.data.subarray(i, i + fragSize));
+    const frags: Uint8Array[] = [];
+    for (let i = 0; i < file.data.length; i += fragSize) {
+      frags.push(file.data.subarray(i, Math.min(i + fragSize, file.data.length)));
+    }
     if (frags.length === 0) frags.push(new Uint8Array(0));
-    const fragHashes = await Promise.all(frags.map(async (b, i) => await sha256(`FRAG:${file.path}:${i}:${toHex(await sha256(b))}`)));
+
+    const fragHashes = await Promise.all(frags.map(async (b, i) => {
+      const bHashHex = toHex(await sha256(b));
+      // HashFragmentLeaf Scheme: SHA256("FRAG:{path}:{index}:{hex(SHA256(fragment))}")
+      return await sha256(`FRAG:${file.path}:${i}:${bHashHex}`);
+    }));
+
     const fRoot = await calculateMerkleRoot(fragHashes);
-    fileLeaves.push({ path: file.path, hash: await sha256(`FILE:${file.path}:${file.data.length}:${toHex(fRoot)}`) });
+    // HashFileLeaf Scheme: SHA256("FILE:{path}:{size}:{hex(file_root)}")
+    const fLeafHash = await sha256(`FILE:${file.path}:${file.data.length}:${toHex(fRoot)}`);
+    fileLeaves.push({ path: file.path, hash: fLeafHash });
   }
+
+  // ファイル名で辞書順ソート
   fileLeaves.sort((a, b) => a.path.localeCompare(b.path));
-  return toHex(await calculateMerkleRoot(fileLeaves.map(f => f.hash)));
+  const finalRoot = await calculateMerkleRoot(fileLeaves.map(f => f.hash));
+  return toHex(finalRoot);
 }

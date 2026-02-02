@@ -1,10 +1,11 @@
 /**
  * lib/common.ts
  */
-export async function runCmd(args: string[], env?: Record<string, string>) {
+export async function runCmd(args: string[], options?: { env?: Record<string, string>, cwd?: string }) {
   const command = new Deno.Command(args[0], {
     args: args.slice(1),
-    env,
+    env: options?.env,
+    cwd: options?.cwd, // 実行ディレクトリを指定可能にする
     stdout: "piped",
     stderr: "piped",
   });
