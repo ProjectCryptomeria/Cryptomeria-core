@@ -1,5 +1,6 @@
 /**
  * cases/exam3.ts
+ * ホスティング性能実験の詳細計測に対応
  */
 import { log, saveResult } from "../lib/common.ts";
 import { setupAlice } from "../lib/initialize.ts";
@@ -7,11 +8,6 @@ import { createDummyFile, createZip } from "../lib/file.ts";
 import { measureTime } from "../lib/stats.ts";
 import { uploadToGwcCsu } from "../lib/upload.ts";
 import { CONFIG } from "../lib/config.ts";
-
-interface Exam3Result {
-  pattern: string;
-  timeMs: number;
-}
 
 const PATTERNS = [
   { id: "A", count: 1, size: 10 * 1024 * 1024, label: "巨大1枚" },
@@ -21,9 +17,9 @@ const PATTERNS = [
 ];
 
 export async function runExam3() {
-  log("🧪 実験3: ホスティング実験");
+  log("🧪 実験3: ホスティング実験 (詳細計測版)");
   await setupAlice();
-  const results: Exam3Result[] = []; // 型を明示
+  const results = [];
 
   for (const p of PATTERNS) {
     log(`▶️ Pattern ${p.id}: ${p.label}`);
@@ -31,7 +27,7 @@ export async function runExam3() {
     const zipPath = `${testDir}.zip`;
     await Deno.mkdir(testDir, { recursive: true });
 
-    const files: string[] = []; // 修正箇所: 型を明示
+    const files: string[] = [];
     for (let i = 0; i < p.count; i++) {
       const name = `file_${i}.dat`;
       await createDummyFile(`${testDir}/${name}`, p.size);
@@ -41,18 +37,28 @@ export async function runExam3() {
 
     const proj = `exam3-p-${p.id.toLowerCase()}`;
     const ver = "1.0.0";
-    await uploadToGwcCsu(testDir, zipPath, 256 * 1024, proj, ver);
 
-    const { durationMs: fetchTime } = await measureTime(async () => {
+    // アップロード実行（この中のmetrics.fetchTimeMsは最初の1ファイルの取得速度）
+    const { sid, metrics } = await uploadToGwcCsu(testDir, zipPath, 256 * 1024, proj, ver);
+
+    // Exam3では全ファイルを並列取得した際の合計時間を別途計測する
+    const { durationMs: bulkFetchTime } = await measureTime(async () => {
       const fetches = files.map(async (n) => {
         const r = await fetch(`${CONFIG.GWC_API}/render/${proj}/${ver}/${n}`);
         if (!r.ok) throw new Error(`Fetch fail: ${n}`);
-        await r.arrayBuffer();
+        await r.arrayBuffer(); // 全データの読み込みを待機
       });
       await Promise.all(fetches);
     });
 
-    results.push({ pattern: p.id, timeMs: Math.round(fetchTime) });
+    results.push({
+      pattern: p.id,
+      label: p.label,
+      uploadMetrics: metrics,
+      bulkFetchTimeMs: Math.round(bulkFetchTime),
+      sid: sid
+    });
+
     await Deno.remove(testDir, { recursive: true });
     await Deno.remove(zipPath);
   }

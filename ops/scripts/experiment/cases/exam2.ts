@@ -1,10 +1,11 @@
 /**
  * cases/exam2.ts
+ * バッチサイズ実験における詳細ディスク計測の反映
  */
 import { log, saveResult } from "../lib/common.ts";
 import { setupAlice } from "../lib/initialize.ts";
 import { createDummyFile, createZip } from "../lib/file.ts";
-import { getDiskUsage, measureTime } from "../lib/stats.ts";
+import { getDiskUsage } from "../lib/stats.ts";
 import { uploadToGwcCsu } from "../lib/upload.ts";
 
 const SCENARIOS = [
@@ -19,13 +20,23 @@ const SCENARIOS = [
 
 const FIXED_SIZE = 512 * 1024;
 
+function sumUsage(podUsage: Record<string, Record<string, number>>): number {
+  let total = 0;
+  for (const pod in podUsage) {
+    for (const dir in podUsage[pod]) {
+      total += podUsage[pod][dir];
+    }
+  }
+  return total;
+}
+
 export async function runExam2() {
-  log("🧪 実験2: バッチサイズ実験");
+  log("🧪 実験2: バッチサイズ実験 (詳細計測版)");
   await setupAlice();
   const results = [];
 
   for (const s of SCENARIOS) {
-    log(`▶️ Scenario ${s.id}: ${s.label} (Frag: ${s.frag})`);
+    log(`▶️ Scenario ${s.id}: ${s.label} (Frag: ${s.frag} Bytes)`);
     const testDir = `./tmp_exam2_${s.id}`;
     const zipPath = `${testDir}.zip`;
 
@@ -34,17 +45,15 @@ export async function runExam2() {
     await createZip(testDir, zipPath);
 
     const diskBefore = await getDiskUsage("fdsc");
-    const { result, durationMs } = await measureTime(() =>
-      uploadToGwcCsu(testDir, zipPath, s.frag, `exam2-s${s.id}`, "1.0.0")
-    );
+    const { sid, metrics } = await uploadToGwcCsu(testDir, zipPath, s.frag, `exam2-s${s.id}`, "1.0.0");
     const diskAfter = await getDiskUsage("fdsc");
 
     results.push({
       scenario: s.id,
       frag: s.frag,
-      timeMs: Math.round(durationMs),
-      diskDelta: diskAfter - diskBefore,
-      sid: result?.sid
+      metrics: metrics,
+      diskDelta: sumUsage(diskAfter) - sumUsage(diskBefore),
+      sid: sid
     });
 
     await Deno.remove(testDir, { recursive: true });
