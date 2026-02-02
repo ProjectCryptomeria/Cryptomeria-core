@@ -1,13 +1,19 @@
 /**
  * lib/upload.ts
- * サーバー側との整合性をデバッグしやすいようにログを強化
+ * 計測要件に基づき、フェーズごとの実行時間を計測するように拡張
  */
 import { runCmd, log } from "./common.ts";
 import { CONFIG } from "./config.ts";
 import { buildProjectMerkleRoot } from "./merkle.ts";
 import { crypto } from "@std/crypto";
 import { walk } from "@std/fs/walk";
-import { relative, resolve, join } from "@std/path";
+import { relative, resolve } from "@std/path";
+
+export interface UploadMetrics {
+  prepTimeMs: number;    // ディレクトリ走査・マークル計算
+  uploadTimeMs: number;  // セッション初期化・Authz・TUS通信
+  verifyTimeMs: number;  // オンチェーン検証完了待ち
+}
 
 async function executeTx(args: string[], from: string) {
   const out = await runCmd([
@@ -16,7 +22,6 @@ async function executeTx(args: string[], from: string) {
     "--keyring-backend", "test", "--gas", "auto", "--gas-adjustment", "1.5", "-y", "-o", "json"
   ]);
   const res = JSON.parse(out);
-  log(`  - TX Sent: ${res.txhash}`);
   await new Promise(r => setTimeout(r, 6500));
   const q = await runCmd([CONFIG.BIN.GWC, "q", "tx", res.txhash, "--node", CONFIG.GWC_RPC, "-o", "json"]);
   const qRes = JSON.parse(q);
@@ -24,7 +29,16 @@ async function executeTx(args: string[], from: string) {
   return qRes;
 }
 
-export async function uploadToGwcCsu(sourceDir: string, zipPath: string, fragSize: number, projectName: string, version: string) {
+export async function uploadToGwcCsu(
+  sourceDir: string,
+  zipPath: string,
+  fragSize: number,
+  projectName: string,
+  version: string
+): Promise<{ sid: string, metrics: UploadMetrics }> {
+
+  // --- Phase 1: Preparation ---
+  const startPrep = performance.now();
   log(`Step 1: Scanning directory "${sourceDir}"...`);
   const files: { path: string, data: Uint8Array }[] = [];
   const absSourceDir = resolve(sourceDir);
@@ -32,13 +46,14 @@ export async function uploadToGwcCsu(sourceDir: string, zipPath: string, fragSiz
   for await (const entry of walk(sourceDir, { includeDirs: false })) {
     const relPath = relative(absSourceDir, resolve(entry.path));
     const data = await Deno.readFile(entry.path);
-    // ログに出力してパスを確認
-    log(`  - Found file: "${relPath}" (${data.length} bytes)`);
     files.push({ path: relPath, data });
   }
 
   const rootHex = await buildProjectMerkleRoot(files, fragSize);
+  const endPrep = performance.now();
 
+  // --- Phase 2: Upload Process ---
+  const startUpload = performance.now();
   log("Step 2: Initializing Session...");
   const initRes = await executeTx(["gateway", "init-session", fragSize.toString(), "0"], "alice");
   const event = initRes.events.find((e: any) => e.type === "csu_init_session");
@@ -49,12 +64,12 @@ export async function uploadToGwcCsu(sourceDir: string, zipPath: string, fragSiz
   log("Step 3: Granting Permissions...");
   try {
     await executeTx(["feegrant", "grant", owner, exec], "alice");
-  } catch (e) { log("  - Feegrant already exists or failed, continuing..."); }
+  } catch (e) { /* すでに存在する場合は無視 */ }
 
   for (const m of ["MsgDistributeBatch", "MsgFinalizeAndCloseSession", "MsgAbortAndCloseSession"]) {
     try {
       await executeTx(["authz", "grant", exec, "generic", "--msg-type", `/gwc.gateway.v1.${m}`], "alice");
-    } catch (e) { log(`  - Authz for ${m} already exists or failed, continuing...`); }
+    } catch (e) { /* すでに存在する場合は無視 */ }
   }
 
   log("Step 4: Committing Merkle Root...");
@@ -83,14 +98,28 @@ export async function uploadToGwcCsu(sourceDir: string, zipPath: string, fragSiz
     headers: { "Tus-Resumable": "1.0.0", "Content-Type": "application/offset+octet-stream", "Upload-Offset": "0" },
     body: zipData
   });
+  const endUpload = performance.now();
 
+  // --- Phase 3: On-chain Verification ---
+  const startVerify = performance.now();
   log("Step 6: Verifying Session State...");
-  for (let i = 0; i < 30; i++) {
+  let finalSid = sid;
+  for (let i = 0; i < 40; i++) {
     const q = await runCmd([CONFIG.BIN.GWC, "q", "gateway", "session", sid, "--node", CONFIG.GWC_RPC, "-o", "json"]);
     const state = JSON.parse(q).session.state;
-    log(`  - State: ${state}`);
-    if (state === "SESSION_STATE_CLOSED_SUCCESS") return { sid };
+    if (state === "SESSION_STATE_CLOSED_SUCCESS") {
+      const endVerify = performance.now();
+      return {
+        sid: finalSid,
+        metrics: {
+          prepTimeMs: Math.round(endPrep - startPrep),
+          uploadTimeMs: Math.round(endUpload - startUpload),
+          verifyTimeMs: Math.round(endVerify - startVerify),
+        }
+      };
+    }
     if (state === "SESSION_STATE_CLOSED_FAILED") throw new Error("Verification failed on-chain");
     await new Promise(r => setTimeout(r, 3000));
   }
+  throw new Error("Verification timeout");
 }

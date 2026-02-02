@@ -1,0 +1,182 @@
+[
+  {
+    "scenario": 1,
+    "label": "Scenario 1",
+    "inputSize": 104857.6,
+    "metrics": {
+      "prepTimeMs": 3,
+      "uploadTimeMs": 41041,
+      "verifyTimeMs": 25279
+    },
+    "diskDelta": {
+      "gwc": 1830698,
+      "mdsc": 272824,
+      "fdsc": 2711395,
+      "total": 4814917
+    },
+    "overheadRatio": "25.858",
+    "sid": "cosmos17vp9grfjapucr9r5d6jmu2jujxlfve2w5jue22-1770024573102542917"
+  },
+  {
+    "scenario": 2,
+    "label": "Scenario 2",
+    "inputSize": 1153433.6,
+    "metrics": {
+      "prepTimeMs": 7,
+      "uploadTimeMs": 41023,
+      "verifyTimeMs": 31632
+    },
+    "diskDelta": {
+      "gwc": 16358825,
+      "mdsc": 316522,
+      "fdsc": 22400703,
+      "total": 39076050
+    },
+    "overheadRatio": "19.421",
+    "sid": "cosmos17vp9grfjapucr9r5d6jmu2jujxlfve2w5jue22-1770024635281449592"
+  },
+  {
+    "scenario": 3,
+    "label": "Scenario 3",
+    "inputSize": 2202009.6,
+    "metrics": {
+      "prepTimeMs": 12,
+      "uploadTimeMs": 40815,
+      "verifyTimeMs": 28461
+    },
+    "diskDelta": {
+      "gwc": 32454844,
+      "mdsc": 305947,
+      "fdsc": 43483748,
+      "total": 76244539
+    },
+    "overheadRatio": "19.747",
+    "sid": "cosmos17vp9grfjapucr9r5d6jmu2jujxlfve2w5jue22-1770024705439584857"
+  },
+  {
+    "scenario": 4,
+    "label": "Scenario 4",
+    "inputSize": 3250585.6,
+    "metrics": {
+      "prepTimeMs": 14,
+      "uploadTimeMs": 40951,
+      "verifyTimeMs": 25274
+    },
+    "diskDelta": {
+      "gwc": 52403497,
+      "mdsc": 293293,
+      "fdsc": 70266952,
+      "total": 122963742
+    },
+    "overheadRatio": "21.617",
+    "sid": "cosmos17vp9grfjapucr9r5d6jmu2jujxlfve2w5jue22-1770024772917642093"
+  },
+  {
+    "scenario": 5,
+    "label": "Scenario 5",
+    "inputSize": 4299161.6,
+    "metrics": {
+      "prepTimeMs": 16,
+      "uploadTimeMs": 40880,
+      "verifyTimeMs": 28556
+    },
+    "diskDelta": {
+      "gwc": 76719381,
+      "mdsc": 318047,
+      "fdsc": 102177034,
+      "total": 179214462
+    },
+    "overheadRatio": "23.767",
+    "sid": "cosmos17vp9grfjapucr9r5d6jmu2jujxlfve2w5jue22-1770024835352959101"
+  },
+  {
+    "scenario": 6,
+    "label": "Scenario 6",
+    "inputSize": 5347737.6,
+    "metrics": {
+      "prepTimeMs": 21,
+      "uploadTimeMs": 40939,
+      "verifyTimeMs": 28470
+    },
+    "diskDelta": {
+      "gwc": 88404333,
+      "mdsc": 306176,
+      "fdsc": 130481908,
+      "total": 219192417
+    },
+    "overheadRatio": "24.399",
+    "sid": "cosmos17vp9grfjapucr9r5d6jmu2jujxlfve2w5jue22-1770024900978481041"
+  },
+  {
+    "scenario": 7,
+    "label": "Scenario 7",
+    "inputSize": 6396313.6,
+    "metrics": {
+      "prepTimeMs": 21,
+      "uploadTimeMs": 40862,
+      "verifyTimeMs": 25373
+    },
+    "diskDelta": {
+      "gwc": 109530604,
+      "mdsc": 312890,
+      "fdsc": 150569261,
+      "total": 260412755
+    },
+    "overheadRatio": "23.540",
+    "sid": "cosmos17vp9grfjapucr9r5d6jmu2jujxlfve2w5jue22-1770024968747087491"
+  },
+  {
+    "scenario": 8,
+    "label": "Scenario 8",
+    "inputSize": 7444889.6,
+    "metrics": {
+      "prepTimeMs": 31,
+      "uploadTimeMs": 40988,
+      "verifyTimeMs": 34762
+    },
+    "diskDelta": {
+      "gwc": 136708281,
+      "mdsc": 355968,
+      "fdsc": 218643617,
+      "total": 355707866
+    },
+    "overheadRatio": "29.368",
+    "sid": "cosmos17vp9grfjapucr9r5d6jmu2jujxlfve2w5jue22-1770025037244479844"
+  },
+  {
+    "scenario": 9,
+    "label": "Scenario 9",
+    "inputSize": 8493465.6,
+    "metrics": {
+      "prepTimeMs": 28,
+      "uploadTimeMs": 41030,
+      "verifyTimeMs": 31770
+    },
+    "diskDelta": {
+      "gwc": 153786807,
+      "mdsc": 344183,
+      "fdsc": 194968646,
+      "total": 349099636
+    },
+    "overheadRatio": "22.955",
+    "sid": "cosmos17vp9grfjapucr9r5d6jmu2jujxlfve2w5jue22-1770025108765208129"
+  },
+  {
+    "scenario": 10,
+    "label": "Scenario 10",
+    "inputSize": 9542041.6,
+    "metrics": {
+      "prepTimeMs": 36,
+      "uploadTimeMs": 41205,
+      "verifyTimeMs": 25458
+    },
+    "diskDelta": {
+      "gwc": 136911872,
+      "mdsc": 350648,
+      "fdsc": 330657954,
+      "total": 467920474
+    },
+    "overheadRatio": "34.653",
+    "sid": "cosmos17vp9grfjapucr9r5d6jmu2jujxlfve2w5jue22-1770025177147482636"
+  }
+]

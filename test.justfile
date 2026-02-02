@@ -76,10 +76,13 @@ exam arg="":
     #!/usr/bin/env bash
     set -e
     cd ./ops/scripts/experiment
-    if [ "{{arg}}" == "1" ]; then \
-        deno task exp 1; \
-    elif [ "{{arg}}" == "2" ]; then \
-        deno task exp 2; \
-    elif [ "{{arg}}" == "3" ]; then \
-        deno task exp 3; \
+    if [ "{{arg}}" == "1" ]; then 
+        deno task exp --case 1; 
+        exit 0;
+    elif [ "{{arg}}" == "2" ]; then
+        deno task exp --case 2; 
+        exit 0;
+    elif [ "{{arg}}" == "3" ]; then
+        deno task exp --case 3;
+        exit 0;
     fi
