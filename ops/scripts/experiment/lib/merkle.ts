@@ -1,53 +1,38 @@
 /**
  * lib/merkle.ts
- * サーバー側 (x/gateway/types/merkle_gen.go) の実装に適合させた Merkle Tree 計算ロジック
+ * サーバー側 (Go) の実装に完全に適合させた修正版
  */
 import { crypto } from "@std/crypto";
 import { ensureArrayBuffer, log } from "./common.ts";
 
 /**
- * 文字列またはバイト列のSHA-256ハッシュを計算し、Uint8Arrayで返します。
+ * SHA-256ハッシュを計算し、hex文字列で返します。
  */
-async function sha256(data: Uint8Array | string): Promise<Uint8Array> {
+async function sha256Hex(data: string | Uint8Array): Promise<string> {
   const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
   const hash = await crypto.subtle.digest("SHA-256", ensureArrayBuffer(bytes));
-  return new Uint8Array(hash);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
 /**
- * バイト列を小文字のHex文字列に変換します。
- */
-function toHex(bytes: Uint8Array): string {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
-}
-
-/**
- * サーバー側の hashPair (merkle_gen.go) に適合する MerkleRoot 計算
- * 入力: Hex文字列のリスト
- * 親ノード計算: hex(SHA256(left_hex + right_hex))
+ * サーバー側の NewMerkleTree (merkle_gen.go) に適合する Merkle Root 計算
  */
 export async function calculateMerkleRoot(hexLeaves: string[]): Promise<string> {
-  if (hexLeaves.length === 0) {
-    // サーバー側の NewMerkleTree/Root は空の場合空文字列を返す挙動
-    return "";
-  }
+  if (hexLeaves.length === 0) return "";
+  if (hexLeaves.length === 1) return hexLeaves[0];
 
   let currentLevel = [...hexLeaves];
 
   while (currentLevel.length > 1) {
-    // 奇数なら末尾複製 (merkle_gen.go: right = left)
-    if (currentLevel.length % 2 !== 0) {
-      currentLevel.push(currentLevel[currentLevel.length - 1]);
-    }
-
     const nextLevel: string[] = [];
     for (let i = 0; i < currentLevel.length; i += 2) {
-      const leftHex = currentLevel[i];
-      const rightHex = currentLevel[i + 1];
+      const left = currentLevel[i];
+      // 奇数の場合は末尾複製 (Go: right = left)
+      const right = (i + 1 < currentLevel.length) ? currentLevel[i + 1] : left;
 
-      // 文字列として連結してからハッシュ化 (hex(SHA256(left_hex + right_hex)))
-      const rawHash = await sha256(leftHex + rightHex);
-      nextLevel.push(toHex(rawHash));
+      // サーバー側 hashPair: hex(SHA256(left_hex + right_hex))
+      const combinedHash = await sha256Hex(left + right);
+      nextLevel.push(combinedHash);
     }
     currentLevel = nextLevel;
   }
@@ -56,77 +41,84 @@ export async function calculateMerkleRoot(hexLeaves: string[]): Promise<string> 
 }
 
 /**
- * ファイルパスの正規化 (zip_logic.go に適合)
+ * Go の path.Clean(p) および TrimPrefix の挙動を再現
  */
 export function normalizePath(originalPath: string): string {
-  // バックスラッシュの置換
+  // 1. \ を / に置換
   let p = originalPath.replace(/\\/g, "/");
 
-  // サーバー側の path.Clean / TrimPrefix に合わせる
+  // 2. 重複するスラッシュを削除
   p = p.replace(/\/+/g, "/");
 
+  // 3. 先頭の ./ と / を削除 (Go の zip_logic.go: TrimPrefix 相当)
   while (p.startsWith("./") || p.startsWith("/")) {
     if (p.startsWith("./")) p = p.slice(2);
-    if (p.startsWith("/")) p = p.slice(1);
+    else if (p.startsWith("/")) p = p.slice(1);
   }
+
+  // 4. 末尾のスラッシュを削除
+  if (p.endsWith("/") && p.length > 1) p = p.slice(0, -1);
 
   return p;
 }
 
 /**
- * プロジェクト全体の RootProof を生成 (merkle_gen.go の BuildCSUProofs に適合)
+ * サーバー側 BuildCSUProofs (merkle_gen.go) に完全に準拠した RootProof 生成
  */
 export async function buildProjectMerkleRoot(
   files: { path: string, data: Uint8Array }[],
   fragSize: number
 ): Promise<string> {
-  log(`[Merkle/Sync] Starting build. Files: ${files.length}, FragSize: ${fragSize}`);
+  log(`[Merkle/Sync] Building for ${files.length} files. FragSize: ${fragSize}`);
 
-  const fileLeaves: { path: string, hexHash: string }[] = [];
-
-  for (const file of files) {
-    const normPath = normalizePath(file.path);
-
-    // 1. サーバー側と同様に、空ファイル（サイズ0）はスキップする
-    if (file.data.length === 0) {
+  // 1. 各ファイルの情報を整理し、正規化パスで管理
+  const processedFiles: { normPath: string, data: Uint8Array }[] = [];
+  for (const f of files) {
+    const normPath = normalizePath(f.path);
+    // サーバー側 (merkle_gen.go): 空ファイルはスキップ
+    if (f.data.length === 0) {
       log(`[Merkle/Sync] Skipping empty file: ${normPath}`);
       continue;
     }
+    processedFiles.push({ normPath, data: f.data });
+  }
 
-    // 2. 断片化
-    const frags: Uint8Array[] = [];
-    for (let i = 0; i < file.data.length; i += fragSize) {
-      frags.push(file.data.subarray(i, Math.min(i + fragSize, file.data.length)));
-    }
+  // 2. パスで昇順ソート (Go: sort.Slice(files, ...))
+  processedFiles.sort((a, b) => (a.normPath < b.normPath ? -1 : a.normPath > b.normPath ? 1 : 0));
 
-    // 3. Leaf Frag 計算
-    // Scheme: FRAG:{path}:{index}:{hex(SHA256(fragment_bytes))}
+  const fileLeaves: string[] = [];
+
+  for (const f of processedFiles) {
+    // 3. 断片化
     const fragHexes: string[] = [];
-    for (let i = 0; i < frags.length; i++) {
-      const fragDataHash = toHex(await sha256(frags[i]));
-      const rawString = `FRAG:${normPath}:${i}:${fragDataHash}`;
-      const leafHash = await sha256(rawString);
-      fragHexes.push(toHex(leafHash));
+    const numFrags = Math.ceil(f.data.length / fragSize);
+
+    for (let i = 0; i < numFrags; i++) {
+      const start = i * fragSize;
+      const end = Math.min(start + fragSize, f.data.length);
+      const chunk = f.data.subarray(start, end);
+
+      // frag_digest_hex = hex(SHA256(fragment_bytes))
+      const chunkHash = await sha256Hex(chunk);
+      // leaf_frag = SHA256("FRAG:{path}:{index}:{frag_digest_hex}")
+      const leafFrag = await sha256Hex(`FRAG:${f.normPath}:${i}:${chunkHash}`);
+      fragHexes.push(leafFrag);
     }
 
     // 4. File Root 計算 (Fragment Tree)
-    const fileRootHex = await calculateMerkleRoot(fragHexes);
+    const fileRoot = await calculateMerkleRoot(fragHexes);
 
-    // 5. Leaf File 計算
-    // Scheme: FILE:{path}:{file_size}:{file_root}
-    const rawFileString = `FILE:${normPath}:${file.data.length}:${fileRootHex}`;
-    const fileLeafHash = await sha256(rawFileString);
-    const fileLeafHex = toHex(fileLeafHash);
+    // 5. File Leaf 計算
+    // leaf_file = SHA256("FILE:{path}:{file_size}:{file_root}")
+    const leafFile = await sha256Hex(`FILE:${f.normPath}:${f.data.length}:${fileRoot}`);
 
-    fileLeaves.push({ path: normPath, hexHash: fileLeafHex });
+    log(`[Merkle/Sync] File: ${f.normPath} (Size: ${f.data.length}) Root: ${fileRoot}`);
+    fileLeaves.push(leafFile);
   }
 
-  // 6. 決定論的順序: path 昇順
-  fileLeaves.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  // 6. RootProof 計算 (Root Tree)
+  const rootProof = await calculateMerkleRoot(fileLeaves);
+  log(`[Merkle/Sync] Result RootProof: ${rootProof}`);
 
-  // 7. RootProof 計算 (Root Tree)
-  const rootProofHex = await calculateMerkleRoot(fileLeaves.map(f => f.hexHash));
-
-  log(`[Merkle/Sync] Final RootProof: ${rootProofHex}`);
-  return rootProofHex;
+  return rootProof;
 }
