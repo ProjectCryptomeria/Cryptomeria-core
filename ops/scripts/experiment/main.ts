@@ -1,6 +1,6 @@
 /**
  * main.ts
- * ポートフォワードをバックグラウンドで管理しながら実験を実行
+ * ポートフォワードをバックグラウンドで管理しながら実験を実行するエントリーポイント
  */
 import { parseArgs } from "@std/cli/parse-args";
 import { log, toError } from "./lib/common.ts";
@@ -17,7 +17,7 @@ async function main() {
 
   log("🏗️  Cryptomeria Core Experiment Runner Start");
 
-  // --- ポートフォワード開始 ---
+  // ポートフォワード開始
   try {
     await networkManager.start();
   } catch (e) {
@@ -26,7 +26,7 @@ async function main() {
     Deno.exit(1);
   }
 
-  // 終了時に必ずポートフォワードを止めるためのトラップ
+  // 終了時にクリーンアップ
   const cleanup = async () => {
     await networkManager.stop();
     Deno.exit(0);
@@ -59,7 +59,6 @@ async function main() {
     const err = toError(error);
     log(`💥 Critical Error during experiments: ${err.message}`);
   } finally {
-    // 全ての実験が終了したら停止
     await cleanup();
   }
 }

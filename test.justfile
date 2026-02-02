@@ -67,3 +67,19 @@ performance arg="":
     else \
         ./ops/scripts/test/performance_test/run.sh; \
     fi
+
+# =============================================================================
+# 🚀 Experiment Tests
+# =============================================================================
+
+exam arg="":
+    #!/usr/bin/env bash
+    set -e
+    cd ./ops/scripts/experiment
+    if [ "{{arg}}" == "1" ]; then \
+        deno task exp 1; \
+    elif [ "{{arg}}" == "2" ]; then \
+        deno task exp 2; \
+    elif [ "{{arg}}" == "3" ]; then \
+        deno task exp 3; \
+    fi

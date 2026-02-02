@@ -1,54 +1,45 @@
 /**
  * lib/stats.ts
- * Pod情報の取得およびディスク・時間計測
+ * 実験データの収集（ディスク使用量、実行時間など）
  */
 import { runCmd } from "./common.ts";
 import { CONFIG } from "./config.ts";
 
 /**
- * Pod内のデータディレクトリのディスク使用量をバイト単位で取得する
+ * 指定されたコンポーネントPodのデータディレクトリのディスク使用量をバイト単位で取得する。
+ * スキャン中に一時ファイルが削除されることによる失敗を回避するため、
+ * 標準エラーを無視し、常に成功コードを返すようにラップして実行する。
  */
-export async function getDiskUsage(component: string) {
-  const namespace = CONFIG.NAMESPACE;
-  
-  // 1. ターゲットとなる Pod 名を取得
-  const podName = await runCmd([
-    "kubectl", "get", "pod", "-n", namespace,
-    "-l", `app.kubernetes.io/name=${namespace},app.kubernetes.io/component=${component}`,
+export async function getDiskUsage(comp: string): Promise<number> {
+  // コンポーネントに対応するPod名を取得
+  const pod = await runCmd([
+    "kubectl", "get", "pod", "-n", CONFIG.NAMESPACE,
+    "-l", `app.kubernetes.io/component=${comp}`,
     "-o", "jsonpath={.items[0].metadata.name}"
   ]);
 
-  if (!podName) {
-    throw new Error(`Could not find pod for component: ${component}`);
-  }
+  const bin = comp === "gwc" ? "gwcd" : `${comp}d`;
+  const app = bin.replace(/d$/, "");
+  const dataPath = `/home/${app}/.${app}/data`;
 
-  // 2. バイナリ名からホームディレクトリのパスを構成 (initialize.ts のロジックと同期)
-  const binName = component === "gwc" ? "gwcd" : `${component}d`;
-  const appName = binName.replace(/d$/, "");
-  const homeDir = `/home/${appName}/.${appName}`;
-  const dataDir = `${homeDir}/data`;
+  // duコマンドは、Tendermintのアトミック書き込み用の一時ファイル消失などで失敗しやすいため、
+  // sh -c を介してエラーを抑制し、可能な範囲の出力を取得する。
+  const usage = await runCmd([
+    "kubectl", "exec", "-n", CONFIG.NAMESPACE, pod, "--",
+    "sh", "-c", `du -sb ${dataPath} 2>/dev/null || true`
+  ]);
 
-  // 3. du コマンドでサイズを取得
-  // Permission Denied を避けるため、パスが正しいことを確認
-  try {
-    const usage = await runCmd([
-      "kubectl", "exec", "-n", namespace, podName, "--", 
-      "du", "-sb", dataDir
-    ]);
-    return parseInt(usage.split("\t")[0]);
-  } catch (e) {
-    // もし /home/... が失敗した時のためのフォールバック、またはエラー詳細の表示
-    console.error(`Failed to access ${dataDir} in ${podName}. Checking path...`);
-    throw e;
-  }
+  // 出力の最初の数値（バイト数）を抽出
+  const sizeMatch = usage.trim().match(/^(\d+)/);
+  return sizeMatch ? parseInt(sizeMatch[1]) : 0;
 }
 
 /**
- * 非同期関数の実行時間を計測するラッパー
+ * 非同期関数の実行時間をミリ秒単位で計測するラッパー
  */
-export async function measureTime<T>(fn: () => Promise<T>): Promise<{ result: T, durationMs: number }> {
+export async function measureTime<T>(fn: () => Promise<T>) {
   const start = performance.now();
   const result = await fn();
-  const end = performance.now();
-  return { result, durationMs: end - start };
+  const durationMs = performance.now() - start;
+  return { result, durationMs };
 }

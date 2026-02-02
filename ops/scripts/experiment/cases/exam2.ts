@@ -1,77 +1,54 @@
 /**
  * cases/exam2.ts
- * バッチサイズ（断片サイズ）実験
- * アップロードサイズを512KBに固定し、断片サイズを変動させて性能を評価します。
  */
 import { log, saveResult } from "../lib/common.ts";
 import { setupAlice } from "../lib/initialize.ts";
-import { createDummyFile } from "../lib/file.ts";
+import { createDummyFile, createZip } from "../lib/file.ts";
 import { getDiskUsage, measureTime } from "../lib/stats.ts";
-import { uploadToGwc } from "../lib/upload.ts";
+import { uploadToGwcCsu } from "../lib/upload.ts";
 
-/**
- * 実験2のシナリオ定義
- */
 const SCENARIOS = [
-  { step: 1, fragSize: "256KB", label: "基準値 (MAXサイズ)" },
-  { step: 2, fragSize: "171KB", label: "中途半端な分割" },
-  { step: 3, fragSize: "128KB", label: "MAXの半分" },
-  { step: 4, fragSize: "64KB", label: "リクエスト回数倍増" },
-  { step: 5, fragSize: "32KB", label: "低下傾向確認" },
-  { step: 6, fragSize: "8KB", label: "高負荷（パケットサイズ近傍）" },
-  { step: 7, fragSize: "1KB", label: "限界値（固定コスト算出）" },
+  { id: 1, frag: 256 * 1024, label: "MAXサイズ" },
+  { id: 2, frag: 171 * 1024, label: "中途半端" },
+  { id: 3, frag: 128 * 1024, label: "半分" },
+  { id: 4, frag: 64 * 1024, label: "倍増" },
+  { id: 5, frag: 32 * 1024, label: "低下傾向" },
+  { id: 6, frag: 8 * 1024, label: "パケットサイズ" },
+  { id: 7, frag: 1 * 1024, label: "限界値" },
 ];
 
-const FIXED_UPLOAD_SIZE = 512 * 1024; // 512 KB
+const FIXED_SIZE = 512 * 1024;
 
 export async function runExam2() {
-  log("🧪 Starting Exam 2: Batch Size Experiment");
-  
-  // 1. 前準備: アカウントとテストファイルの作成
-  const alice = await setupAlice();
-  const testFilePath = "./tmp_exam2_fixed.bin";
-  await createDummyFile(testFilePath, FIXED_UPLOAD_SIZE);
-
+  log("🧪 実験2: バッチサイズ実験");
+  await setupAlice();
   const results = [];
 
   for (const s of SCENARIOS) {
-    log(`▶️ Step ${s.step}: Fragment Size = ${s.fragSize} (${s.label})`);
+    log(`▶️ Scenario ${s.id}: ${s.label} (Frag: ${s.frag})`);
+    const testDir = `./tmp_exam2_${s.id}`;
+    const zipPath = `${testDir}.zip`;
 
-    // 計測開始前のディスク使用量（FDSCを対象）
+    await Deno.mkdir(testDir, { recursive: true });
+    await createDummyFile(`${testDir}/index.html`, FIXED_SIZE);
+    await createZip(testDir, zipPath);
+
     const diskBefore = await getDiskUsage("fdsc");
+    const { result, durationMs } = await measureTime(() =>
+      uploadToGwcCsu(testDir, zipPath, s.frag, `exam2-s${s.id}`, "1.0.0")
+    );
+    const diskAfter = await getDiskUsage("fdsc");
 
-    // 2. アップロード実行 (前処理とアップロードを分離計測)
-    // ※ ここでの前処理は、認証や内部的な分割ロジックのオーバーヘッドを想定
-    const { result, durationMs: uploadTime } = await measureTime(async () => {
-      return await uploadToGwc(testFilePath, s.fragSize);
+    results.push({
+      scenario: s.id,
+      frag: s.frag,
+      timeMs: Math.round(durationMs),
+      diskDelta: diskAfter - diskBefore,
+      sid: result?.sid
     });
 
-    // 計測終了後のディスク使用量
-    const diskAfter = await getDiskUsage("fdsc");
-    const actualIncrease = diskAfter - diskBefore;
-
-    const resultData = {
-      step: s.step,
-      fragmentSize: s.fragSize,
-      description: s.label,
-      uploadTimeMs: uploadTime,
-      gasUsed: result.gasUsed,
-      diskUsageBefore: diskBefore,
-      diskUsageAfter: diskAfter,
-      diskIncrease: actualIncrease,
-      overheadRatio: (actualIncrease / FIXED_UPLOAD_SIZE).toFixed(4),
-    };
-
-    log(`⏱️ Upload Time: ${uploadTime}ms, ⛽ Gas Used: ${result.gasUsed}`);
-    log(`💾 Disk Increase: ${actualIncrease} bytes (Overhead: ${resultData.overheadRatio}x)`);
-    
-    results.push(resultData);
+    await Deno.remove(testDir, { recursive: true });
+    await Deno.remove(zipPath);
   }
-
-  // 結果の保存
-  await saveResult("exam2_batch_size_report", {
-    fixed_size_bytes: FIXED_UPLOAD_SIZE,
-    timestamp: new Date().toISOString(),
-    scenarios: results,
-  });
+  await saveResult("exam2_results", results);
 }
