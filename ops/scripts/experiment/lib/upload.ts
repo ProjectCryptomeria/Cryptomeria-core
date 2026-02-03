@@ -304,6 +304,7 @@ export async function uploadToGwcCsu(
       session: { state: string };
     };
     const state = resultData.session.state;
+    console.log(state);
     if (state === "SESSION_STATE_CLOSED_SUCCESS") {
       log("Step 7: Webページとしての読み込み速度を計測中...");
       const renderUrl = `${CONFIG.GWC_API}/render/${projectName}/${version}/${firstFilePath}`;
