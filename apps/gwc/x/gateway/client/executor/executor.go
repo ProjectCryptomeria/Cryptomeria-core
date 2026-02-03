@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gwc/x/gateway/types"
+	"strings"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/tx"
@@ -22,6 +23,7 @@ import (
 
 const MaxFragmentsPerBatch = 50
 
+// ExecuteSessionUpload はZIPファイルの解凍、断片化、各ストレージへの配布、およびマニフェストの登録を一括して実行します。
 // ExecuteSessionUpload はZIPファイルの解凍、断片化、各ストレージへの配布、およびマニフェストの登録を一括して実行します。
 func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePath string, projectName string, version string) error {
 	fmt.Printf("[Executor] 🚀 セッション処理を開始します: ID=%s\n", sessionID)
@@ -98,11 +100,17 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		return abortSession(clientCtx, &session, "ROOT_PROOF_MISMATCH")
 	}
 
-	executorAddr := session.Executor
+	// アドレスから引用符を除去
+	executorAddr := strings.Trim(session.Executor, "\"")
 	totalItems := len(proofData.Fragments)
 	fmt.Printf("[Executor] 📤 配布対象断片数: %d\n", totalItems)
 
-	ownerAddr, _ := sdk.AccAddressFromBech32(session.Owner)
+	// Ownerアドレスからも引用符を除去し、正しく sdk.AccAddress へ変換する
+	cleanOwner := strings.Trim(session.Owner, "\"")
+	ownerAddr, err := sdk.AccAddressFromBech32(cleanOwner)
+	if err != nil {
+		return fmt.Errorf("Ownerアドレスのパースに失敗しました (%s): %w", cleanOwner, err)
+	}
 
 	var txfBatch tx.Factory
 	txfInitialized := false
@@ -139,6 +147,7 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 
 		if !txfInitialized {
 			fmt.Printf("[Executor] 🧪 初回バッチのガス見積もりを実行中...\n")
+			// クリーニングされた executorAddr と ownerAddr (feeGranter) を渡す
 			f, err := prepareFactory(clientCtx, executorAddr, ownerAddr, msg)
 			if err != nil {
 				return fmt.Errorf("Factory準備エラー: %w", err)
@@ -205,13 +214,14 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 			Version:      version,
 			RootProof:    proofData.RootProofHex,
 			FragmentSize: session.FragmentSize,
-			Owner:        session.Owner,
+			Owner:        cleanOwner, // 引用符を除去したOwnerを使用
 			SessionId:    sessionID,
 			Files:        manifestFiles,
 		},
 	}
 	fmt.Printf("[Executor] 📝 マニフェスト作成: Project=%s, Version=%s\n", projectName, version)
 
+	// Finalize Tx でも Alice を FeeGranter として設定
 	txfFinalize, err := prepareFactory(clientCtx, executorAddr, ownerAddr, finalizeMsg)
 	if err != nil {
 		return fmt.Errorf("Finalize用Factory準備エラー: %w", err)
