@@ -8,7 +8,7 @@ import { createDummyFile, createZip } from "../lib/file.ts";
 import { getDiskUsage } from "../lib/stats.ts";
 import { uploadToGwcCsu } from "../lib/upload.ts";
 
-const SCENARIOS = Array.from({ length: 10 }, (_, i) => ({
+const SCENARIOS = Array.from({ length: 11 }, (_, i) => ({
   id: i + 1,
   size: 1024 * 1024 * (i + 0.1),
   label: `Scenario ${i + 1}`,

@@ -132,32 +132,86 @@ export async function uploadToGwcCsu(
   let endFetch = 0;
   let fetchDuration = 0;
 
-  for (let i = 0; i < 60; i++) {
-    const queryResult = await runCmd([CONFIG.BIN.GWC, "q", "gateway", "session", sid, "--node", CONFIG.GWC_RPC, "-o", "json"]);
-    const state = JSON.parse(queryResult).session.state;
+// fetchDuration と endFetch はスコープ外で定義されていることを想定しています
+for (let i = 0; i < 60; i++) {
+  // セッション状態の取得
+  const queryResult = await runCmd([
+    CONFIG.BIN.GWC,
+    "q",
+    "gateway",
+    "session",
+    sid,
+    "--node",
+    CONFIG.GWC_RPC,
+    "-o",
+    "json",
+  ]);
 
-    if (state === "SESSION_STATE_CLOSED_SUCCESS") {
-      log("Step 7: Webページとしての読み込み速度を計測中...");
+  // JSONのパース結果を定義（型安全のためインターフェースを想定）
+  const resultData = JSON.parse(queryResult) as {
+    session: { state: string };
+  };
+  const state = resultData.session.state;
 
-      const renderUrl = `${CONFIG.GWC_API}/render/${projectName}/${version}/${firstFilePath}`;
-      const startFetch = performance.now();
+  if (state === "SESSION_STATE_CLOSED_SUCCESS") {
+    log("Step 7: Webページとしての読み込み速度を計測中...");
 
-      const response = await fetch(renderUrl);
-      if (!response.ok) throw new Error(`Webページの読み込みに失敗しました: ${response.statusText}`);
+    const renderUrl = `${CONFIG.GWC_API}/render/${projectName}/${version}/${firstFilePath}`;
+    const startFetch = performance.now();
 
-      // すべてのデータを読み込むまで待機
-      await response.arrayBuffer();
+    // --- fetchのリトライループ開始 ---
+    const MAX_RETRIES = 5;
+    const RETRY_DELAY_MS = 1000;
+    let response: Response | undefined;
 
-      endFetch = performance.now();
-      fetchDuration = endFetch - startFetch;
-      break;
+    for (let retryCount = 1; retryCount <= MAX_RETRIES; retryCount++) {
+      try {
+        response = await fetch(renderUrl);
+
+        if (!response.ok) {
+          throw new Error(`HTTPエラー: ${response.status} ${response.statusText}`);
+        }
+
+        // すべてのデータを読み込むまで待機
+        await response.arrayBuffer();
+        
+        // 成功した場合はリトライループを抜ける
+        break;
+      } catch (error) {
+        if (retryCount === MAX_RETRIES) {
+          // 最大リトライ回数に達した場合はエラーをスロー
+          throw new Error(
+            `Webページの読み込みに失敗しました (${MAX_RETRIES}回試行): ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+
+        log(
+          `fetchに失敗しました。1秒後にリトライします... (${retryCount}/${MAX_RETRIES})`
+        );
+        // 1秒待機
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      }
     }
+    // --- fetchのリトライループ終了 ---
 
-    if (state === "SESSION_STATE_CLOSED_FAILED") throw new Error("オンチェーンでの検証に失敗しました。");
-    await new Promise(r => setTimeout(r, 3000));
-
-    if (i === 59) throw new Error("検証がタイムアウトしました。");
+    endFetch = performance.now();
+    fetchDuration = endFetch - startFetch;
+    break;
   }
+
+  if (state === "SESSION_STATE_CLOSED_FAILED") {
+    throw new Error("オンチェーンでの検証に失敗しました。");
+  }
+
+  // セッション状態確認のインターバル（3秒）
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+
+  if (i === 59) {
+    throw new Error("検証がタイムアウトしました。");
+  }
+}
 
   const endDeploy = endFetch;
 
