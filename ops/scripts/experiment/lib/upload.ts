@@ -29,19 +29,44 @@ async function executeTx(args: string[], from: string): Promise<any> {
     try {
       // 1. トランザクションのブロードキャスト
       const out = await runCmd([
-        CONFIG.BIN.GWC, "tx", ...args,
-        "--from", from, "--node", CONFIG.GWC_RPC, "--chain-id", CONFIG.CHAIN_ID,
-        "--keyring-backend", "test", "--gas", "auto", "--gas-adjustment", "1.5", "-y", "-o", "json"
+        CONFIG.BIN.GWC,
+        "tx",
+        ...args,
+        "--from",
+        from,
+        "--node",
+        CONFIG.GWC_RPC,
+        "--chain-id",
+        CONFIG.CHAIN_ID,
+        "--keyring-backend",
+        "test",
+        "--gas",
+        "auto",
+        "--gas-adjustment",
+        "1.5",
+        "-y",
+        "-o",
+        "json",
       ]);
       const res = JSON.parse(out);
 
       // 2. トランザクションがブロックに取り込まれるまでクエリをリトライ
       for (let q = 0; q < 15; q++) {
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 2000));
         try {
-          const qOut = await runCmd([CONFIG.BIN.GWC, "q", "tx", res.txhash, "--node", CONFIG.GWC_RPC, "-o", "json"]);
+          const qOut = await runCmd([
+            CONFIG.BIN.GWC,
+            "q",
+            "tx",
+            res.txhash,
+            "--node",
+            CONFIG.GWC_RPC,
+            "-o",
+            "json",
+          ]);
           const qRes = JSON.parse(qOut);
-          if (qRes.code !== 0) throw new Error(`TX failed on chain: ${qRes.raw_log}`);
+          if (qRes.code !== 0)
+            throw new Error(`TX failed on chain: ${qRes.raw_log}`);
           return qRes; // 成功
         } catch (e) {
           if (q === 14) throw e;
@@ -52,32 +77,74 @@ async function executeTx(args: string[], from: string): Promise<any> {
       lastError = e;
       const errMsg = String(e);
       // シーケンス番号の不一致、または Tx が既知の場合のリトライ
-      if (errMsg.includes("account sequence mismatch") || errMsg.includes("tx already exists")) {
-        log(`    (警告: シーケンス不一致のためリトライ中... ${attempt}/${MAX_ATTEMPTS})`);
-        await new Promise(r => setTimeout(r, 3000));
+      if (
+        errMsg.includes("account sequence mismatch") ||
+        errMsg.includes("tx already exists")
+      ) {
+        log(
+          `    (警告: シーケンス不一致のためリトライ中... ${attempt}/${MAX_ATTEMPTS})`,
+        );
+        await new Promise((r) => setTimeout(r, 3000));
         continue;
       }
       throw e; // それ以外の重大なエラーは即中断
     }
   }
-  throw new Error(`TX execution failed after ${MAX_ATTEMPTS} attempts: ${lastError}`);
+  throw new Error(
+    `TX execution failed after ${MAX_ATTEMPTS} attempts: ${lastError}`,
+  );
 }
 
 async function hasFeegrant(owner: string, exec: string): Promise<boolean> {
   try {
-    const out = await runCmd([CONFIG.BIN.GWC, "q", "feegrant", "grant", owner, exec, "--node", CONFIG.GWC_RPC, "-o", "json"]);
+    const out = await runCmd([
+      CONFIG.BIN.GWC,
+      "q",
+      "feegrant",
+      "grant",
+      owner,
+      exec,
+      "--node",
+      CONFIG.GWC_RPC,
+      "-o",
+      "json",
+    ]);
     const data = JSON.parse(out);
     return !!(data.allowance || data.grant);
-  } catch (_e) { return false; }
+  } catch (_e) {
+    return false;
+  }
 }
 
-async function hasAuthz(owner: string, exec: string, msgType: string): Promise<boolean> {
+async function hasAuthz(
+  owner: string,
+  exec: string,
+  msgType: string,
+): Promise<boolean> {
   try {
-    const out = await runCmd([CONFIG.BIN.GWC, "q", "authz", "grants", owner, exec, "--node", CONFIG.GWC_RPC, "-o", "json"]);
+    const out = await runCmd([
+      CONFIG.BIN.GWC,
+      "q",
+      "authz",
+      "grants",
+      owner,
+      exec,
+      "--node",
+      CONFIG.GWC_RPC,
+      "-o",
+      "json",
+    ]);
     const data = JSON.parse(out);
     if (!data.grants || !Array.isArray(data.grants)) return false;
-    return data.grants.some((g: any) => g.authorization?.msg === msgType || (g.authorization?.["@type"]?.includes("GenericAuthorization") && g.authorization?.msg === msgType));
-  } catch (_e) { return false; }
+    return data.grants.some(
+      (g: any) =>
+        g.authorization?.msg === msgType ||
+        (g.authorization?.["@type"]?.includes("GenericAuthorization") &&
+          g.authorization?.msg === msgType),
+    );
+  } catch (_e) {
+    return false;
+  }
 }
 
 export async function uploadToGwcCsu(
@@ -85,12 +152,11 @@ export async function uploadToGwcCsu(
   zipPath: string,
   fragSize: number,
   projectName: string,
-  version: string
-): Promise<{ sid: string, metrics: UploadMetrics }> {
-
+  version: string,
+): Promise<{ sid: string; metrics: UploadMetrics }> {
   const startPrep = performance.now();
   log(`Step 1: ディレクトリの走査中: "${sourceDir}"...`);
-  const files: { path: string, data: Uint8Array }[] = [];
+  const files: { path: string; data: Uint8Array }[] = [];
   const absSourceDir = resolve(sourceDir);
   let firstFilePath = "";
 
@@ -104,40 +170,70 @@ export async function uploadToGwcCsu(
   const rootHex = await buildProjectMerkleRoot(files, fragSize);
 
   log("Step 2: セッションの初期化中...");
-  const initRes = await executeTx(["gateway", "init-session", fragSize.toString(), "0"], "alice");
-  
+  const initRes = await executeTx(
+    ["gateway", "init-session", fragSize.toString(), "0"],
+    "alice",
+  );
+
   const event = initRes.events.find((e: any) => e.type === "csu_init_session");
-  const sid = (event.attributes.find((a: any) => a.key === "session_id").value as string).replace(/^"|"$/g, '');
-  const exec = (event.attributes.find((a: any) => a.key === "executor").value as string).replace(/^"|"$/g, '');
-  const owner = (event.attributes.find((a: any) => a.key === "owner").value as string).replace(/^"|"$/g, '');
+  const sid = (
+    event.attributes.find((a: any) => a.key === "session_id").value as string
+  ).replace(/^"|"$/g, "");
+  const exec = (
+    event.attributes.find((a: any) => a.key === "executor").value as string
+  ).replace(/^"|"$/g, "");
+  const owner = (
+    event.attributes.find((a: any) => a.key === "owner").value as string
+  ).replace(/^"|"$/g, "");
 
   log(`Step 3: 権限（Authz/Feegrant）の確認と設定中...`);
-  
+
   const expirationDate = new Date();
   expirationDate.setHours(expirationDate.getHours() + 1);
-  const expirationISO = expirationDate.toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const expirationISO = expirationDate.toISOString().replace(/\.\d{3}Z$/, "Z");
   const expirationUnix = Math.floor(expirationDate.getTime() / 1000).toString();
 
   if (!(await hasFeegrant(owner, exec))) {
     try {
       log("  - Feegrant を付与中...");
-      await executeTx(["feegrant", "grant", owner, exec, "--expiration", expirationISO], "alice");
+      await executeTx(
+        ["feegrant", "grant", owner, exec, "--expiration", expirationISO],
+        "alice",
+      );
     } catch (e) {
-      if (!String(e).includes("already exists")) log(`  - Feegrant付与失敗: ${e}`);
+      if (!String(e).includes("already exists"))
+        log(`  - Feegrant付与失敗: ${e}`);
     }
   } else {
     log("  - Feegrant は既に設定済みです。");
   }
 
-  const msgTypes = ["MsgDistributeBatch", "MsgFinalizeAndCloseSession", "MsgAbortAndCloseSession"];
+  const msgTypes = [
+    "MsgDistributeBatch",
+    "MsgFinalizeAndCloseSession",
+    "MsgAbortAndCloseSession",
+  ];
   for (const m of msgTypes) {
     const typeUrl = `/gwc.gateway.v1.${m}`;
     if (!(await hasAuthz(owner, exec, typeUrl))) {
       try {
         log(`  - Authz (${m}) を付与中...`);
-        await executeTx(["authz", "grant", exec, "generic", "--msg-type", typeUrl, "--expiration", expirationUnix], "alice");
+        await executeTx(
+          [
+            "authz",
+            "grant",
+            exec,
+            "generic",
+            "--msg-type",
+            typeUrl,
+            "--expiration",
+            expirationUnix,
+          ],
+          "alice",
+        );
       } catch (e) {
-        if (!String(e).includes("already exists")) log(`  - Authz(${m})付与失敗: ${e}`);
+        if (!String(e).includes("already exists"))
+          log(`  - Authz(${m})付与失敗: ${e}`);
       }
     } else {
       log(`  - Authz (${m}) は既に設定済みです。`);
@@ -148,8 +244,13 @@ export async function uploadToGwcCsu(
   await executeTx(["gateway", "commit-root-proof", sid, rootHex], "alice");
 
   const zipData = await Deno.readFile(zipPath);
-  const tokenRaw = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`upload_token:${sid}`));
-  const token = Array.from(new Uint8Array(tokenRaw)).map(b => b.toString(16).padStart(2, "0")).join("");
+  const tokenRaw = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`upload_token:${sid}`),
+  );
+  const token = Array.from(new Uint8Array(tokenRaw))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
   const endPrep = performance.now();
 
   // --- Phase 2: Client Upload ---
@@ -158,12 +259,28 @@ export async function uploadToGwcCsu(
   const meta = `session_id ${btoa(sid)},project_name ${btoa(projectName)},version ${btoa(version)}`;
   const postResponse = await fetch(`${CONFIG.GWC_API}/upload/tus-stream`, {
     method: "POST",
-    headers: { "Tus-Resumable": "1.0.0", "Upload-Length": zipData.length.toString(), "Upload-Metadata": meta, "Authorization": `Bearer ${token}` }
+    headers: {
+      "Tus-Resumable": "1.0.0",
+      "Upload-Length": zipData.length.toString(),
+      "Upload-Metadata": meta,
+      Authorization: `Bearer ${token}`,
+    },
   });
   const location = postResponse.headers.get("Location");
-  if (!location) throw new Error("TUS Locationヘッダーが取得できませんでした。");
-  const patchUrl = location.startsWith("http") ? location : `${CONFIG.GWC_API}${location}`;
-  await fetch(patchUrl, { method: "PATCH", headers: { "Tus-Resumable": "1.0.0", "Content-Type": "application/offset+octet-stream", "Upload-Offset": "0" }, body: zipData });
+  if (!location)
+    throw new Error("TUS Locationヘッダーが取得できませんでした。");
+  const patchUrl = location.startsWith("http")
+    ? location
+    : `${CONFIG.GWC_API}${location}`;
+  await fetch(patchUrl, {
+    method: "PATCH",
+    headers: {
+      "Tus-Resumable": "1.0.0",
+      "Content-Type": "application/offset+octet-stream",
+      "Upload-Offset": "0",
+    },
+    body: zipData,
+  });
   const endClientUpload = performance.now();
 
   // --- Phase 3: Deploy & Fetch ---
@@ -172,8 +289,20 @@ export async function uploadToGwcCsu(
   let endFetch = 0;
   let fetchDuration = 0;
   for (let i = 0; i < 60; i++) {
-    const queryResult = await runCmd([CONFIG.BIN.GWC, "q", "gateway", "session", sid, "--node", CONFIG.GWC_RPC, "-o", "json"]);
-    const resultData = JSON.parse(queryResult) as { session: { state: string } };
+    const queryResult = await runCmd([
+      CONFIG.BIN.GWC,
+      "q",
+      "gateway",
+      "session",
+      sid,
+      "--node",
+      CONFIG.GWC_RPC,
+      "-o",
+      "json",
+    ]);
+    const resultData = JSON.parse(queryResult) as {
+      session: { state: string };
+    };
     const state = resultData.session.state;
     if (state === "SESSION_STATE_CLOSED_SUCCESS") {
       log("Step 7: Webページとしての読み込み速度を計測中...");
@@ -188,15 +317,16 @@ export async function uploadToGwcCsu(
           break;
         } catch (error) {
           if (r === MAX_RETRIES) throw error;
-          await new Promise(res => setTimeout(res, 1000));
+          await new Promise((res) => setTimeout(res, 1000));
         }
       }
       endFetch = performance.now();
       fetchDuration = endFetch - startFetchTime;
       break;
     }
-    if (state === "SESSION_STATE_CLOSED_FAILED") throw new Error("オンチェーンでの検証に失敗しました。");
-    await new Promise(res => setTimeout(res, 3000));
+    if (state === "SESSION_STATE_CLOSED_FAILED")
+      throw new Error("オンチェーンでの検証に失敗しました。");
+    await new Promise((res) => setTimeout(res, 3000));
     if (i === 59) throw new Error("検証がタイムアウトしました。");
   }
 
@@ -207,6 +337,6 @@ export async function uploadToGwcCsu(
       clientUploadTimeMs: Math.round(endClientUpload - startClientUpload),
       deployTimeMs: Math.round(endFetch - startDeploy),
       fetchTimeMs: Math.round(fetchDuration),
-    }
+    },
   };
 }
