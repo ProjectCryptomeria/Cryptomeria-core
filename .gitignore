@@ -11,4 +11,4 @@ fdscd
 *.bin
 tmp_*
 
-results/*.json
+ops/scripts/experiment/results
