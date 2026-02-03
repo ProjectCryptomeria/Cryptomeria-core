@@ -10,3 +10,5 @@ mdscd
 fdscd
 *.bin
 tmp_*
+
+results/*.json

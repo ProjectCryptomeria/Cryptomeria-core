@@ -21,7 +21,7 @@ export function log(message: string) {
 }
 
 export async function saveResult(name: string, data: any) {
-  const path = `./results/${name}.json`;
+  const path = `./results/${name}-${Date.now()}.json`;
   await Deno.mkdir("./results", { recursive: true });
   await Deno.writeTextFile(path, JSON.stringify(data, null, 2));
   log(`Results saved to ${path}`);
