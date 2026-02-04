@@ -21,9 +21,9 @@ const SCENARIOS = [
 ];
 
 const FRAG_SIZE = 254 * 1024;
-const FDSC_NUM = 2;
+const FDSC_NUMS = [1,2,3,4];
 
-export async function runExam1() {
+async function runExam1Core(fdscNum: number) {
   log("🧪 実験1: アップロードサイズ実験 (リファクタリング版)");
   await setupAlice();
   const results = [];
@@ -32,18 +32,18 @@ export async function runExam1() {
   try {
     for (const s of SCENARIOS) {
       log(`▶️ Scenario ${s.id}: ${s.label} (${(s.size / 1024 / 1024).toFixed(2)} MB)`);
-      const testDir = `./tmp_exam1_s${s.id}_n${FDSC_NUM}_${examRand}`;
+      const testDir = `./tmp_exam1_s${s.id}_n${fdscNum}_${examRand}`;
       const zipPath = `${testDir}.zip`;
 
       await Deno.mkdir(testDir, { recursive: true });
       await createDummyFile(`${testDir}/index.html`, s.size);
       await createZip(testDir, zipPath);
-      const projectName = `exam1-s${s.id}-n${FDSC_NUM}`;
+      const projectName = `exam1-s${s.id}-n${fdscNum}`;
       // 共通ワークフローの呼び出し
       const scenarioResult = await runStandardScenario(
         s.id,
         projectName, // これに runner 内でランダム文字列が付与される
-        () => uploadToGwcCsu(testDir, zipPath, FRAG_SIZE, projectName, "1.0.0", FDSC_NUM)
+        () => uploadToGwcCsu(testDir, zipPath, FRAG_SIZE, projectName, "1.0.0", fdscNum)
       );
 
       results.push({
@@ -60,5 +60,11 @@ export async function runExam1() {
   } finally {
     // 結果ファイル名にランダムIDを含めて保存
     await saveResult(`exam1_results_${examRand}`, results);
+  }
+}
+
+export async function runExam1() {
+  for (const fdscNum of FDSC_NUMS) {
+    await runExam1Core(fdscNum);
   }
 }

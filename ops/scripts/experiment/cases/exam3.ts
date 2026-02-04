@@ -17,9 +17,9 @@ const PATTERNS = [
 ];
 
 const FRAG_SIZE = 256 * 1024;
-const FDSC_NUM = 2;
+const FDSC_NUMS = [1,2,3,4];
 
-export async function runExam3() {
+async function runExam3Core(fdscNum: number) {
   log("🧪 実験3: ホスティング実験 (リファクタリング版)");
   await setupAlice();
   const results = [];
@@ -27,7 +27,7 @@ export async function runExam3() {
 
   for (const p of PATTERNS) {
     log(`▶️ Pattern ${p.id}: ${p.label}`);
-    const testDir = `./tmp_exam3_p${p.id}_c${p.count}_n${FDSC_NUM}_${examRand}`;
+    const testDir = `./tmp_exam3_p${p.id}_c${p.count}_n${fdscNum}_${examRand}`;
     const zipPath = `${testDir}.zip`;
     await Deno.mkdir(testDir, { recursive: true });
 
@@ -39,14 +39,14 @@ export async function runExam3() {
     }
     await createZip(testDir, zipPath);
 
-    const projectName = `exam3-p${p.id.toLowerCase()}-c${p.count}-n${FDSC_NUM}`;
+    const projectName = `exam3-p${p.id.toLowerCase()}-c${p.count}-n${fdscNum}`;
     const version = "1.0.0";
 
     // 共通ワークフローの呼び出し
     const scenarioResult = await runStandardScenario(
       p.id,
       projectName,
-      () => uploadToGwcCsu(testDir, zipPath, FRAG_SIZE, projectName, version, FDSC_NUM)
+      () => uploadToGwcCsu(testDir, zipPath, FRAG_SIZE, projectName, version, fdscNum)
     );
 
     // 実験3固有：全ファイルを並列取得する配信性能の計測
@@ -75,4 +75,10 @@ export async function runExam3() {
     await Deno.remove(zipPath);
   }
   await saveResult(`exam3_results_${examRand}`, results);
+}
+
+export async function runExam3() {
+  for (const fdscNum of FDSC_NUMS) {
+    await runExam3Core(fdscNum);
+  }
 }

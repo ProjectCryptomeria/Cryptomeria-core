@@ -20,9 +20,9 @@ const SCENARIOS = [
 ];
 
 const FIXED_SIZE = 512 * 1024; // 512KB固定
-const FDSC_NUM = 2;
+const FDSC_NUMS = [1,2,3,4];
 
-export async function runExam2() {
+async function runExam2Core(fdscNum: number) {
   log("🧪 実験2: バッチサイズ実験 (リファクタリング版)");
   await setupAlice();
   const results = [];
@@ -31,20 +31,20 @@ export async function runExam2() {
   try {
     for (const s of SCENARIOS) {
       log(`▶️ Scenario ${s.id}: Frag ${s.label} (${s.frag} Bytes)`);
-      const testDir = `./tmp_exam2_s${s.id}_f${s.frag}_n${FDSC_NUM}_${examRand}`;
+      const testDir = `./tmp_exam2_s${s.id}_f${s.frag}_n${fdscNum}_${examRand}`;
       const zipPath = `${testDir}.zip`;
 
       await Deno.mkdir(testDir, { recursive: true });
       await createDummyFile(`${testDir}/index.html`, FIXED_SIZE);
       await createZip(testDir, zipPath);
 
-      const projectName = `exam2-s${s.id}-f${s.frag}-n${FDSC_NUM}`;
+      const projectName = `exam2-s${s.id}-f${s.frag}-n${fdscNum}`;
 
       // 共通ワークフローの呼び出し
       const scenarioResult = await runStandardScenario(
         s.id,
         projectName,
-        () => uploadToGwcCsu(testDir, zipPath, s.frag, projectName, "1.0.0", FDSC_NUM)
+        () => uploadToGwcCsu(testDir, zipPath, s.frag, projectName, "1.0.0",  fdscNum)
       );
 
       results.push({
@@ -62,5 +62,11 @@ export async function runExam2() {
     log(`❌ Error: ${e}`);
   } finally {
     await saveResult(`exam2_results_${examRand}`, results);
+  }
+}
+
+export async function runExam2() {
+  for (const fdscNum of FDSC_NUMS) {
+    await runExam2Core(fdscNum);
   }
 }

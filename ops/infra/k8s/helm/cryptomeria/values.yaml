@@ -38,7 +38,7 @@ gwc:
       type: NodePort
   persistence:
     enabled: true
-    size: 3Gi
+    size: 6Gi
   resources: {}
 
 # -----------------------------------------------------------------------------
@@ -82,7 +82,7 @@ fdsc:
       type: NodePort
   persistence:
     enabled: true
-    size: 4Gi
+    size: 6Gi
   resources: {}
 
 # -----------------------------------------------------------------------------
