@@ -11,15 +11,15 @@ import { uploadToGwcCsu } from "../lib/upload.ts";
 // 1KBから256(250)KBまで2倍刻みで設定（比例関係の分析用）
 // IBC-goの最大バッチサイズは256KBだが、オーバーヘッドを考慮して250KBに設定
 const SCENARIOS = [
-  { id: 1, frag: 1 * 1024, label: "1KB" },
-  { id: 2, frag: 2 * 1024, label: "2KB" },
-  { id: 3, frag: 4 * 1024, label: "4KB" },
-  { id: 4, frag: 8 * 1024, label: "8KB" },
-  { id: 5, frag: 16 * 1024, label: "16KB" },
-  { id: 6, frag: 32 * 1024, label: "32KB" },
-  { id: 7, frag: 64 * 1024, label: "64KB" },
-  { id: 8, frag: 128 * 1024, label: "128KB" },
-  { id: 9, frag: 250 * 1024, label: "250KB" },
+  { id: 1, frag: 1 * 1024, label: "1KiB" },
+  { id: 2, frag: 2 * 1024, label: "2KiB" },
+  { id: 3, frag: 4 * 1024, label: "4KiB" },
+  { id: 4, frag: 8 * 1024, label: "8KiB" },
+  { id: 5, frag: 16 * 1024, label: "16KiB" },
+  { id: 6, frag: 32 * 1024, label: "32KiB" },
+  { id: 7, frag: 64 * 1024, label: "64KiB" },
+  { id: 8, frag: 128 * 1024, label: "128KiB" },
+  { id: 9, frag: 254 * 1024, label: "254KiB" },
 ];
 
 const FIXED_SIZE = 512 * 1024; // 解析しやすいよう、入力サイズは512KBに固定
