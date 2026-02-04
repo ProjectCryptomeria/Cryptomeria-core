@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"gwc/x/gateway/types"
 
@@ -57,6 +58,14 @@ func (k msgServer) DistributeBatch(goCtx context.Context, msg *types.MsgDistribu
 		return nil, errorsmod.Wrap(types.ErrNoDatastoreChannels, "no FDSC channels")
 	}
 
+	// 決定論的な順序にするためチャンネル名をソート
+	sort.Strings(fdscChannels)
+
+	// 指定された数に制限
+	if sess.NumFdscChains > 0 && uint32(len(fdscChannels)) > sess.NumFdscChains {
+		fdscChannels = fdscChannels[:sess.NumFdscChains]
+	}
+
 	fdscSet := make(map[string]struct{})
 	for _, ch := range fdscChannels {
 		fdscSet[ch] = struct{}{}
@@ -98,7 +107,8 @@ func (k msgServer) DistributeBatch(goCtx context.Context, msg *types.MsgDistribu
 		targetChannel := ""
 		if item.TargetFdscChannel != "" {
 			if _, ok := fdscSet[item.TargetFdscChannel]; !ok {
-				return nil, errorsmod.Wrap(types.ErrUnknownDatastoreChannel, "unknown target channel")
+				// 制限外のチャンネルが明示指定された場合はエラー
+				return nil, errorsmod.Wrap(types.ErrUnknownDatastoreChannel, "target channel is not allowed for this session")
 			}
 			targetChannel = item.TargetFdscChannel
 		} else {

@@ -47,15 +47,9 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
             }
 
             const data = await res.json();
-            // レスポンス構造の確認用ログ（必要なくなれば削除可）
-            // console.log("Session State Response:", data);
-
             return data.session?.state || "UNKNOWN";
         } catch (e: any) {
-            // ネットワークエラー（CORS含む）の場合
             console.error("Fetch Execution Error:", e);
-            // エラーの内容を文字列として返すことで、呼び出し元でログに出せるようにしても良いが、
-            // ここでは簡易的に "ERROR" を返しつつコンソールで詳細を確認する運用とする
             return "ERROR";
         }
     };
@@ -92,11 +86,6 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
 
     /**
      * アップロードされたサイトが実際に閲覧可能か確認するヘルパー関数
-     * リトライロジックを内包し、指定回数チェックを繰り返します
-     * * @param url 確認対象のURL
-     * @param maxAttempts 最大試行回数 (デフォルト3回)
-     * @param delayMs 再試行までの待機時間 (デフォルト2000ms)
-     * @returns 閲覧可能であれば true
      */
     const verifyRendering = async (
         url: string,
@@ -104,26 +93,30 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
         delayMs: number = 2000
     ): Promise<boolean> => {
         try {
-            // withRetryを使用してfetch処理をラップする
             return await withRetry(async () => {
                 const res = await fetch(url);
-
-                // ステータスが200でない場合はエラーを投げてリトライをトリガーする
                 if (res.status !== 200) {
                     throw new Error(`サイトの準備ができていません (Status: ${res.status})`);
                 }
-
                 return true;
             }, maxAttempts, delayMs);
         } catch (e) {
-            // 全てのリトライが失敗した、またはネットワークエラーが発生した場合
             console.error(`[Verify failed] ${url}:`, e);
             return false;
         }
     };
 
-    // 引数に fragmentSize を追加
-    const upload = async (files: InputFile[], projectName: string, projectVersion: string, fragmentSize: number = DEFAULT_FRAGMENT_SIZE) => {
+    /**
+     * CSUへのアップロード実行
+     * @param numFdscChains 使用するFDSCチェーンの数（0は全チャンネルを使用）
+     */
+    const upload = async (
+        files: InputFile[], 
+        projectName: string, 
+        projectVersion: string, 
+        fragmentSize: number = DEFAULT_FRAGMENT_SIZE,
+        numFdscChains: number = 0
+    ) => {
         if (!client || !address || files.length === 0) return;
         setIsProcessing(true);
         setUploadProgress(0);
@@ -133,28 +126,26 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
             // Step 1: マークルツリーの計算とZIP圧縮
             addLog(`Step 1: Merkle Rootの計算とZIP圧縮を開始 (Fragment Size: ${fragmentSize} bytes)...`);
             const merkleCalc = new MerkleTreeCalculator();
-            // ここで動的なサイズを使用
             const rootProof = await merkleCalc.calculateRootProof(files, fragmentSize);
             const zipBlob = await createZipBlob(files);
             addLog(`ZIPファイル作成完了: ${(zipBlob.size / 1024).toFixed(2)} KB`);
 
-            // Step 2: セッションの初期化
-            addLog('Step 2: セッションの初期化 (On-chain)...');
+            // Step 2: セッションの初期化 (On-chain)
+            addLog(`Step 2: セッションの初期化 (On-chain, FDSC Chains: ${numFdscChains || 'All'})...`);
             const deadline = Math.floor(Date.now() / 1000) + 3600;
             const initRes = await client.signAndBroadcast(address, [{
                 typeUrl: '/gwc.gateway.v1.MsgInitSession',
                 value: {
                     owner: address,
-                    // ここで動的なサイズを使用
                     fragmentSize: Long.fromNumber(fragmentSize),
-                    deadlineUnix: Long.fromNumber(deadline)
+                    deadlineUnix: Long.fromNumber(deadline),
+                    numFdscChains: numFdscChains
                 }
             }], { amount: [{ denom: CONFIG.denom, amount: '2000' }], gas: '200000' });
 
             if (initRes.code !== 0) throw new Error(initRes.rawLog);
             const initData = MsgInitSessionResponse.decode(initRes.msgResponses[0].value);
 
-            // イベントログからExecutorを取得（引用符の除去処理を含む）
             const executor = initRes.events.find(e => e.type === 'csu_init_session')
                 ?.attributes.find(a => a.key === 'executor')?.value.replace(/^"|"$/g, '') || "";
 
@@ -284,7 +275,7 @@ export function useCsuUpload(client: SigningStargateClient | null, address: stri
 
         } catch (e: any) {
             addLog(`❌ エラー: ${e.message}`);
-            console.error(e); // 詳細エラーをコンソールに出力
+            console.error(e);
             setIsProcessing(false);
         }
     };

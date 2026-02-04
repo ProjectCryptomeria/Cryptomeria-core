@@ -79,6 +79,7 @@ func (k msgServer) InitSession(goCtx context.Context, msg *types.MsgInitSession)
 		DistributedCount: 0,
 		AckSuccessCount:  0,
 		AckErrorCount:    0,
+		NumFdscChains:    msg.NumFdscChains, // 追加
 	}
 	if err := k.Keeper.SetSession(ctx, sess); err != nil {
 		return nil, err
@@ -95,6 +96,7 @@ func (k msgServer) InitSession(goCtx context.Context, msg *types.MsgInitSession)
 			sdk.NewAttribute("executor", executor),
 			sdk.NewAttribute("fragment_size", fmt.Sprintf("%d", msg.FragmentSize)),
 			sdk.NewAttribute("deadline_unix", fmt.Sprintf("%d", deadlineUnix)),
+			sdk.NewAttribute("num_fdsc_chains", fmt.Sprintf("%d", msg.NumFdscChains)),
 		),
 	)
 

@@ -61,6 +61,9 @@ message Session {
   uint64 distributed_count = 9;
   uint64 ack_success_count = 10;
   uint64 ack_error_count = 11;
+
+  // num_fdsc_chains is the limit of FDSC chains to use.
+  uint32 num_fdsc_chains = 12;
 }
 
 // DistributeItem carries fragment bytes and its proofs for on-chain verification.

@@ -8,7 +8,8 @@
     "@std/path": "jsr:@std/path@^1.0.8"
   },
   "tasks": {
-    "exp": "deno run -A main.ts"
+    "exp": "deno run -A main.ts",
+    "manual": "deno run -A manual_upload.ts"
   },
   "compilerOptions": {
     "lib": ["deno.ns", "deno.window", "esnext"],

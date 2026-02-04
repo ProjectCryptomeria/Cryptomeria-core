@@ -14,18 +14,23 @@ option go_package = "gwc/x/gateway/types";
 // Msg defines the Msg service.
 service Msg {
   option (cosmos.msg.v1.service) = true;
+
   rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
 
   // --- CSU Session Flow ---
 
   // Step 1: Initialize a CSU session (creates session_id and returns session_upload_token for TUS/HTTP upload)
   rpc InitSession(MsgInitSession) returns (MsgInitSessionResponse);
+
   // Step 2: Commit RootProof (computed from the extracted zip contents)
   rpc CommitRootProof(MsgCommitRootProof) returns (MsgCommitRootProofResponse);
+
   // Step 3: Distribute fragments to FDSC (executor executes this via authz; signer is executor)
   rpc DistributeBatch(MsgDistributeBatch) returns (MsgDistributeBatchResponse);
+
   // Step 4: Upload manifest to MDSC and close session on MDSC ACK (success path)
   rpc FinalizeAndCloseSession(MsgFinalizeAndCloseSession) returns (MsgFinalizeAndCloseSessionResponse);
+
   // Abort session and close immediately (failure path)
   rpc AbortAndCloseSession(MsgAbortAndCloseSession) returns (MsgAbortAndCloseSessionResponse);
 
@@ -45,6 +50,7 @@ message MsgUpdateParamsResponse {}
 message MsgRegisterStorage {
   // 署名者を authority (Governance) に変更して権限を制限します
   option (cosmos.msg.v1.signer) = "authority";
+
   string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
   repeated StorageInfo storage_infos = 2;
 }
@@ -63,6 +69,9 @@ message MsgInitSession {
 
   // deadline_unix is the session deadline (unix seconds). 0 means "use chain default".
   int64 deadline_unix = 4;
+
+  // num_fdsc_chains is the number of FDSC chains to use for this session. 0 means "use all available".
+  uint32 num_fdsc_chains = 5;
 }
 
 message MsgInitSessionResponse {

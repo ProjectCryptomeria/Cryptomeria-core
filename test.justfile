@@ -86,3 +86,9 @@ exam arg="":
         deno task exp --case 3;
         exit 0;
     fi
+
+manual path project version:
+    #!/usr/bin/env bash
+    set -e
+    cd ./ops/scripts/experiment
+    deno task manual --path "{{path}}" --project "{{project}}" --version "{{version}}"
