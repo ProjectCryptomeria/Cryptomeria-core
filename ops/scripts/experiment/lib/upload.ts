@@ -318,7 +318,7 @@ export async function uploadToGwcCsu(
           break;
         } catch (error) {
           if (r === MAX_RETRIES) throw error;
-          await new Promise((res) => setTimeout(res, 1000));
+          await new Promise((res) => setTimeout(res, 3000));
         }
       }
       endFetch = performance.now();
