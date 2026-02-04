@@ -8,14 +8,12 @@ import { uploadToGwcCsu } from "../lib/upload.ts";
 import { runStandardScenario, generateRandomId } from "../lib/runner.ts";
 
 const SCENARIOS = [
-  // {id:1,size:1024*1024*1,label:"1MB"},
-  // {id:2,size:1024*1024*10,label:"10MB"},
-  {id:3,size:1024*1024*50,label:"50MB"},
-  {id:4,size:1024*1024*100,label:"100MB"},
+  { id: 1, size: 1024 * 1024 * 1, label: "1MiB" },
+  { id: 2, size: 1024 * 1024 * 10, label: "10MiB" },
 ];
 
 const FRAG_SIZE = 254 * 1024;
-const FDSC_NUMS = [4];
+const FDSC_NUMS = [4, 4,];
 
 async function runExam1Core(fdscNum: number) {
   log("🧪 実験1: アップロードサイズ実験 (リファクタリング版)");
@@ -52,8 +50,9 @@ async function runExam1Core(fdscNum: number) {
       await Deno.remove(zipPath);
     }
   } finally {
+    const start_end = `${SCENARIOS[0].label}_${SCENARIOS[SCENARIOS.length - 1].label}`;
     // 結果ファイル名にランダムIDを含めて保存
-    await saveResult(`exam1_results_${examRand}`, results);
+    await saveResult(`exam1_results_${start_end}_${examRand}`, results);
   }
 }
 

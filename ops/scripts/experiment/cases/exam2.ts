@@ -8,19 +8,19 @@ import { uploadToGwcCsu } from "../lib/upload.ts";
 import { runStandardScenario, generateRandomId } from "../lib/runner.ts";
 
 const SCENARIOS = [
-  { id: 1, frag: 1 * 1024, label: "1KB" },
-  { id: 2, frag: 2 * 1024, label: "2KB" },
-  { id: 3, frag: 4 * 1024, label: "4KB" },
-  { id: 4, frag: 8 * 1024, label: "8KB" },
-  { id: 5, frag: 16 * 1024, label: "16KB" },
-  { id: 6, frag: 32 * 1024, label: "32KB" },
-  { id: 7, frag: 64 * 1024, label: "64KB" },
-  { id: 8, frag: 128 * 1024, label: "128KB" },
-  { id: 9, frag: 250 * 1024, label: "250KB" },
+  { id: 1, frag: 1 * 1024, label: "1KiB" },
+  { id: 2, frag: 2 * 1024, label: "2KiB" },
+  { id: 3, frag: 4 * 1024, label: "4KiB" },
+  { id: 4, frag: 8 * 1024, label: "8KiB" },
+  { id: 5, frag: 16 * 1024, label: "16KiB" },
+  { id: 6, frag: 32 * 1024, label: "32KiB" },
+  { id: 7, frag: 64 * 1024, label: "64KiB" },
+  { id: 8, frag: 128 * 1024, label: "128KiB" },
+  { id: 9, frag: 254 * 1024, label: "254KiB" },
 ];
 
 const FIXED_SIZE = 512 * 1024; // 512KB固定
-const FDSC_NUMS = [2,3,4];
+const FDSC_NUMS = [3];
 
 async function runExam2Core(fdscNum: number) {
   log("🧪 実験2: バッチサイズ実験 (リファクタリング版)");
@@ -61,7 +61,8 @@ async function runExam2Core(fdscNum: number) {
   } catch (e) {
     log(`❌ Error: ${e}`);
   } finally {
-    await saveResult(`exam2_results_${examRand}`, results);
+    const start_end = `${SCENARIOS[0].label}_${SCENARIOS[SCENARIOS.length - 1].label}`;
+    await saveResult(`exam2_results_${start_end}_n${fdscNum}_${examRand}`, results);
   }
 }
 
