@@ -20,7 +20,7 @@ const SCENARIOS = [
 ];
 
 const FIXED_SIZE = 512 * 1024; // 512KB固定
-const FDSC_NUMS = [1,2,3,4];
+const FDSC_NUMS = [2,3,4];
 
 async function runExam2Core(fdscNum: number) {
   log("🧪 実験2: バッチサイズ実験 (リファクタリング版)");

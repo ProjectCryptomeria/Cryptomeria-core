@@ -8,20 +8,14 @@ import { uploadToGwcCsu } from "../lib/upload.ts";
 import { runStandardScenario, generateRandomId } from "../lib/runner.ts";
 
 const SCENARIOS = [
-  {id:1,size:1024*1024*0.1,label:"0.1MB"},
-  {id:2,size:1024*1024*0.2,label:"0.2MB"},
-  {id:3,size:1024*1024*0.3,label:"0.3MB"},
-  {id:4,size:1024*1024*0.4,label:"0.4MB"},
-  {id:5,size:1024*1024*0.5,label:"0.5MB"},
-  {id:6,size:1024*1024*0.6,label:"0.6MB"},
-  {id:7,size:1024*1024*0.7,label:"0.7MB"},
-  {id:8,size:1024*1024*0.8,label:"0.8MB"},
-  {id:9,size:1024*1024*0.9,label:"0.9MB"},
-  {id:10,size:1024*1024*1.0,label:"1.0MB"},
+  // {id:1,size:1024*1024*1,label:"1MB"},
+  // {id:2,size:1024*1024*10,label:"10MB"},
+  {id:3,size:1024*1024*50,label:"50MB"},
+  {id:4,size:1024*1024*100,label:"100MB"},
 ];
 
 const FRAG_SIZE = 254 * 1024;
-const FDSC_NUMS = [1,2,3,4];
+const FDSC_NUMS = [4];
 
 async function runExam1Core(fdscNum: number) {
   log("🧪 実験1: アップロードサイズ実験 (リファクタリング版)");
