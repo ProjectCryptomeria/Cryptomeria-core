@@ -9,7 +9,8 @@
   },
   "tasks": {
     "exp": "deno run -A main.ts",
-    "manual": "deno run -A manual_upload.ts"
+    "manual": "deno run -A manual_upload.ts",
+    "monitor": "deno run -A monitor_disk.ts"
   },
   "compilerOptions": {
     "lib": ["deno.ns", "deno.window", "esnext"],

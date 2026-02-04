@@ -92,3 +92,9 @@ manual path project version numFdscChains="0":
     set -e
     cd ./ops/scripts/experiment
     deno task manual --path "{{path}}" --project "{{project}}" --version "{{version}}" --numFdscChains "{{numFdscChains}}"
+
+monitor arg="30":
+    #!/usr/bin/env bash
+    set -e
+    cd ./ops/scripts/experiment
+    deno task monitor --duration "{{arg}}"

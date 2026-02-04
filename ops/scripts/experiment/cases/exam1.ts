@@ -8,13 +8,14 @@ import { createDummyFile, createZip } from "../lib/file.ts";
 import { getDiskUsage } from "../lib/stats.ts";
 import { uploadToGwcCsu } from "../lib/upload.ts";
 
-const SCENARIOS = Array.from({ length: 11 }, (_, i) => ({
+const SCENARIOS = Array.from({ length: 10 }, (_, i) => ({
   id: i + 1,
-  size: 1024 * 1024 * (i + 0.1),
+  size: 1024 * 1024 * ((i + 1)/10),
   label: `Scenario ${i + 1}`,
 }));
 
 const FRAG_SIZE = 254 * 1024;
+const FDSC_NUM = 1;
 
 /**
  * Podごとのディレクトリサイズ（ネストKV）を合計バイト数に変換する
@@ -70,7 +71,7 @@ export async function runExam1() {
       };
 
       // --- アップロード実行 ---
-      const { sid, metrics } = await uploadToGwcCsu(testDir, zipPath, FRAG_SIZE, `exam1-s${s.id}`, "1.0.0");
+      const { sid, metrics } = await uploadToGwcCsu(testDir, zipPath, FRAG_SIZE, `exam1-s${s.id}`, "1.0.0", FDSC_NUM);
 
       // --- 実行後のディスク容量取得 (Pod別) ---
       const diskAfter = {

@@ -8,6 +8,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"sort" // 追加: チャンネルの決定論的な順序のため
 	"time"
 
 	"gwc/x/gateway/types"
@@ -23,7 +24,6 @@ import (
 
 const MaxFragmentsPerBatch = 50
 
-// ExecuteSessionUpload はZIPファイルの解凍、断片化、各ストレージへの配布、およびマニフェストの登録を一括して実行します。
 // ExecuteSessionUpload はZIPファイルの解凍、断片化、各ストレージへの配布、およびマニフェストの登録を一括して実行します。
 func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePath string, projectName string, version string) error {
 	fmt.Printf("[Executor] 🚀 セッション処理を開始します: ID=%s\n", sessionID)
@@ -50,7 +50,6 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		return fmt.Errorf("ストレージエンドポイントのクエリに失敗しました: %w", err)
 	}
 
-	// 利用可能なFDSCをすべて保持する構造体
 	type fdscInfo struct {
 		chainId   string
 		channelId string
@@ -59,7 +58,6 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 
 	for _, info := range resStorage.StorageInfos {
 		if info.ConnectionType == "datastore" && info.ChannelId != "" {
-			fmt.Printf("[Executor] ✅ 有効なFDSCを発見: %s (Channel: %s)\n", info.ChainId, info.ChannelId)
 			datastores = append(datastores, fdscInfo{
 				chainId:   info.ChainId,
 				channelId: info.ChannelId,
@@ -68,8 +66,25 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	}
 
 	if len(datastores) == 0 {
-		return fmt.Errorf("有効なFDSCストレージが見つかりません。'gwcd tx gateway register-storage' で登録を確認してください")
+		return fmt.Errorf("有効なFDSCストレージが見つかりません")
 	}
+
+	// --- 修正ポイント: オンチェーンの制限ロジックと同期させる ---
+	// 1. チャンネル名でソート
+	sort.Slice(datastores, func(i, j int) bool {
+		return datastores[i].channelId < datastores[j].channelId
+	})
+
+	// 2. セッションで指定された数に制限
+	if session.NumFdscChains > 0 && uint32(len(datastores)) > session.NumFdscChains {
+		fmt.Printf("[Executor] ⚠️ セッション制限によりストレージ数を %d に制限します (利用可能: %d)\n", session.NumFdscChains, len(datastores))
+		datastores = datastores[:session.NumFdscChains]
+	}
+
+	for _, ds := range datastores {
+		fmt.Printf("[Executor] ✅ 使用するFDSC: %s (Channel: %s)\n", ds.chainId, ds.channelId)
+	}
+	// -------------------------------------------------------
 
 	// 3. ZIPファイルの読み込み
 	zipBytes, err := os.ReadFile(zipFilePath)
@@ -88,7 +103,7 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		return abortSession(clientCtx, &session, "INVALID_ZIP_CONTENT")
 	}
 
-	// 4. CSU Proof (Merkle Tree) の構築
+	// 4. CSU Proof の構築
 	fmt.Printf("[Executor] 🌳 Merkle Tree を構築中...\n")
 	proofData, err := types.BuildCSUProofs(files)
 	if err != nil {
@@ -100,22 +115,20 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		return abortSession(clientCtx, &session, "ROOT_PROOF_MISMATCH")
 	}
 
-	// アドレスから引用符を除去
 	executorAddr := strings.Trim(session.Executor, "\"")
 	totalItems := len(proofData.Fragments)
 	fmt.Printf("[Executor] 📤 配布対象断片数: %d\n", totalItems)
 
-	// Ownerアドレスからも引用符を除去し、正しく sdk.AccAddress へ変換する
 	cleanOwner := strings.Trim(session.Owner, "\"")
 	ownerAddr, err := sdk.AccAddressFromBech32(cleanOwner)
 	if err != nil {
-		return fmt.Errorf("Ownerアドレスのパースに失敗しました (%s): %w", cleanOwner, err)
+		return fmt.Errorf("Ownerアドレスのパースに失敗しました: %w", err)
 	}
 
 	var txfBatch tx.Factory
 	txfInitialized := false
 
-	// 5. 断片データの配布 (Executor側でラウンドロビンを制御)
+	// 5. 断片データの配布
 	for i := 0; i < totalItems; i += MaxFragmentsPerBatch {
 		end := i + MaxFragmentsPerBatch
 		if end > totalItems {
@@ -124,7 +137,6 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 
 		batchItems := make([]types.DistributeItem, 0, end-i)
 		for j, frag := range proofData.Fragments[i:end] {
-			// 全断片の通し番号 (i+j) を用いて配送先チャネルを決定
 			dsIdx := (i + j) % len(datastores)
 			targetDS := datastores[dsIdx]
 
@@ -135,7 +147,7 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 				FragmentProof:     frag.FragmentProof,
 				FileSize:          frag.FileSize,
 				FileProof:         frag.FileProof,
-				TargetFdscChannel: targetDS.channelId, // 明示的に配送先を指定
+				TargetFdscChannel: targetDS.channelId,
 			})
 		}
 
@@ -147,35 +159,30 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 
 		if !txfInitialized {
 			fmt.Printf("[Executor] 🧪 初回バッチのガス見積もりを実行中...\n")
-			// クリーニングされた executorAddr と ownerAddr (feeGranter) を渡す
 			f, err := prepareFactory(clientCtx, executorAddr, ownerAddr, msg)
 			if err != nil {
 				return fmt.Errorf("Factory準備エラー: %w", err)
 			}
 			txfBatch = f
 			txfInitialized = true
-			fmt.Printf("[Executor] ⛽ ガス見積もり完了: %d\n", txfBatch.Gas())
 		} else {
 			txfBatch = txfBatch.WithSequence(txfBatch.Sequence() + 1)
 		}
 
-		fmt.Printf("[Executor] 📡 バッチ送信中 %d-%d (%d 個のチャネルへ分散)...\n", i, end, len(datastores))
+		fmt.Printf("[Executor] 📡 バッチ送信中 %d-%d...\n", i, end)
 		txRes, err := broadcastAndConfirm(clientCtx, txfBatch, msg)
 		if err != nil {
-			fmt.Printf("[Executor] ❌ バッチ送信失敗: %v\n", err)
 			return abortSession(clientCtx, &session, "DISTRIBUTE_TX_FAILED")
 		}
 		fmt.Printf("[Executor] ✅ バッチ送信成功 TxHash: %s\n", txRes.TxHash)
 	}
 
-	// 6. マニフェストファイル情報の構築 (実際の配送先 ChainId を正確に記録)
+	// 6. マニフェストファイル情報の構築
 	var manifestFiles []types.ManifestFileEntry
 	fragmentsByPath := make(map[string][]*types.PacketFragmentMapping)
 
 	for i, frag := range proofData.Fragments {
 		calculatedID := calculateFragmentID(sessionID, frag.Path, frag.Index)
-
-		// 配送時と同じロジックで ChainId を特定
 		dsIdx := i % len(datastores)
 		actualFdscID := datastores[dsIdx].chainId
 
@@ -191,9 +198,7 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 		if mimeType == "" {
 			mimeType = "application/octet-stream"
 		}
-
 		fileRoot := calculateFileRoot(file.Path, file.Chunks)
-
 		manifestFiles = append(manifestFiles, types.ManifestFileEntry{
 			Path: file.Path,
 			Metadata: types.FileMetadata{
@@ -214,14 +219,12 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 			Version:      version,
 			RootProof:    proofData.RootProofHex,
 			FragmentSize: session.FragmentSize,
-			Owner:        cleanOwner, // 引用符を除去したOwnerを使用
+			Owner:        cleanOwner,
 			SessionId:    sessionID,
 			Files:        manifestFiles,
 		},
 	}
-	fmt.Printf("[Executor] 📝 マニフェスト作成: Project=%s, Version=%s\n", projectName, version)
 
-	// Finalize Tx でも Alice を FeeGranter として設定
 	txfFinalize, err := prepareFactory(clientCtx, executorAddr, ownerAddr, finalizeMsg)
 	if err != nil {
 		return fmt.Errorf("Finalize用Factory準備エラー: %w", err)
@@ -230,7 +233,6 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	fmt.Printf("[Executor] 🏁 セッション完了(Finalize)を送信中...\n")
 	_, err = broadcastAndConfirm(clientCtx, txfFinalize, finalizeMsg)
 	if err != nil {
-		fmt.Printf("[Executor] ❌ Finalize Tx 失敗: %v\n", err)
 		return err
 	}
 	fmt.Printf("[Executor] 🎉 セッション %s は正常に完了しました。\n", sessionID)
@@ -238,14 +240,12 @@ func ExecuteSessionUpload(clientCtx client.Context, sessionID string, zipFilePat
 	return nil
 }
 
-// calculateFragmentID generates the same deterministic ID as FDSC
 func calculateFragmentID(sessionID, path string, index uint64) string {
 	payload := []byte(fmt.Sprintf("FDSC_FRAG_ID:%s:%s:%d", sessionID, path, index))
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])
 }
 
-// calculateFileRoot は types.BuildCSUProofs と同じロジックでFileRootを計算します
 func calculateFileRoot(path string, chunks [][]byte) string {
 	if len(chunks) == 0 {
 		return ""
@@ -254,25 +254,19 @@ func calculateFileRoot(path string, chunks [][]byte) string {
 	for i, chunk := range chunks {
 		chunkHash := sha256.Sum256(chunk)
 		chunkHashHex := hex.EncodeToString(chunkHash[:])
-
 		rawLeaf := fmt.Sprintf("FRAG:%s:%d:%s", path, i, chunkHashHex)
 		leafHash := sha256.Sum256([]byte(rawLeaf))
 		leafHex := hex.EncodeToString(leafHash[:])
-
 		leaves = append(leaves, leafHex)
 	}
 	return types.NewMerkleTree(leaves).Root()
 }
 
-// prepareFactory は指定されたメッセージに対してシミュレーションを行い、
-// 適切なGas Limit (シミュレーション値 * 1.5) を設定した tx.Factory を返します。
 func prepareFactory(clientCtx client.Context, fromAddr string, feeGranter sdk.AccAddress, msg sdk.Msg) (tx.Factory, error) {
 	fromAcc, err := sdk.AccAddressFromBech32(fromAddr)
 	if err != nil {
 		return tx.Factory{}, err
 	}
-
-	// 'test' キーリング・バックエンドへのフォールバック
 	krRec, err := clientCtx.Keyring.KeyByAddress(fromAcc)
 	if err != nil {
 		homeDir := clientCtx.HomeDir
@@ -291,18 +285,14 @@ func prepareFactory(clientCtx client.Context, fromAddr string, feeGranter sdk.Ac
 	if err != nil {
 		return tx.Factory{}, fmt.Errorf("鍵の解決に失敗しました: %w", err)
 	}
-
-	// Factoryの初期化
 	txf, err := tx.NewFactoryCLI(clientCtx, &pflag.FlagSet{})
 	if err != nil {
 		return tx.Factory{}, err
 	}
-
 	num, seq, err := clientCtx.AccountRetriever.GetAccountNumberSequence(clientCtx, fromAcc)
 	if err != nil {
 		return tx.Factory{}, err
 	}
-
 	txf = txf.
 		WithChainID(clientCtx.ChainID).
 		WithKeybase(clientCtx.Keyring).
@@ -311,9 +301,7 @@ func prepareFactory(clientCtx client.Context, fromAddr string, feeGranter sdk.Ac
 		WithAccountNumber(num).
 		WithSequence(seq).
 		WithFeeGranter(feeGranter).
-		WithGasAdjustment(1.5) // 安全係数を設定
-
-	// シミュレーションを実行してGasを計算
+		WithGasAdjustment(1.5)
 	if msg != nil {
 		_, adjusted, err := tx.CalculateGas(clientCtx, txf, msg)
 		if err != nil {
@@ -321,10 +309,8 @@ func prepareFactory(clientCtx client.Context, fromAddr string, feeGranter sdk.Ac
 		}
 		txf = txf.WithGas(adjusted)
 	} else {
-		// msgがnilの場合はデフォルト値 (通常あり得ないが安全策)
-		txf = txf.WithGas(2000000000000)
+		txf = txf.WithGas(20000000)
 	}
-
 	return txf, nil
 }
 
@@ -333,26 +319,20 @@ func broadcastAndConfirm(clientCtx client.Context, txf tx.Factory, msg sdk.Msg) 
 	if err != nil {
 		return nil, err
 	}
-
 	if err := tx.Sign(context.Background(), txf, txf.FromName(), txBuilder, true); err != nil {
 		return nil, err
 	}
-
 	txBytes, err := clientCtx.TxConfig.TxEncoder()(txBuilder.GetTx())
 	if err != nil {
 		return nil, err
 	}
-
 	res, err := clientCtx.BroadcastTxSync(txBytes)
 	if err != nil {
 		return nil, err
 	}
-
 	if res.Code != 0 {
 		return res, fmt.Errorf("Tx送信エラー (code %d): %s", res.Code, res.RawLog)
 	}
-
-	// ブロックに含まれるのを待機（最大60秒）
 	txHash, _ := hex.DecodeString(res.TxHash)
 	for i := 0; i < 20; i++ {
 		time.Sleep(3 * time.Second)
@@ -365,7 +345,6 @@ func broadcastAndConfirm(clientCtx client.Context, txf tx.Factory, msg sdk.Msg) 
 			return &sdk.TxResponse{TxHash: res.TxHash, Code: 0}, nil
 		}
 	}
-
 	return res, fmt.Errorf("Tx確認タイムアウト: %s", res.TxHash)
 }
 
@@ -375,16 +354,12 @@ func abortSession(clientCtx client.Context, session *types.Session, reason strin
 		SessionId: session.SessionId,
 		Reason:    reason,
 	}
-	// Abort時は固定ガスで十分（中身が小さいため）
 	ownerAddr, _ := sdk.AccAddressFromBech32(session.Owner)
-	// Abort用の簡易Factory作成（Simulationなしで固定値）
 	txf, err := prepareFactory(clientCtx, session.Executor, ownerAddr, nil)
 	if err != nil {
 		return err
 	}
-	// prepareFactoryでmsg=nilだと20000000になるが、Abortには大きすぎるので手動調整
 	txf = txf.WithGas(200000)
-
 	_, err = broadcastAndConfirm(clientCtx, txf, msg)
 	return err
 }
