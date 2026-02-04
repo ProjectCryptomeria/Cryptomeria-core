@@ -49,13 +49,14 @@ function calcDiskDelta(
 
 async function main() {
   const args = parseArgs(Deno.args, {
-    string: ["path", "project", "version"],
-    alias: { p: "path", n: "project", v: "version" },
+    string: ["path", "project", "version", "numFdscChains"],
+    alias: { p: "path", n: "project", v: "version", c: "numFdscChains" },
   });
 
   const targetPath = args.path;
   const projectName = args.project || "manual-project";
   const version = args.version || "1.0.0";
+  const numFdscChains = parseInt(args.numFdscChains || "0");
 
   if (!targetPath) {
     console.error("使用法: deno run -A manual_upload_with_stats.ts --path <対象パス> [--project <名>] [--version <版>]");
@@ -115,7 +116,7 @@ async function main() {
     };
 
     // --- アップロード実行 ---
-    const { sid, metrics } = await uploadToGwcCsu(sourceDir, zipPath, FRAG_SIZE, projectName, version);
+    const { sid, metrics } = await uploadToGwcCsu(sourceDir, zipPath, FRAG_SIZE, projectName, version, numFdscChains);
 
     // --- 実行後のディスク容量取得 (Pod別) ---
     const diskAfter = {

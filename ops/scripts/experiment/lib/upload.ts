@@ -147,12 +147,17 @@ async function hasAuthz(
   }
 }
 
+/**
+ * GWC CSUへのアップロードを実行する。
+ * @param numFdscChains 使用するFDSCチェーン数 (0の場合は全チェーンを使用)
+ */
 export async function uploadToGwcCsu(
   sourceDir: string,
   zipPath: string,
   fragSize: number,
   projectName: string,
   version: string,
+  numFdscChains: number = 0,
 ): Promise<{ sid: string; metrics: UploadMetrics }> {
   const startPrep = performance.now();
   log(`Step 1: ディレクトリの走査中: "${sourceDir}"...`);
@@ -170,8 +175,9 @@ export async function uploadToGwcCsu(
   const rootHex = await buildProjectMerkleRoot(files, fragSize);
 
   log("Step 2: セッションの初期化中...");
+  // 新しく追加された numFdscChains 引数を CLI コマンドに反映
   const initRes = await executeTx(
-    ["gateway", "init-session", fragSize.toString(), "0"],
+    ["gateway", "init-session", fragSize.toString(), "0", numFdscChains.toString()],
     "alice",
   );
 

@@ -48,13 +48,13 @@ func GetTxCmd() *cobra.Command {
 	return cmd
 }
 
-// init-session [fragment-size] [deadline-unix(0=default)]
-// executor引数は不要のため削除
+// init-session [fragment-size] [deadline-unix(0=default)] [num-fdsc-chains(0=all)]
+// 3つの引数を受け取るように Args と Parse ロジックを更新
 func CmdInitSession() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "init-session [fragment-size] [deadline-unix]",
+		Use:   "init-session [fragment-size] [deadline-unix] [num-fdsc-chains]",
 		Short: "Initialize a new CSU session (returns session_id and session_upload_token)",
-		Args:  cobra.ExactArgs(2),
+		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			clientCtx, err := client.GetClientTxContext(cmd)
 			if err != nil {
@@ -71,12 +71,17 @@ func CmdInitSession() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// args[2] is num-fdsc-chains (新しく追加)
+			numFdscChains, err := strconv.ParseUint(args[2], 10, 32)
+			if err != nil {
+				return err
+			}
 
 			msg := types.MsgInitSession{
-				Owner: clientCtx.GetFromAddress().String(),
-				// Executor field is removed from MsgInitSession
-				FragmentSize: fragSize,
-				DeadlineUnix: deadlineUnix,
+				Owner:         clientCtx.GetFromAddress().String(),
+				FragmentSize:  fragSize,
+				DeadlineUnix:  deadlineUnix,
+				NumFdscChains: uint32(numFdscChains),
 			}
 			if err := msg.ValidateBasic(); err != nil {
 				return err
@@ -116,21 +121,6 @@ func CmdCommitRootProof() *cobra.Command {
 }
 
 // distribute-batch [session-id] [items.json]
-//
-// items.json format:
-//
-//	{
-//	  "items": [
-//	    {
-//	      "path": "index.html",
-//	      "index": 0,
-//	      "fragment_bytes_base64": "...",
-//	      "fragment_proof": {"steps":[{"sibling_hex":"..","sibling_is_left":true}]},
-//	      "file_size": 123,
-//	      "file_proof": {"steps":[...]}
-//	    }
-//	  ]
-//	}
 func CmdDistributeBatch() *cobra.Command {
 	type itemJSON struct {
 		Path                string            `json:"path"`
@@ -280,7 +270,7 @@ func CmdAbortAndCloseSession() *cobra.Command {
 	return cmd
 }
 
-// --- existing cmds (keep) ---
+// --- existing cmds ---
 
 func CmdRegisterStorage() *cobra.Command {
 	cmd := &cobra.Command{
@@ -328,8 +318,6 @@ func CmdUpdateParams() *cobra.Command {
 	return cmd
 }
 
-// helper: minimal base64 decode without extra deps
 func decodeBase64(s string) ([]byte, error) {
-	// stdlib base64
 	return types.DecodeBase64Std(s)
 }
